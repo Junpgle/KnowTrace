@@ -6,7 +6,7 @@ import {
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
   TrendingUp, X, XCircle,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession } from './api'
