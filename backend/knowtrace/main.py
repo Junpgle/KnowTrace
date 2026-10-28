@@ -21,6 +21,7 @@ from .db import connect, initialize, transaction
 from .ai import AIConfigError, AIServiceError, OllamaProvider, compact, grounded_items
 from .parser import ParseError, SUPPORTED_EXTENSIONS, extract_chunks
 from .questions import validate_generated_questions, validate_question_fields
+from .quiz_api import register_quiz_routes
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 LOW_TEXT_THRESHOLD = 80  # heuristic: flag for review, not proof of missing content
@@ -116,7 +117,7 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="0.4.0", lifespan=lifespan)
     app.state.ai_provider = ai_provider if ai_provider is not None else OllamaProvider.from_env()
 
     def ensure_course(db: sqlite3.Connection, course_id: str) -> None:
@@ -125,7 +126,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.3.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "0.4.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -713,6 +714,7 @@ def create_app(*, db_path: str | Path | None = None,
                        (payload.decision,payload.decision,version_id))
             return {"id":version_id,"review_status":payload.decision}
 
+    register_quiz_routes(app, database)
     return app
 
 
