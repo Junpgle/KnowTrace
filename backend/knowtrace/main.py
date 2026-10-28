@@ -10,6 +10,7 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
+from typing import Literal
 
 import fitz
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -19,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .db import connect, initialize, transaction
 from .ai import AIConfigError, AIServiceError, OllamaProvider, compact, grounded_items
 from .parser import ParseError, SUPPORTED_EXTENSIONS, extract_chunks
+from .questions import validate_generated_questions, validate_question_fields
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 LOW_TEXT_THRESHOLD = 80  # heuristic: flag for review, not proof of missing content
@@ -66,6 +68,26 @@ class KnowledgePointUpdate(BaseModel):
         return value
 
 
+class GenerateQuestionsRequest(BaseModel):
+    count: int = Field(default=2, ge=1, le=4)
+    question_types: list[Literal["single_choice", "true_false"]] = Field(
+        default_factory=lambda: ["single_choice", "true_false"], min_length=1, max_length=2)
+
+
+class QuestionRevisionRequest(BaseModel):
+    """Revision makes a new version; no published question is overwritten."""
+    model_config = ConfigDict(extra="forbid")
+    stem: str | None = None
+    options: dict[str, str] | None = None
+    correct_answer: str | bool | None = None
+    explanation: str | None = None
+    difficulty: int | None = None
+
+
+class ReviewQuestionRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+
+
 class KnowledgePointCreate(BaseModel):
     canonical_name: str = Field(min_length=1, max_length=160)
     chapter_id: str | None = None
@@ -94,7 +116,7 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.2.1", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="0.3.0", lifespan=lifespan)
     app.state.ai_provider = ai_provider if ai_provider is not None else OllamaProvider.from_env()
 
     def ensure_course(db: sqlite3.Connection, course_id: str) -> None:
@@ -103,7 +125,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.2.1"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "0.3.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -490,6 +512,203 @@ def create_app(*, db_path: str | Path | None = None,
                             {"review_status": previous["review_status"]},
                             {"review_status": payload.decision})
         return {"id": knowledge_point_id, "review_status": payload.decision}
+
+    def question_version_detail(db: sqlite3.Connection, version_id: str) -> dict:
+        row = db.execute("""SELECT v.*,q.course_id,q.origin FROM question_versions v
+                             JOIN questions q ON q.id=v.question_id
+                             WHERE v.id=? AND q.archived_at IS NULL""", (version_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "Question version not found")
+        item = dict(row)
+        item["options"] = json.loads(item.pop("options_json"))
+        item["correct_answer"] = json.loads(item.pop("correct_answer_json"))
+        item["knowledge_points"] = _rows(db.execute("""SELECT knowledge_point_id,is_primary
+                                  FROM question_knowledge_points WHERE question_version_id=?
+                                  ORDER BY is_primary DESC,knowledge_point_id""", (version_id,)))
+        item["sources"] = _rows(db.execute("""SELECT c.id AS chunk_id,c.document_id,
+                                  d.original_filename,c.page_start,c.content_kind,s.evidence_note
+                                  FROM question_sources s
+                                  JOIN document_chunks c ON c.id=s.chunk_id
+                                  JOIN documents d ON d.id=c.document_id
+                                  WHERE s.question_version_id=?
+                                  ORDER BY c.page_start""", (version_id,)))
+        return item
+
+    @app.post("/api/knowledge-points/{knowledge_point_id}/generate-questions")
+    def generate_questions(knowledge_point_id: str, payload: GenerateQuestionsRequest):
+        """Generate pending questions only from approved concepts + their sources."""
+        if len(set(payload.question_types)) != len(payload.question_types):
+            raise HTTPException(422, "question_types must not contain duplicates")
+        with transaction(database) as db:
+            kp = db.execute("""SELECT id,course_id,canonical_name,summary,review_status
+                    FROM knowledge_points WHERE id=? AND archived_at IS NULL""",
+                    (knowledge_point_id,)).fetchone()
+            if kp is None:
+                raise HTTPException(404, "Knowledge point not found")
+            if kp["review_status"] != "approved":
+                raise HTTPException(409, "Approve the knowledge point before generating questions")
+            source_rows = _rows(db.execute("""SELECT c.id,c.page_start,c.content_kind,c.content_text,
+                        d.original_filename
+                        FROM knowledge_point_sources s
+                        JOIN document_chunks c ON c.id=s.chunk_id
+                        JOIN documents d ON d.id=c.document_id
+                        WHERE s.knowledge_point_id=? AND d.status='ready'
+                        ORDER BY c.page_start,c.chunk_index LIMIT 4""", (knowledge_point_id,)))
+            if not source_rows:
+                raise HTTPException(422, "No source material linked to this knowledge point")
+            existing_stems = {compact(row["stem"]) for row in db.execute("""SELECT v.stem FROM question_versions v
+                                JOIN questions q ON q.id=v.question_id
+                                WHERE q.course_id=? AND q.archived_at IS NULL""", (kp["course_id"],))}
+        # Strictly bind evidence to the snippets that actually reached the model.
+        sources = {row["id"]: {**row, "content_text": row["content_text"][:2200]} for row in source_rows}
+        provider = app.state.ai_provider
+        job_id = _uuid()
+        with transaction(database) as db:
+            db.execute("""INSERT INTO processing_jobs
+                       (id,course_id,document_id,job_type,engine_name,prompt_version,status)
+                       VALUES (?,?,?,'question_generate',?,'questions_v1','running')""",
+                       (job_id, kp["course_id"], None, getattr(provider,"text_model","local")))
+        try:
+            raw = provider.generate_questions(knowledge_name=kp["canonical_name"],
+                knowledge_summary=kp["summary"] or "", sources=list(sources.values()),
+                count=payload.count, question_types=payload.question_types)
+            valid, warnings = validate_generated_questions(raw, sources,
+                permitted_types=set(payload.question_types),count=payload.count,
+                existing_stems=existing_stems)
+            new_versions = []
+            with transaction(database) as db:
+                # Recheck the approval state after inference (which can be slow).
+                current = db.execute("SELECT review_status FROM knowledge_points WHERE id=?", (knowledge_point_id,)).fetchone()
+                if current is None or current["review_status"] != "approved":
+                    raise HTTPException(409, "Knowledge point approval changed during generation; retry")
+                for candidate in valid:
+                    question_id, version_id = _uuid(), _uuid()
+                    db.execute("INSERT INTO questions(id,course_id,origin) VALUES (?,?,'ai')",
+                               (question_id, kp["course_id"]))
+                    db.execute("""INSERT INTO question_versions(id,question_id,version_no,
+                               question_type,stem,options_json,correct_answer_json,explanation,
+                               difficulty,review_status,created_job_id)
+                               VALUES (?,?,1,?,?,?,?,?,?,'pending',?)""",
+                               (version_id,question_id,candidate["question_type"],candidate["stem"],
+                                json.dumps(candidate["options"],ensure_ascii=False),
+                                json.dumps(candidate["correct_answer"],ensure_ascii=False),
+                                candidate["explanation"],candidate["difficulty"],job_id))
+                    db.execute("""INSERT INTO question_knowledge_points
+                               (question_version_id,knowledge_point_id,is_primary) VALUES (?,?,1)""",
+                               (version_id,knowledge_point_id))
+                    source_kind = sources[candidate["source_chunk_id"]]["content_kind"]
+                    evidence = ("AI visual description (unverified): " if source_kind == "figure_description"
+                                else "Verbatim source text: ") + candidate["quote"]
+                    db.execute("""INSERT INTO question_sources
+                               (question_version_id,chunk_id,evidence_note) VALUES (?,?,?)""",
+                               (version_id,candidate["source_chunk_id"],evidence))
+                    new_versions.append(version_id)
+                db.execute("""UPDATE processing_jobs SET status='succeeded',
+                           finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",(job_id,))
+            return {"job_id":job_id,"created":len(new_versions),
+                    "question_version_ids":new_versions,"review_status":"pending",
+                    "warnings":warnings}
+        except (AIConfigError, AIServiceError) as exc:
+            with transaction(database) as db:
+                db.execute("""UPDATE processing_jobs SET status='failed',error_message=?,
+                           finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",
+                           (str(exc)[:1000],job_id))
+            raise HTTPException(503 if isinstance(exc,AIConfigError) else 502,str(exc)) from exc
+
+    @app.get("/api/courses/{course_id}/questions")
+    def list_course_questions(course_id: str, status: Literal["pending", "approved", "rejected", "draft"] | None = None):
+        with transaction(database) as db:
+            ensure_course(db, course_id)
+            rows = _rows(db.execute("""SELECT v.id AS version_id,v.question_id,v.version_no,
+                      v.question_type,v.stem,v.difficulty,v.review_status,
+                      (SELECT k.knowledge_point_id FROM question_knowledge_points k
+                       WHERE k.question_version_id=v.id AND k.is_primary=1) AS primary_knowledge_point_id
+                      FROM question_versions v JOIN questions q ON q.id=v.question_id
+                      WHERE q.course_id=? AND q.archived_at IS NULL
+                      AND v.version_no=(SELECT MAX(x.version_no) FROM question_versions x WHERE x.question_id=q.id)
+                      ORDER BY v.created_at,v.id""", (course_id,)))
+            return [r for r in rows if status is None or r["review_status"] == status]
+
+    @app.get("/api/question-versions/{version_id}")
+    def get_question_version(version_id: str):
+        with transaction(database) as db:
+            return question_version_detail(db,version_id)
+
+    @app.get("/api/questions/{question_id}/versions")
+    def question_history(question_id: str):
+        with transaction(database) as db:
+            exists = db.execute("SELECT 1 FROM questions WHERE id=? AND archived_at IS NULL",(question_id,)).fetchone()
+            if not exists:
+                raise HTTPException(404,"Question not found")
+            vids = db.execute("""SELECT id FROM question_versions WHERE question_id=?
+                                  ORDER BY version_no""",(question_id,)).fetchall()
+            return [question_version_detail(db,row["id"]) for row in vids]
+
+    @app.post("/api/question-versions/{version_id}/revise",status_code=201)
+    def revise_question(version_id: str,payload: QuestionRevisionRequest):
+        changes = payload.model_dump(exclude_unset=True)
+        if not changes or any(value is None for value in changes.values()):
+            raise HTTPException(422,"Specify non-null fields to revise")
+        with transaction(database) as db:
+            old = question_version_detail(db,version_id)
+            latest = db.execute("SELECT MAX(version_no) AS n FROM question_versions WHERE question_id=?",
+                                (old["question_id"],)).fetchone()["n"]
+            if old["version_no"] != latest:
+                raise HTTPException(409,"Only the latest question version can be revised")
+            fields = {key:changes.get(key,old[key]) for key in
+                      ("stem","options","correct_answer","explanation","difficulty")}
+            err = validate_question_fields(old["question_type"],fields["stem"],fields["options"],
+                                           fields["correct_answer"],fields["explanation"],fields["difficulty"])
+            if err:
+                raise HTTPException(422,err)
+            if all(fields[key] == old[key] for key in fields):
+                raise HTTPException(422,"No content change specified")
+            new_id = _uuid()
+            db.execute("""INSERT INTO question_versions(id,question_id,version_no,question_type,
+                       stem,options_json,correct_answer_json,explanation,difficulty,review_status)
+                       VALUES (?,?,?,?,?,?,?,?,?,'pending')""",
+                       (new_id,old["question_id"],latest+1,old["question_type"],fields["stem"],
+                        json.dumps(fields["options"],ensure_ascii=False),
+                        json.dumps(fields["correct_answer"],ensure_ascii=False),
+                        fields["explanation"],fields["difficulty"]))
+            for link in old["knowledge_points"]:
+                db.execute("""INSERT INTO question_knowledge_points
+                           (question_version_id,knowledge_point_id,is_primary) VALUES (?,?,?)""",
+                           (new_id,link["knowledge_point_id"],link["is_primary"]))
+            for origin in old["sources"]:
+                db.execute("INSERT INTO question_sources(question_version_id,chunk_id,evidence_note) VALUES (?,?,?)",
+                           (new_id,origin["chunk_id"],origin["evidence_note"]))
+            return question_version_detail(db,new_id)
+
+    @app.post("/api/question-versions/{version_id}/review")
+    def review_question(version_id: str,payload: ReviewQuestionRequest):
+        with transaction(database) as db:
+            version = question_version_detail(db,version_id)
+            if version["review_status"] == payload.decision:
+                return {"id":version_id,"review_status":payload.decision}
+            if version["review_status"] not in ("pending","draft"):
+                raise HTTPException(409,"Create a new version to change an already reviewed question")
+            if payload.decision == "approved":
+                if not version["sources"]:
+                    raise HTTPException(422,"Question needs source evidence")
+                primaries = [p for p in version["knowledge_points"] if p["is_primary"] == 1]
+                if len(primaries) != 1:
+                    raise HTTPException(422,"Exactly one primary knowledge point is required")
+                current = db.execute("""SELECT review_status FROM knowledge_points
+                                       WHERE id=? AND archived_at IS NULL""",
+                                     (primaries[0]["knowledge_point_id"],)).fetchone()
+                if current is None or current["review_status"] != "approved":
+                    raise HTTPException(409,"Primary knowledge point must be approved")
+                err = validate_question_fields(version["question_type"],version["stem"],
+                                               version["options"],version["correct_answer"],
+                                               version["explanation"],version["difficulty"])
+                if err:
+                    raise HTTPException(422,err)
+            db.execute("""UPDATE question_versions SET review_status=?,
+                        approved_at=CASE WHEN ?='approved'
+                        THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END WHERE id=?""",
+                       (payload.decision,payload.decision,version_id))
+            return {"id":version_id,"review_status":payload.decision}
 
     return app
 
