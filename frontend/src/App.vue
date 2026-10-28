@@ -31,6 +31,7 @@ const index = ref(0)
 const selected = ref<Choice>(null)
 const questionStarted = ref(Date.now())
 const pendingRequest = ref<{ itemId: string, key: string, response: string | boolean, elapsedMs: number } | null>(null)
+const latestMastery = ref<{ itemId: string, before: number, after: number } | null>(null)
 
 const currentCourse = computed(() => courses.value.find(c => c.id === courseId.value))
 const approvedCount = computed(() => questions.value.filter(q => q.review_status === 'approved').length)
@@ -102,6 +103,7 @@ async function loadCourseData(id: string) {
   const version = ++requestVersion
   loading.value = true
   quiz.value = null
+  latestMastery.value = null
   questions.value = []
   report.value = null
   banner.value = ''
@@ -171,6 +173,7 @@ async function startQuiz() {
   try {
     quiz.value = await api.startQuiz(courseId.value, Math.min(count.value, maxCount.value))
     localStorage.setItem(sessionKey(courseId.value), quiz.value.id)
+    latestMastery.value = null
     chooseIndex(0)
   } catch (error) {
     if (error instanceof ApiError && error.status === 409)
@@ -193,6 +196,7 @@ function applyAnswer(itemId: string, answer: AnswerFeedback, elapsedMs: number) 
   item.result = { answer_id: answer.answer_id, response: answer.response, is_correct: answer.is_correct,
     correct_answer: answer.correct_answer, explanation: answer.explanation,
     answered_at: answer.answered_at, elapsed_ms: elapsedMs }
+  latestMastery.value = { itemId, before: answer.mastery.before, after: answer.mastery.after }
   quiz.value.answered += 1
   if (answer.is_correct) quiz.value.correct += 1
   if (quiz.value.answered === quiz.value.total) quiz.value.status = 'completed'
@@ -202,7 +206,7 @@ async function submit() {
   if (!item || item.answered || selected.value === null || submitting.value) return
   submitting.value = true
   banner.value = ''
-  const pending = pendingRequest.value?.itemId === item.quiz_item_id ? pendingRequest.value : {
+  const pending = pendingRequest.value && pendingRequest.value.itemId === item.quiz_item_id ? pendingRequest.value : {
     itemId: item.quiz_item_id, key: crypto.randomUUID(), response: selected.value,
     elapsedMs: Math.min(86_400_000, Math.max(0, Date.now() - questionStarted.value)),
   }
@@ -396,6 +400,9 @@ onMounted(() => { void initialize() })
                       <div class="feedback-heading"><CheckCircle2 v-if="currentResult.is_correct" :size="22" /><XCircle v-else :size="22" /><strong>{{ currentResult.is_correct ? '回答正确，继续保持！' : '再巩固一下这个知识点' }}</strong></div>
                       <p>正确答案：<strong>{{ formatChoice(currentResult.correct_answer) }}</strong></p>
                       <div class="explanation-block"><span>题目解析</span><p>{{ currentResult.explanation || '暂无解析' }}</p></div>
+                      <div v-if="latestMastery?.itemId === currentItem.quiz_item_id" class="mastery-change">
+                        <Activity :size="16" /> BKT 估计掌握度 <strong>{{ percent(latestMastery.before) }} → {{ percent(latestMastery.after) }}</strong>
+                      </div>
                     </div>
                     <div class="question-actions"><div class="answer-safety"><Lightbulb :size="17" /><span>{{ currentItem.answered ? '答案与解析已显示' : '提交前不会显示正确答案' }}</span></div>
                       <button v-if="!currentItem.answered" class="button button-primary submit-button" :disabled="!canAnswer" @click="submit"><LoaderCircle v-if="submitting" :size="18" class="spinning" /><Check v-else :size="18" />{{ submitting ? '正在保存答案…' : pendingRequest ? '重试提交答案' : '提交答案' }}</button>
