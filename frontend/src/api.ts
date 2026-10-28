@@ -1,0 +1,163 @@
+/** Typed, same-origin API client. Vite proxies /api to FastAPI during local development. */
+export interface Course {
+  id: string
+  title: string
+  description: string | null
+  code: string | null
+  created_at: string
+}
+
+export interface QuestionSummary {
+  version_id: string
+  question_id: string
+  version_no: number
+  question_type: 'single_choice' | 'true_false'
+  stem: string
+  difficulty: number
+  review_status: 'draft' | 'pending' | 'approved' | 'rejected'
+  primary_knowledge_point_id: string | null
+}
+
+export interface QuizAnswerResult {
+  answer_id: string
+  response: string | boolean
+  is_correct: boolean
+  correct_answer: string | boolean
+  explanation: string | null
+  answered_at: string
+  elapsed_ms?: number | null
+}
+
+export interface QuizItem {
+  quiz_item_id: string
+  position: number
+  question_version_id: string
+  primary_knowledge_point_id: string
+  question_type: 'single_choice' | 'true_false'
+  stem: string
+  options: Record<string, string>
+  answered: boolean
+  result?: QuizAnswerResult
+}
+
+export interface QuizSession {
+  id: string
+  course_id: string
+  mode: 'normal'
+  status: 'active' | 'completed' | 'cancelled'
+  started_at: string
+  finished_at: string | null
+  total: number
+  answered: number
+  correct: number
+  items: QuizItem[]
+}
+
+export interface MasterySnapshot {
+  model: string
+  before: number
+  posterior: number
+  after: number
+}
+
+export interface AnswerFeedback {
+  answer_id: string
+  quiz_item_id: string
+  response: string | boolean
+  is_correct: boolean
+  correct_answer: string | boolean
+  explanation: string | null
+  knowledge_point_id: string
+  mastery: MasterySnapshot
+  answered_at: string
+}
+
+export interface KnowledgeReport {
+  knowledge_point_id: string
+  canonical_name: string
+  p_mastery: number | null
+  observations: number | null
+  answered: number
+  correct: number
+  accuracy: number | null
+}
+
+export interface LearningReport {
+  course_id: string
+  user_id: string
+  sessions: number
+  answered: number
+  correct: number
+  accuracy: number | null
+  mastery_model: string
+  bkt_warning: string
+  knowledge_points: KnowledgeReport[]
+}
+
+const base = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(base + path, {
+      ...options,
+      headers: {
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
+      },
+    })
+  } catch {
+    throw new ApiError(0, '无法连接后端。请确认 FastAPI 正在 127.0.0.1:8000 运行。')
+  }
+  if (!response.ok) {
+    let detail: unknown
+    try {
+      const payload: { detail?: unknown } = await response.json()
+      detail = payload.detail
+    } catch {
+      detail = undefined
+    }
+    const message = typeof detail === 'string' ? detail : ({
+      404: '找不到相应记录，请刷新重试。',
+      409: '当前操作与已有状态冲突，请刷新后重试。',
+      422: '提交的数据不符合要求。',
+      503: '后端暂时无法提供服务。',
+    } as Record<number, string>)[response.status] || '请求失败，请稍后重试。'
+    throw new ApiError(response.status, message)
+  }
+  return await response.json() as T
+}
+
+export const api = {
+  health: () => request<{ status: string }>('/health'),
+  courses: () => request<Course[]>('/api/courses'),
+  questions: (courseId: string) => request<QuestionSummary[]>(
+    '/api/courses/' + encodeURIComponent(courseId) + '/questions',
+  ),
+  report: (courseId: string) => request<LearningReport>(
+    '/api/courses/' + encodeURIComponent(courseId) + '/learning-report',
+  ),
+  startQuiz: (courseId: string, count: number) => request<QuizSession>(
+    '/api/courses/' + encodeURIComponent(courseId) + '/quiz-sessions',
+    { method: 'POST', body: JSON.stringify({ count, mode: 'normal' }) },
+  ),
+  quiz: (sessionId: string) => request<QuizSession>(
+    '/api/quiz-sessions/' + encodeURIComponent(sessionId),
+  ),
+  answer: (quizItemId: string, body: {
+    client_request_id: string
+    response: string | boolean
+    elapsed_ms: number
+  }) => request<AnswerFeedback>(
+    '/api/quiz-items/' + encodeURIComponent(quizItemId) + '/answer',
+    { method: 'POST', body: JSON.stringify(body) },
+  ),
+}
