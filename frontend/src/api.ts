@@ -94,6 +94,71 @@ export interface LearningReport {
   knowledge_points: KnowledgeReport[]
 }
 
+
+export type ReviewStatus = 'pending' | 'approved' | 'rejected'
+
+export interface SourceEvidence {
+  chunk_id: string
+  document_id: string
+  original_filename: string
+  page_start: number
+  page_end?: number
+  content_kind: 'text' | 'figure_description' | 'table' | 'mixed'
+  evidence_note: string | null
+}
+
+export interface KnowledgePoint {
+  id: string
+  course_id: string
+  chapter_id: string | null
+  canonical_name: string
+  summary: string | null
+  difficulty: number | null
+  review_status: ReviewStatus
+}
+
+export interface KnowledgePointDetail extends KnowledgePoint {
+  sources: SourceEvidence[]
+  created_job_id: string | null
+}
+
+export interface QuestionVersion {
+  id: string
+  question_id: string
+  version_no: number
+  question_type: 'single_choice' | 'true_false'
+  stem: string
+  options: Record<string, string>
+  correct_answer: string | boolean
+  explanation: string | null
+  difficulty: number
+  review_status: 'draft' | ReviewStatus
+  approved_at: string | null
+  sources: SourceEvidence[]
+  knowledge_points: { knowledge_point_id: string; is_primary: number }[]
+}
+
+export interface GenerationResult {
+  job_id: string
+  created: number
+  question_version_ids: string[]
+  review_status: 'pending'
+  warnings: string[]
+}
+
+export interface QuestionRevision {
+  stem?: string
+  options?: Record<string, string>
+  correct_answer?: string | boolean
+  explanation?: string
+  difficulty?: number
+}
+
+export function sourcePreviewUrl(source: SourceEvidence): string {
+  return base + '/api/documents/' + encodeURIComponent(source.document_id)
+    + '/pages/' + source.page_start + '/preview'
+}
+
 const base = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
 
 export class ApiError extends Error {
@@ -159,5 +224,35 @@ export const api = {
   }) => request<AnswerFeedback>(
     '/api/quiz-items/' + encodeURIComponent(quizItemId) + '/answer',
     { method: 'POST', body: JSON.stringify(body) },
+  ),,
+
+  knowledgePoints: (courseId: string) => request<KnowledgePoint[]>(
+    '/api/courses/' + encodeURIComponent(courseId) + '/knowledge-points',
+  ),
+  knowledgePoint: (id: string) => request<KnowledgePointDetail>(
+    '/api/knowledge-points/' + encodeURIComponent(id),
+  ),
+  updateKnowledgePoint: (id: string, update: { canonical_name?: string; summary?: string | null; difficulty?: number | null }) =>
+    request<KnowledgePointDetail>('/api/knowledge-points/' + encodeURIComponent(id),
+      { method: 'PATCH', body: JSON.stringify(update) }),
+  reviewKnowledgePoint: (id: string, decision: 'approved' | 'rejected') =>
+    request<{ id: string; review_status: ReviewStatus }>(
+      '/api/knowledge-points/' + encodeURIComponent(id) + '/review',
+      { method: 'POST', body: JSON.stringify({ decision }) }),
+  generateQuestions: (id: string, options: { count: number; question_types: ('single_choice' | 'true_false')[] }) =>
+    request<GenerationResult>('/api/knowledge-points/' + encodeURIComponent(id) + '/generate-questions',
+      { method: 'POST', body: JSON.stringify(options) }),
+  questionVersion: (id: string) => request<QuestionVersion>(
+    '/api/question-versions/' + encodeURIComponent(id),
+  ),
+  reviewQuestion: (id: string, decision: 'approved' | 'rejected') =>
+    request<{ id: string; review_status: ReviewStatus }>(
+      '/api/question-versions/' + encodeURIComponent(id) + '/review',
+      { method: 'POST', body: JSON.stringify({ decision }) }),
+  reviseQuestion: (id: string, update: QuestionRevision) =>
+    request<QuestionVersion>('/api/question-versions/' + encodeURIComponent(id) + '/revise',
+      { method: 'POST', body: JSON.stringify(update) }),
+  questionVersions: (id: string) => request<QuestionVersion[]>(
+    '/api/questions/' + encodeURIComponent(id) + '/versions',
   ),
 }
