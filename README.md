@@ -29,7 +29,7 @@
 
 本项目对应《智能应用系统课程设计 2026》第 **20** 题「智能教育评测与个性化学习系统」，同时希望逐步成长为能够长期使用的个人学习平台。
 
-> **当前状态：M1 后端开发中（FastAPI v0.1.0）。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传与按页提取。BKT 已有独立公式和单测，但尚未接入测评流程。AI 题目生成、在线测评、完整前端仍未实现。
+> **当前状态：M1 后端开发中（FastAPI v0.1.1）。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传、按页提取及低文本页面质量提示。BKT 已有独立公式和单测，但尚未接入测评流程。AI 题目生成、在线测评、完整前端仍未实现。
 
 ## ✨ 功能规划
 
@@ -155,7 +155,7 @@ uvicorn knowtrace.main:app --reload
 
 Windows PowerShell 使用 `.venv\Scripts\Activate.ps1` 激活环境。运行后访问 <http://127.0.0.1:8000/docs>（Swagger API 文档）和 <http://127.0.0.1:8000/health>。
 
-通过 `POST /api/courses` 新建课程（示例：`{"title":"计算机网络"}`），然后通过 `POST /api/courses/{course_id}/documents` 上传 PDF/PPTX（最大 30 MiB），通过 `GET /api/documents/{document_id}/chunks` 查看带页码的文本片段。还支持课程章节及知识点的增查接口。
+通过 `POST /api/courses` 新建课程（示例：`{"title":"计算机网络"}`），然后通过 `POST /api/courses/{course_id}/documents` 上传 PDF/PPTX（最大 30 MiB），通过 `GET /api/documents/{document_id}/chunks` 查看带页码的文本片段。新增 `GET /api/documents/{document_id}/quality` 检查低文本量页面；PDF 可通过 `GET /api/documents/{document_id}/pages/{page_number}/preview` 查看原始页面图片，以人工确认图示、公式是否遗漏。还支持课程章节及知识点的增查接口。
 
 **目前仅支持 PDF/PPTX 中可提取的文字**；扫描件、复杂图示、公式尚不能完整理解，也没有 AI 自动出题。默认数据写入启动目录下 `data/`，可设置 `KNOWTRACE_DATA_DIR`。此 API 暂无登录认证，**只能在可信本地环境使用，不要直接暴露公网**。请勿把个人课件提交到公共仓库。
 
