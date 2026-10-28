@@ -689,6 +689,9 @@ def create_app(*, db_path: str | Path | None = None,
             if version["review_status"] not in ("pending","draft"):
                 raise HTTPException(409,"Create a new version to change an already reviewed question")
             if payload.decision == "approved":
+                latest = db.execute("SELECT MAX(version_no) FROM question_versions WHERE question_id=?", (version["question_id"],)).fetchone()[0]
+                if version["version_no"] != latest:
+                    raise HTTPException(409, "Only latest question version can be approved")
                 if not version["sources"]:
                     raise HTTPException(422,"Question needs source evidence")
                 primaries = [p for p in version["knowledge_points"] if p["is_primary"] == 1]
