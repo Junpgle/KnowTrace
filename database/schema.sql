@@ -103,6 +103,18 @@ CREATE TABLE IF NOT EXISTS knowledge_point_sources (
 );
 CREATE INDEX IF NOT EXISTS idx_kp_sources_chunk ON knowledge_point_sources(chunk_id);
 
+-- Append-only history for manual edits and knowledge point approval decisions.
+CREATE TABLE IF NOT EXISTS knowledge_point_events (
+    id TEXT PRIMARY KEY,
+    knowledge_point_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE RESTRICT,
+    action TEXT NOT NULL CHECK (action IN ('edited','approved','rejected')),
+    before_json TEXT NOT NULL,
+    after_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_kp_events_point_time ON knowledge_point_events(knowledge_point_id,created_at);
+
+
 CREATE TABLE IF NOT EXISTS knowledge_relations (
     id TEXT PRIMARY KEY,
     source_kp_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE RESTRICT,
