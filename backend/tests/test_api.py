@@ -87,3 +87,46 @@ def test_bkt_update():
     assert after_good > posterior_good and after_bad > posterior_bad
     with pytest.raises(ValueError):
         update_mastery(1.1, True)
+
+
+def test_quality_flags_sparse_diagram_and_page_preview(client):
+    cid = make_course(client)
+    pdf = fitz.open()
+    first = pdf.new_page()
+    first.insert_text((70, 70), "Network protocol architecture: " + "layered architecture " * 8)
+    second = pdf.new_page()
+    second.insert_text((70, 70), "2.1 Communication Model")
+    second.draw_rect(fitz.Rect(70, 100, 480, 400), fill=(0.7, 0.8, 0.9))
+    third = pdf.new_page()  # blank page still must be reported
+    response = client.post(f"/api/courses/{cid}/documents", files={"file": ("diagram.pdf", pdf.tobytes(), "application/pdf")})
+    assert response.status_code == 201
+    doc_id = response.json()["id"]
+    quality = client.get(f"/api/documents/{doc_id}/quality")
+    assert quality.status_code == 200
+    result = quality.json()
+    assert result["total_pages"] == 3
+    assert result["pages_needing_review"] == 2
+    assert result["pages"][0]["needs_review"] is False
+    assert result["pages"][1]["reason"] == "low_text"
+    assert result["pages"][2]["reason"] == "no_text"
+    preview = client.get(f"/api/documents/{doc_id}/pages/2/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"].startswith("image/png")
+    assert preview.content.startswith(b"\x89PNG")
+    assert client.get(f"/api/documents/{doc_id}/pages/4/preview").status_code == 404
+    assert client.get(f"/api/documents/{doc_id}/quality").status_code == 200
+    assert client.get("/api/documents/not-existing/quality").status_code == 404
+
+
+def test_pptx_quality_and_no_preview(client):
+    cid = make_course(client)
+    pres = Presentation()
+    slide = pres.slides.add_slide(pres.slide_layouts[5])
+    slide.shapes.title.text = "Ethernet"
+    output = BytesIO()
+    pres.save(output)
+    uploaded = client.post(f"/api/courses/{cid}/documents", files={"file": ("slides.pptx", output.getvalue(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")})
+    assert uploaded.status_code == 201
+    did = uploaded.json()["id"]
+    assert client.get(f"/api/documents/{did}/quality").json()["pages"][0]["reason"] == "low_text"
+    assert client.get(f"/api/documents/{did}/pages/1/preview").status_code == 415
