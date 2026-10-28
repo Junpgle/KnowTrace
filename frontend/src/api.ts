@@ -224,7 +224,7 @@ export const api = {
   }) => request<AnswerFeedback>(
     '/api/quiz-items/' + encodeURIComponent(quizItemId) + '/answer',
     { method: 'POST', body: JSON.stringify(body) },
-  ),,
+  ),
 
   knowledgePoints: (courseId: string) => request<KnowledgePoint[]>(
     '/api/courses/' + encodeURIComponent(courseId) + '/knowledge-points',
