@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import sqlite3
 import re
@@ -13,7 +14,7 @@ from uuid import uuid4
 import fitz
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .db import connect, initialize, transaction
 from .ai import AIConfigError, AIServiceError, OllamaProvider, compact, grounded_items
@@ -45,6 +46,26 @@ class ReviewKnowledgeRequest(BaseModel):
     decision: str = Field(pattern="^(approved|rejected)$")
 
 
+class KnowledgePointUpdate(BaseModel):
+    """Partial edit. An explicit null clears optional fields; omitted means unchanged."""
+    model_config = ConfigDict(extra="forbid")
+
+    canonical_name: str | None = Field(default=None, max_length=160)
+    summary: str | None = Field(default=None, max_length=2000)
+    difficulty: int | None = Field(default=None, ge=1, le=3)
+    chapter_id: str | None = None
+
+    @field_validator("canonical_name", "summary")
+    @classmethod
+    def validate_text(cls, value: str | None, info):
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError(f"{info.field_name} cannot be blank; use null to clear optional fields")
+        return value
+
+
 class KnowledgePointCreate(BaseModel):
     canonical_name: str = Field(min_length=1, max_length=160)
     chapter_id: str | None = None
@@ -73,7 +94,7 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="0.2.1", lifespan=lifespan)
     app.state.ai_provider = ai_provider if ai_provider is not None else OllamaProvider.from_env()
 
     def ensure_course(db: sqlite3.Connection, course_id: str) -> None:
@@ -82,7 +103,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.2.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "0.2.1"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -148,6 +169,87 @@ def create_app(*, db_path: str | Path | None = None,
         with transaction(database) as db:
             ensure_course(db, course_id)
             return _rows(db.execute("SELECT id,course_id,chapter_id,canonical_name,summary,difficulty,review_status FROM knowledge_points WHERE course_id=? AND archived_at IS NULL ORDER BY created_at,id", (course_id,)))
+
+    def knowledge_detail(db: sqlite3.Connection, knowledge_point_id: str) -> dict:
+        point = db.execute("""SELECT id,course_id,chapter_id,canonical_name,summary,difficulty,
+                             review_status,created_job_id,created_at,updated_at
+                             FROM knowledge_points WHERE id=? AND archived_at IS NULL""",
+                           (knowledge_point_id,)).fetchone()
+        if point is None:
+            raise HTTPException(404, "Knowledge point not found")
+        sources = _rows(db.execute("""SELECT c.id AS chunk_id,c.document_id,d.original_filename,
+                         c.page_start,c.page_end,c.content_kind,s.evidence_note
+                         FROM knowledge_point_sources s
+                         JOIN document_chunks c ON c.id=s.chunk_id
+                         JOIN documents d ON d.id=c.document_id
+                         WHERE s.knowledge_point_id=? ORDER BY d.created_at,c.page_start,c.chunk_index""",
+                         (knowledge_point_id,)))
+        return {**dict(point), "sources": sources}
+
+    def audit_knowledge(db: sqlite3.Connection, knowledge_point_id: str, action: str,
+                        before: dict, after: dict) -> None:
+        db.execute("""INSERT INTO knowledge_point_events
+                      (id,knowledge_point_id,action,before_json,after_json)
+                      VALUES (?,?,?,?,?)""",
+                   (_uuid(), knowledge_point_id, action,
+                    json.dumps(before, ensure_ascii=False, sort_keys=True),
+                    json.dumps(after, ensure_ascii=False, sort_keys=True)))
+
+    @app.get("/api/knowledge-points/{knowledge_point_id}")
+    def get_knowledge_point(knowledge_point_id: str):
+        with transaction(database) as db:
+            return knowledge_detail(db, knowledge_point_id)
+
+    @app.get("/api/knowledge-points/{knowledge_point_id}/history")
+    def knowledge_history(knowledge_point_id: str):
+        with transaction(database) as db:
+            knowledge_detail(db, knowledge_point_id)
+            events = _rows(db.execute("""SELECT id,action,before_json,after_json,created_at
+                        FROM knowledge_point_events WHERE knowledge_point_id=?
+                        ORDER BY rowid""", (knowledge_point_id,)))
+            for event in events:
+                event["before"] = json.loads(event.pop("before_json"))
+                event["after"] = json.loads(event.pop("after_json"))
+            return events
+
+    @app.patch("/api/knowledge-points/{knowledge_point_id}")
+    def update_knowledge_point(knowledge_point_id: str, payload: KnowledgePointUpdate):
+        changes = payload.model_dump(exclude_unset=True)
+        if not changes:
+            raise HTTPException(422, "Specify at least one field to update")
+        if "canonical_name" in changes and changes["canonical_name"] is None:
+            raise HTTPException(422, "canonical_name cannot be null")
+        with transaction(database) as db:
+            previous = knowledge_detail(db, knowledge_point_id)
+            if "chapter_id" in changes and changes["chapter_id"] is not None:
+                if not changes["chapter_id"].strip():
+                    raise HTTPException(422, "chapter_id must not be blank")
+                chapter = db.execute("SELECT course_id FROM chapters WHERE id=?",
+                                     (changes["chapter_id"],)).fetchone()
+                if chapter is None or chapter["course_id"] != previous["course_id"]:
+                    raise HTTPException(422, "Chapter must belong to the same course")
+            if "canonical_name" in changes:
+                possible_duplicates = db.execute("""SELECT canonical_name FROM knowledge_points
+                     WHERE course_id=? AND id<>? AND archived_at IS NULL""",
+                     (previous["course_id"], knowledge_point_id)).fetchall()
+                if any(compact(row["canonical_name"]) == compact(changes["canonical_name"])
+                       for row in possible_duplicates):
+                    raise HTTPException(409, "Knowledge point name already exists in this course")
+            fields = ("canonical_name", "summary", "difficulty", "chapter_id")
+            updated = {key: changes.get(key, previous[key]) for key in fields}
+            if all(updated[key] == previous[key] for key in fields):
+                return previous
+            before = {key: previous[key] for key in (*fields, "review_status")}
+            # Any material edit (including a previously approved point) must
+            # be reviewed again. The original source evidence is immutable.
+            db.execute("""UPDATE knowledge_points SET canonical_name=?,summary=?,difficulty=?,
+                          chapter_id=?,review_status='pending',
+                          updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",
+                       (updated["canonical_name"],updated["summary"],updated["difficulty"],
+                        updated["chapter_id"], knowledge_point_id))
+            audit_knowledge(db, knowledge_point_id, "edited", before,
+                            {**updated, "review_status": "pending"})
+            return knowledge_detail(db, knowledge_point_id)
 
     @app.post("/api/courses/{course_id}/documents", status_code=201)
     async def upload_document(course_id: str, file: UploadFile = File(...)):
@@ -368,18 +470,25 @@ def create_app(*, db_path: str | Path | None = None,
         with transaction(database) as db:
             if not db.execute("SELECT 1 FROM documents WHERE id=?", (document_id,)).fetchone():
                 raise HTTPException(404, "Document not found")
-            return _rows(db.execute("""SELECT DISTINCT kp.id,kp.canonical_name,kp.summary,kp.review_status,
-                c.page_start AS page,c.content_kind AS source_kind,s.evidence_note
+            return _rows(db.execute("""SELECT DISTINCT kp.id,kp.canonical_name,kp.summary,kp.difficulty,
+                kp.chapter_id,kp.review_status,c.page_start AS page,c.content_kind AS source_kind,s.evidence_note
                 FROM knowledge_points kp JOIN knowledge_point_sources s ON s.knowledge_point_id=kp.id
                 JOIN document_chunks c ON c.id=s.chunk_id WHERE c.document_id=? ORDER BY c.page_start,kp.canonical_name""", (document_id,)))
 
     @app.post("/api/knowledge-points/{knowledge_point_id}/review")
     def review_knowledge(knowledge_point_id: str, payload: ReviewKnowledgeRequest):
         with transaction(database) as db:
-            result = db.execute("UPDATE knowledge_points SET review_status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND archived_at IS NULL",
-                                (payload.decision, knowledge_point_id))
-            if result.rowcount == 0:
-                raise HTTPException(404, "Knowledge point not found")
+            previous = knowledge_detail(db, knowledge_point_id)
+            if previous["review_status"] == payload.decision:
+                return {"id": knowledge_point_id, "review_status": payload.decision}
+            if payload.decision == "approved" and previous["created_job_id"] and not previous["sources"]:
+                raise HTTPException(422, "AI knowledge point requires a source before approval")
+            db.execute("""UPDATE knowledge_points SET review_status=?,
+                          updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",
+                       (payload.decision, knowledge_point_id))
+            audit_knowledge(db, knowledge_point_id, payload.decision,
+                            {"review_status": previous["review_status"]},
+                            {"review_status": payload.decision})
         return {"id": knowledge_point_id, "review_status": payload.decision}
 
     return app
