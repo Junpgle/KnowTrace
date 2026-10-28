@@ -8,7 +8,7 @@
 
 面向多学科学习场景，连接 **知识组织 → 智能测评 → 掌握度分析 → 个性化复习 → 学习反馈**。
 
-![Status](https://img.shields.io/badge/status-M1%20backend%20development-blue)
+![Status](https://img.shields.io/badge/status-v0.2.0%20AI%20extraction%20prototype-blue)
 ![Project](https://img.shields.io/badge/project-AI%20Learning-orange)
 ![Course](https://img.shields.io/badge/course-2026-informational)
 
@@ -29,7 +29,7 @@
 
 本项目对应《智能应用系统课程设计 2026》第 **20** 题「智能教育评测与个性化学习系统」，同时希望逐步成长为能够长期使用的个人学习平台。
 
-> **当前状态：M1 后端开发中（FastAPI v0.1.1）。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传、按页提取及低文本页面质量提示。BKT 已有独立公式和单测，但尚未接入测评流程。AI 题目生成、在线测评、完整前端仍未实现。
+> **当前状态：v0.2.0 AI 知识点提取原型。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传、按页提取及低文本页面质量提示。BKT 已有独立公式和单测，但尚未接入测评流程。新增 Ollama 本地模型驱动的分页面知识点提取、来源引文校验、待审核状态及可选 PDF 视觉辅助。AI 题目生成、在线测评、完整前端仍未实现。
 
 ## ✨ 功能规划
 
@@ -46,6 +46,7 @@
 
 - [ ] **AI 学习助手**：辅助讲解概念、分析错题并回答课程问题。
 - [x] **文本型 PDF/PPTX 导入**：解析并保存来源页码；AI 知识点提取、扫描件 OCR、图片理解仍未实现。
+- [x] **AI 候选知识点提取（实验版）**：使用本机 Ollama，验证资料来源、保存待审核状态；不代表已具备成熟提取质量。参考 [使用说明](docs/AI-EXTRACTION.md)。
 - [ ] **知识图谱可视化**：呈现知识点的先修、包含和相关关系。
 - [ ] **AI 辅助出题**：基于课程资料生成练习题，加入人工审查流程。
 - [ ] **复习日程规划**：结合考试日期和学习状态安排长期复习任务。
@@ -139,7 +140,8 @@ flowchart TD
 - [ ] 实现自适应选题与个性化复习推荐
 - [ ] 完成学习分析图表与算法实验
 - [ ] 完善测试、项目文档和课程设计报告
-- [ ] 逐步添加 AI 学习助手、资料导入与知识图谱
+- [x] 加入本地 AI 知识点提取原型与人工审核接口
+- [ ] 逐步添加 AI 学习助手、自动出题与知识图谱
 
 ## 🚀 快速开始（后端 M1 已验证）
 
@@ -167,6 +169,8 @@ PYTHONPATH=backend pytest -q backend/tests
 ```
 
 PowerShell：先执行 `$env:PYTHONPATH="backend"`，再执行 `pytest -q backend/tests`。
+
+**AI 知识点提取设置与使用说明：** [docs/AI-EXTRACTION.md](docs/AI-EXTRACTION.md)（须先安装 Ollama 并配置本地模型，当前自动化测试使用模拟模型）。
 
 设计文档：[需求 SRS v1.1](docs/SRS.md) · [数据库设计](docs/data-model.md) · [建表脚本](database/schema.sql)。
 
