@@ -8,7 +8,7 @@
 
 面向多学科学习场景，连接 **知识组织 → 智能测评 → 掌握度分析 → 个性化复习 → 学习反馈**。
 
-![Status](https://img.shields.io/badge/status-v0.2.1%20knowledge%20review-blue)
+![Status](https://img.shields.io/badge/status-v0.3.0%20question%20bank-blue)
 ![Project](https://img.shields.io/badge/project-AI%20Learning-orange)
 ![Course](https://img.shields.io/badge/course-2026-informational)
 
@@ -29,13 +29,14 @@
 
 本项目对应《智能应用系统课程设计 2026》第 **20** 题「智能教育评测与个性化学习系统」，同时希望逐步成长为能够长期使用的个人学习平台。
 
-> **当前状态：v0.2.1 知识点编辑与审核原型。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传、按页提取及低文本页面质量提示。BKT 已有独立公式和单测，但尚未接入测评流程。已实现 Ollama 本地模型驱动的分页面知识点提取、来源引文校验、待审核状态及可选 PDF 视觉辅助；v0.2.1 新增知识点编辑、重新审核和历史记录。AI 题目生成、在线测评、完整前端仍未实现。
+> **当前状态：v0.3.0 AI 题库生成与人工审核原型。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传、按页提取及低文本页面质量提示。BKT 已有独立公式和单测，但尚未接入测评流程。已实现 Ollama 本地模型驱动的分页面知识点提取、来源引文校验、待审核状态及可选 PDF 视觉辅助；v0.2.1 新增知识点编辑、重新审核和历史记录。AI 单选题/判断题生成、来源验证、题目版本与人工审核已实现；在线测评、完整前端仍未实现。
 
 ## ✨ 功能规划
 
 ### 核心功能（课程设计优先）
 
 - [x] **多学科知识管理基础 API**：可创建和查询课程、章节、知识点；题库功能后续开发。
+- [x] **AI 智能题库原型**：基于已审核知识点生成单选/判断题，结构与来源校验、人工审核、不可变更的题目版本。参考 [题库指南](docs/QUESTION-BANK.md)。
 - [ ] **在线智能测评**：支持章节练习、专项测试、结果解析和答题记录。
 - [ ] **知识掌握度评估**：基于答题序列追踪学习状态，定位薄弱知识点。
 - [ ] **自适应测试**：根据历史表现、知识状态及题目难度动态选题。
@@ -135,7 +136,7 @@ flowchart TD
 - [x] 编写项目介绍及初期开发规划
 - [x] 完成数据模型 v1.0 与新版需求 SRS v1.1；页面原型待设计
 - [x] 搭建后端 FastAPI 基本工程；前端待开发
-- [ ] 完成题库管理；课程、章节、知识点 API 已实现
+- [x] 完成 AI 单选/判断题生成与审核 API；课程、章节、知识点 API 已实现
 - [ ] 实现在线测评与学习行为记录
 - [ ] 实现 BKT 知识追踪和基线对比
 - [ ] 实现自适应选题与个性化复习推荐
@@ -171,7 +172,7 @@ PYTHONPATH=backend pytest -q backend/tests
 
 PowerShell：先执行 `$env:PYTHONPATH="backend"`，再执行 `pytest -q backend/tests`。
 
-**AI 知识点提取设置与使用说明：** [docs/AI-EXTRACTION.md](docs/AI-EXTRACTION.md)。知识点编辑与审核：[docs/KNOWLEDGE-REVIEW.md](docs/KNOWLEDGE-REVIEW.md)（须先安装 Ollama 并配置本地模型，当前自动化测试使用模拟模型）。
+**AI 知识点提取设置与使用说明：** [docs/AI-EXTRACTION.md](docs/AI-EXTRACTION.md)。知识点编辑与审核：[docs/KNOWLEDGE-REVIEW.md](docs/KNOWLEDGE-REVIEW.md)。题库：[docs/QUESTION-BANK.md](docs/QUESTION-BANK.md)（须先安装 Ollama 并配置本地模型，当前自动化测试使用模拟模型）。
 
 设计文档：[需求 SRS v1.1](docs/SRS.md) · [数据库设计](docs/data-model.md) · [建表脚本](database/schema.sql)。
 
