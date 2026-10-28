@@ -317,6 +317,12 @@ function previewAvailable(source: SourceEvidence): boolean {
 
     <div v-if="banner" class="qb-alert qb-error" role="alert"><AlertCircle :size="18" /> {{ banner }}</div>
     <div v-if="success" class="qb-alert qb-success" role="status"><CheckCircle2 :size="18" /> {{ success }}</div>
+    <div v-if="generated?.warnings.length" class="qb-alert qb-warning" role="status">
+      <AlertCircle :size="18" />
+      <div><strong>有 {{ generated.warnings.length }} 条模型候选未通过校验</strong>
+        <p v-for="(warning, i) in generated.warnings" :key="i">{{ warning }}</p>
+      </div>
+    </div>
 
     <div class="qb-tabs" role="tablist" aria-label="题库管理步骤">
       <button role="tab" :aria-selected="tab === 'knowledge'" :class="{ active: tab === 'knowledge' }" @click="switchTab('knowledge')">
