@@ -2,16 +2,17 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   Activity, AlertCircle, ArrowRight, Award, BookOpen, Check,
-  CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList,
+  CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList, ClipboardCheck,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
   TrendingUp, X, XCircle,
 } from '@lucide/vue'
+import QuestionBank from './components/QuestionBank.vue'
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession } from './api'
 
-type View = 'overview' | 'practice' | 'report'
+type View = 'overview' | 'practice' | 'report' | 'bank'
 type Choice = string | boolean | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
@@ -58,7 +59,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -260,6 +261,7 @@ onMounted(() => { void initialize() })
       <nav class="sidebar-nav" aria-label="主导航">
         <button type="button" :class="{ active: view === 'overview' }" @click="navigate('overview')"><LayoutDashboard :size="19" /><span>学习总览</span></button>
         <button type="button" :class="{ active: view === 'practice' }" @click="navigate('practice')"><BookOpen :size="19" /><span>开始练习</span><span v-if="quiz?.status === 'active'" class="nav-dot"></span></button>
+        <button type="button" :class="{ active: view === 'bank' }" @click="navigate('bank')"><ClipboardCheck :size="19" /><span>题库管理</span><span v-if="pendingCount" class="nav-dot"></span></button>
         <button type="button" :class="{ active: view === 'report' }" @click="navigate('report')"><TrendingUp :size="19" /><span>学习报告</span></button>
       </nav>
       <div class="sidebar-group-label course-label">正在学习</div>
@@ -342,7 +344,7 @@ onMounted(() => { void initialize() })
                   <p v-if="quiz?.status === 'active'">已经完成 {{ quiz.answered }}/{{ quiz.total }} 道题，可以从上次的位置继续。</p>
                   <p v-else-if="approvedCount">从 {{ currentCourse?.title }} 的已审核题库中出题，作答后即可查看解析。</p><p v-else>课程暂时没有已审核题目，请先完成 AI 出题和人工审核。</p>
                   <button class="button button-primary continue-button" @click="navigate('practice')">{{ quiz?.status === 'active' ? '继续上次测评' : '前往练习' }} <ArrowRight :size="18" /></button>
-                  <span v-if="pendingCount" class="pending-hint">{{ pendingCount }} 道题仍待审核</span>
+                  <button v-if="pendingCount || !approvedCount" class="text-link pending-hint qb-home-link" @click="navigate('bank')">{{ pendingCount ? pendingCount + ' 道题待审核 · 去处理' : '去生成并审核题目' }} <ArrowRight :size="15" /></button>
                 </div>
               </section>
             </div>
@@ -371,7 +373,7 @@ onMounted(() => { void initialize() })
                 <aside class="panel setup-aside"><div class="setup-aside-graphic"><div class="abstract-ring ring-one"></div><div class="abstract-ring ring-two"></div><Target :size="60" :stroke-width="1.5" /></div>
                   <h3>用练习发现真正的薄弱点</h3><p>每道题都关联知识点；答案提交后，BKT 会根据历史作答动态估计掌握概率。</p>
                   <div class="aside-divider"></div><div class="aside-stats"><span>已审核题目</span><strong>{{ approvedCount }}</strong></div><div class="aside-stats"><span>待审核题目</span><strong>{{ pendingCount }}</strong></div>
-                  <a v-if="!approvedCount" class="text-link setup-admin" href="http://127.0.0.1:8000/docs" target="_blank" rel="noopener noreferrer">前往 Swagger 审核题目 <ArrowRight :size="16" /></a>
+                  <button v-if="!approvedCount || pendingCount" class="text-link setup-admin" @click="navigate('bank')">前往题库生成与审核 <ArrowRight :size="16" /></button>
                 </aside>
               </div>
             </template>
@@ -425,6 +427,7 @@ onMounted(() => { void initialize() })
             </template>
           </div>
 
+          <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" @updated="refresh" />
           <div v-else class="view-stack">
             <div class="section-heading"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>学习报告<span class="heading-dot">.</span></h1><p class="section-description">发现学习中的进步，也正视尚未掌握的部分。</p></div>
               <button class="button button-outline button-small" @click="refresh"><RefreshCw :size="17" :class="{ spinning: refreshing }" /> 更新报告</button></div>
