@@ -258,6 +258,8 @@ h1,h2,h3,p { margin-top: 0; }
 .explanation-block > span { color: #297f69; font-size: 11px; font-weight: 800; }
 .explanation-block p { font-size: 12px; line-height: 1.9; color: #43645d; margin: 7px 0 0; }
 .incorrect .explanation-block p { color: #826c65; }
+.mastery-change { display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-top:1px solid #d1eade; margin-top:14px; padding-top:12px; color:#438879; font-size:11px; }
+.mastery-change strong { color:#126f61; font-size:12px; }
 .question-actions { display: flex; justify-content: space-between; align-items: center; gap: 15px; border-top: 1px solid #eef2f3; padding-top: 25px; margin-top: 30px; }
 .answer-safety { display: flex; align-items: center; gap: 8px; color: #9dacb5; font-size: 10px; }
 .answer-safety svg { color: #e3af69; flex: 0 0 17px; }
