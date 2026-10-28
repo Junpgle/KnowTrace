@@ -9,7 +9,7 @@ import {
   api, sourcePreviewUrl,
   type GenerationResult, type KnowledgePoint, type KnowledgePointDetail,
   type QuestionRevision, type QuestionSummary, type QuestionVersion,
-  type ReviewStatus, type SourceEvidence,
+  type SourceEvidence,
 } from '../api'
 
 const props = defineProps<{ courseId: string }>()
@@ -53,8 +53,8 @@ let questionToken = 0
 const pendingQuestions = computed(() => questions.value.filter(q => q.review_status === 'pending').length)
 const pendingKnowledge = computed(() => knowledge.value.filter(k => k.review_status === 'pending').length)
 const visibleQuestions = computed(() => filter.value === 'all' ? questions.value : questions.value.filter(q => q.review_status === filter.value))
-const selectedKp = computed(() => knowledge.value.find(k => k.id === selectedKpId.value))
-const canGenerate = computed(() => kpDetail.value?.review_status === 'approved' && Boolean(kpDetail.value.sources.length))
+const canGenerate = computed(() => Boolean(kpDetail.value &&
+  kpDetail.value.review_status === 'approved' && kpDetail.value.sources.length > 0))
 const qSourcesAreVisual = computed(() => Boolean(questionDetail.value?.sources.some(s => s.content_kind === 'figure_description')))
 
 function statusName(status: string): string {
