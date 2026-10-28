@@ -88,7 +88,7 @@ class OllamaProvider:
         target = urlparse(self.base_url)
         if target.scheme != "http" or target.hostname not in ("127.0.0.1", "localhost", "::1") or target.username or target.password:
             raise AIConfigError("Only local Ollama addresses are allowed")
-        request_body = {"model": model, "prompt": prompt, "stream": False,
+        request_body = {"model": model, "prompt": prompt, "stream": False, "think": False,
                         "options": {"temperature": 0, "num_predict": 3000}}
         if image_b64 is not None:
             request_body["images"] = [image_b64]
