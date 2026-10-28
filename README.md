@@ -8,7 +8,7 @@
 
 面向多学科学习场景，连接 **知识组织 → 智能测评 → 掌握度分析 → 个性化复习 → 学习反馈**。
 
-![Status](https://img.shields.io/badge/status-planning-blue)
+![Status](https://img.shields.io/badge/status-M1%20backend%20development-blue)
 ![Project](https://img.shields.io/badge/project-AI%20Learning-orange)
 ![Course](https://img.shields.io/badge/course-2026-informational)
 
@@ -29,13 +29,13 @@
 
 本项目对应《智能应用系统课程设计 2026》第 **20** 题「智能教育评测与个性化学习系统」，同时希望逐步成长为能够长期使用的个人学习平台。
 
-> **当前状态：项目规划 / 初始开发阶段。** 仓库现阶段主要展示目标、技术方案与开发计划。本文中的计划功能、技术选型和实验方案不代表已经实现或验证。
+> **当前状态：M1 后端开发中（FastAPI v0.1.0）。** 已实现课程、章节、知识点基础 API，以及文本型 PDF/PPTX 上传与按页提取。BKT 已有独立公式和单测，但尚未接入测评流程。AI 题目生成、在线测评、完整前端仍未实现。
 
 ## ✨ 功能规划
 
 ### 核心功能（课程设计优先）
 
-- [ ] **多学科知识管理**：创建课程、章节和知识点，组织题库与学习内容。
+- [x] **多学科知识管理基础 API**：可创建和查询课程、章节、知识点；题库功能后续开发。
 - [ ] **在线智能测评**：支持章节练习、专项测试、结果解析和答题记录。
 - [ ] **知识掌握度评估**：基于答题序列追踪学习状态，定位薄弱知识点。
 - [ ] **自适应测试**：根据历史表现、知识状态及题目难度动态选题。
@@ -45,7 +45,7 @@
 ### 扩展功能（后续迭代）
 
 - [ ] **AI 学习助手**：辅助讲解概念、分析错题并回答课程问题。
-- [ ] **学习资料导入**：解析 PDF、PPT 等文件并辅助整理知识点。
+- [x] **文本型 PDF/PPTX 导入**：解析并保存来源页码；AI 知识点提取、扫描件 OCR、图片理解仍未实现。
 - [ ] **知识图谱可视化**：呈现知识点的先修、包含和相关关系。
 - [ ] **AI 辅助出题**：基于课程资料生成练习题，加入人工审查流程。
 - [ ] **复习日程规划**：结合考试日期和学习状态安排长期复习任务。
@@ -131,9 +131,9 @@ flowchart TD
 
 - [x] 创建 GitHub 仓库
 - [x] 编写项目介绍及初期开发规划
-- [ ] 完成需求分析、页面原型及数据库设计
-- [ ] 搭建前后端基本工程
-- [ ] 实现课程、知识点与题库管理
+- [x] 完成数据模型 v1.0 与新版需求 SRS v1.1；页面原型待设计
+- [x] 搭建后端 FastAPI 基本工程；前端待开发
+- [ ] 完成题库管理；课程、章节、知识点 API 已实现
 - [ ] 实现在线测评与学习行为记录
 - [ ] 实现 BKT 知识追踪和基线对比
 - [ ] 实现自适应选题与个性化复习推荐
@@ -141,18 +141,34 @@ flowchart TD
 - [ ] 完善测试、项目文档和课程设计报告
 - [ ] 逐步添加 AI 学习助手、资料导入与知识图谱
 
-## 🚀 快速开始
+## 🚀 快速开始（后端 M1 已验证）
 
-> 仓库目前尚未发布可运行版本。
+Python 3.11+；在仓库根目录执行：
 
-待代码工程初始化后，将补充以下经过验证的信息：
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r backend/requirements.txt
+cd backend
+uvicorn knowtrace.main:app --reload
+```
 
-- 运行环境与依赖安装；
-- 数据库初始化；
-- 前后端启动方式；
-- 示例数据导入；
-- 可选模型服务的配置；
-- 系统截图和演示视频。
+Windows PowerShell 使用 `.venv\Scripts\Activate.ps1` 激活环境。运行后访问 <http://127.0.0.1:8000/docs>（Swagger API 文档）和 <http://127.0.0.1:8000/health>。
+
+通过 `POST /api/courses` 新建课程（示例：`{"title":"计算机网络"}`），然后通过 `POST /api/courses/{course_id}/documents` 上传 PDF/PPTX（最大 30 MiB），通过 `GET /api/documents/{document_id}/chunks` 查看带页码的文本片段。还支持课程章节及知识点的增查接口。
+
+**目前仅支持 PDF/PPTX 中可提取的文字**；扫描件、复杂图示、公式尚不能完整理解，也没有 AI 自动出题。默认数据写入启动目录下 `data/`，可设置 `KNOWTRACE_DATA_DIR`。此 API 暂无登录认证，**只能在可信本地环境使用，不要直接暴露公网**。请勿把个人课件提交到公共仓库。
+
+### 运行自动化测试
+
+```bash
+python -m pip install -r backend/requirements-dev.txt
+PYTHONPATH=backend pytest -q backend/tests
+```
+
+PowerShell：先执行 `$env:PYTHONPATH="backend"`，再执行 `pytest -q backend/tests`。
+
+设计文档：[需求 SRS v1.1](docs/SRS.md) · [数据库设计](docs/data-model.md) · [建表脚本](database/schema.sql)。
 
 ## 🔒 数据与使用说明
 
