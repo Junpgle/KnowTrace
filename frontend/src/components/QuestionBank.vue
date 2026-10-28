@@ -19,6 +19,7 @@ type Tab = 'knowledge' | 'questions'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
 const tab = ref<Tab>('questions')
 const filter = ref<Filter>('pending')
+const filters: Filter[] = ['pending', 'all', 'approved', 'rejected']
 const busy = ref(false)
 const loading = ref(true)
 const editingKnowledge = ref(false)
@@ -204,13 +205,14 @@ async function generate() {
   busy.value = true
   resetFeedback()
   generated.value = null
+  const knowledgeId = kpDetail.value.id
   try {
-    const result = await api.generateQuestions(kpDetail.value.id, {
+    const result = await api.generateQuestions(knowledgeId, {
       count: questionCount.value, question_types: types,
     })
     generated.value = result
     if (result.created) {
-      await reload(kpDetail.value.id, result.question_version_ids[0])
+      await reload(knowledgeId, result.question_version_ids[0])
       // reload clears generation message when selecting another knowledge point;
       // retain it here for explicit feedback.
       generated.value = result
@@ -281,6 +283,7 @@ async function reviewQuestion(decision: 'approved' | 'rejected') {
   try {
     await api.reviewQuestion(q.id, decision)
     await reload(selectedKpId.value, q.id)
+    filter.value = 'all'
     success.value = decision === 'approved'
       ? '题目审核通过，已进入可用于测评的题库。'
       : '题目已驳回。需要修改时可创建新版本。'
@@ -400,7 +403,7 @@ function previewAvailable(source: SourceEvidence): boolean {
       <aside class="qb-list panel">
         <div class="qb-list-head"><strong>课程题目</strong><span>{{ questions.length }} 道</span></div>
         <div class="qb-filter">
-          <button v-for="f in (['pending','all','approved','rejected'] as const)" :key="f"
+          <button v-for="f in filters" :key="f"
             :class="{ active: filter === f }" @click="chooseFilter(f)">{{ f === 'all' ? '全部' : statusName(f) }}</button>
         </div>
         <div v-if="!visibleQuestions.length" class="qb-empty-small">
