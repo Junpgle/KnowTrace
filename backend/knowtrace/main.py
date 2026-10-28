@@ -1,6 +1,7 @@
 """KnowTrace API - M1: courses, chapters, knowledge points and source documents."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import sqlite3
@@ -15,6 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .db import connect, initialize, transaction
+from .ai import AIConfigError, AIServiceError, OllamaProvider, compact, grounded_items
 from .parser import ParseError, SUPPORTED_EXTENSIONS, extract_chunks
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -33,6 +35,16 @@ class ChapterCreate(BaseModel):
     parent_chapter_id: str | None = None
 
 
+class ExtractKnowledgeRequest(BaseModel):
+    page_start: int = Field(default=1, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
+    include_visual: bool = False
+
+
+class ReviewKnowledgeRequest(BaseModel):
+    decision: str = Field(pattern="^(approved|rejected)$")
+
+
 class KnowledgePointCreate(BaseModel):
     canonical_name: str = Field(min_length=1, max_length=160)
     chapter_id: str | None = None
@@ -49,7 +61,8 @@ def _rows(cursor: sqlite3.Cursor) -> list[dict]:
 
 
 def create_app(*, db_path: str | Path | None = None,
-               storage_dir: str | Path | None = None) -> FastAPI:
+               storage_dir: str | Path | None = None,
+               ai_provider: object | None = None) -> FastAPI:
     data_root = Path(os.environ.get("KNOWTRACE_DATA_DIR", "./data")).resolve()
     database = Path(db_path).resolve() if db_path else data_root / "knowtrace.sqlite3"
     storage = Path(storage_dir).resolve() if storage_dir else data_root / "uploads"
@@ -60,7 +73,8 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.1.1", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="0.2.0", lifespan=lifespan)
+    app.state.ai_provider = ai_provider if ai_provider is not None else OllamaProvider.from_env()
 
     def ensure_course(db: sqlite3.Connection, course_id: str) -> None:
         if not db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'", (course_id,)).fetchone():
@@ -68,7 +82,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.1.1"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "0.2.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -195,7 +209,7 @@ def create_app(*, db_path: str | Path | None = None,
             doc = db.execute("SELECT total_pages, original_filename FROM documents WHERE id=?", (document_id,)).fetchone()
             if doc is None:
                 raise HTTPException(404, "Document not found")
-            parts = db.execute("SELECT page_start,content_text FROM document_chunks WHERE document_id=? ORDER BY chunk_index", (document_id,)).fetchall()
+            parts = db.execute("SELECT page_start,content_text FROM document_chunks WHERE document_id=? AND content_kind='text' ORDER BY chunk_index", (document_id,)).fetchall()
 
         # Chunks can overlap; for a low-text warning a modest overcount is safe.
         # We do not claim these character counts are exact after chunking.
@@ -242,6 +256,131 @@ def create_app(*, db_path: str | Path | None = None,
                                 headers={"Cache-Control": "private, max-age=300"})
         except (fitz.FileDataError, RuntimeError, ValueError) as exc:
             raise HTTPException(422, "Unable to render PDF page") from exc
+
+    @app.post("/api/documents/{document_id}/extract-knowledge")
+    def extract_document_knowledge(document_id: str, payload: ExtractKnowledgeRequest):
+        """Extract source-grounded drafts from up to four pages per request.
+
+        Opt-in vision is limited to two sparse PDF pages per call. All generated
+        knowledge remains pending review; no AI answer is silently approved.
+        """
+        page_end = payload.page_end or payload.page_start
+        if page_end < payload.page_start or page_end - payload.page_start >= 4:
+            raise HTTPException(422, "Select 1 to 4 consecutive pages")
+        with transaction(database) as db:
+            doc = db.execute("SELECT id,course_id,total_pages,media_type,storage_key FROM documents WHERE id=? AND status='ready'", (document_id,)).fetchone()
+            if doc is None:
+                raise HTTPException(404, "Ready document not found")
+            if page_end > doc["total_pages"]:
+                raise HTTPException(422, "Requested page exceeds document length")
+            raw_chunks = _rows(db.execute("SELECT id,page_start,content_text,content_kind FROM document_chunks WHERE document_id=? AND content_kind='text' AND page_start BETWEEN ? AND ? ORDER BY chunk_index",
+                                          (document_id, payload.page_start, page_end)))
+        sources: dict[int, list[dict]] = {p: [] for p in range(payload.page_start, page_end + 1)}
+        for part in raw_chunks:
+            sources[part["page_start"]].append(part)
+        # Model input and displayed provenance use one page at a time. Long
+        # chunks may overlap, so no character count is claimed to be exact.
+        page_texts: dict[int, str] = {}
+        for page, chunks in sources.items():
+            text = "\n".join(c["content_text"] for c in chunks)
+            if len(compact(text)) >= LOW_TEXT_THRESHOLD:
+                page_texts[page] = text[:6000]
+        vision_pages: list[int] = []
+        if payload.include_visual:
+            if doc["media_type"] != "application/pdf":
+                raise HTTPException(415, "Visual extraction currently supports PDF only")
+            if not getattr(app.state.ai_provider, "vision_model", None):
+                raise HTTPException(503, "Configure KNOWTRACE_VISION_MODEL to enable visual extraction")
+            sparse = [p for p in sources if p not in page_texts]
+            if len(sparse) > 2:
+                raise HTTPException(422, "At most two sparse pages per visual extraction request")
+            filepath = (storage / doc["storage_key"]).resolve()
+            if filepath.parent != storage or not filepath.is_file():
+                raise HTTPException(404, "Original document file not found")
+            try:
+                with fitz.open(filepath) as pdf:
+                    for page in sparse:
+                        image = pdf[page - 1].get_pixmap(matrix=fitz.Matrix(1.3, 1.3), alpha=False).tobytes("png")
+                        desc = app.state.ai_provider.describe_visual(base64.b64encode(image).decode("ascii"))
+                        if desc and desc != "无法辨识":
+                            page_texts[page] = desc
+                            vision_pages.append(page)
+            except (AIConfigError, AIServiceError) as exc:
+                raise HTTPException(503, str(exc)) from exc
+            except (fitz.FileDataError, RuntimeError, ValueError) as exc:
+                raise HTTPException(422, "Unable to render document for visual extraction") from exc
+        if not page_texts:
+            raise HTTPException(422, "No sufficiently detailed text found; enable vision or select different pages")
+
+        job_id = _uuid()
+        provider = app.state.ai_provider
+        model_name = getattr(provider, "text_model", "test-model")
+        with transaction(database) as db:
+            db.execute("INSERT INTO processing_jobs(id,course_id,document_id,job_type,engine_name,prompt_version,status) VALUES (?,?,?,'knowledge_extract',?,'kp_v1','running')",
+                       (job_id, doc["course_id"], document_id, model_name))
+        try:
+            response = provider.extract(page_texts)
+            extracted, warnings = grounded_items(response, page_texts)
+            with transaction(database) as db:
+                # Persist model-derived figure descriptions as separate evidence,
+                # unmistakably marked as NOT verified text from the PDF.
+                for page in vision_pages:
+                    next_index = db.execute("SELECT COALESCE(MAX(chunk_index)+1,0) FROM document_chunks WHERE document_id=?", (document_id,)).fetchone()[0]
+                    figure = {"id": _uuid(), "page_start": page, "content_text": page_texts[page], "content_kind": "figure_description"}
+                    db.execute("INSERT INTO document_chunks(id,document_id,chunk_index,page_start,page_end,content_kind,content_text,content_sha256) VALUES (?,?,?,?,?,?,?,?)",
+                               (figure["id"], document_id, next_index, page, page, figure["content_kind"], figure["content_text"], hashlib.sha256(figure["content_text"].encode()).hexdigest()))
+                    sources[page].append(figure)
+                existing = {compact(row["canonical_name"]): row["id"] for row in db.execute("SELECT id,canonical_name FROM knowledge_points WHERE course_id=? AND archived_at IS NULL", (doc["course_id"],))}
+                created, reused = [], []
+                for point in extracted:
+                    # Never create an orphan knowledge point: verify the quoted
+                    # evidence maps to one concrete stored chunk first.
+                    matching = next((c for c in sources[point["page"]] if compact(point["quote"]) in compact(c["content_text"])), None)
+                    if matching is None:
+                        warnings.append(f"Evidence chunk missing for {point['name']}")
+                        continue
+                    key = compact(point["name"])
+                    if key in existing:
+                        kp_id = existing[key]
+                        reused.append(kp_id)
+                    else:
+                        kp_id = _uuid()
+                        db.execute("INSERT INTO knowledge_points(id,course_id,canonical_name,summary,difficulty,created_job_id,review_status) VALUES (?,?,?,?,?,?,'pending')",
+                                   (kp_id, doc["course_id"], point["name"], point["summary"], point["difficulty"], job_id))
+                        existing[key] = kp_id
+                        created.append(kp_id)
+                    # A single page may have many text chunks. Link the source
+                    # that contains the exact quotation, not merely its page.
+                    note = ("AI-derived visual description (unverified); " if matching["content_kind"] == "figure_description" else "Exact text quotation; ") + point["quote"]
+                    db.execute("INSERT OR IGNORE INTO knowledge_point_sources(knowledge_point_id,chunk_id,evidence_note) VALUES (?,?,?)", (kp_id, matching["id"], note))
+                db.execute("UPDATE processing_jobs SET status='succeeded',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (job_id,))
+            return {"job_id": job_id, "created": len(created), "reused": len(reused),
+                    "created_ids": created, "review_status": "pending",
+                    "vision_pages": vision_pages, "skipped_sparse_pages": [p for p in sources if p not in page_texts],
+                    "warnings": warnings}
+        except (AIConfigError, AIServiceError) as exc:
+            with transaction(database) as db:
+                db.execute("UPDATE processing_jobs SET status='failed',error_message=?,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (str(exc)[:1000], job_id))
+            raise HTTPException(503 if isinstance(exc, AIConfigError) else 502, str(exc)) from exc
+
+    @app.get("/api/documents/{document_id}/knowledge-points")
+    def list_document_knowledge(document_id: str):
+        with transaction(database) as db:
+            if not db.execute("SELECT 1 FROM documents WHERE id=?", (document_id,)).fetchone():
+                raise HTTPException(404, "Document not found")
+            return _rows(db.execute("""SELECT DISTINCT kp.id,kp.canonical_name,kp.summary,kp.review_status,
+                c.page_start AS page,c.content_kind AS source_kind,s.evidence_note
+                FROM knowledge_points kp JOIN knowledge_point_sources s ON s.knowledge_point_id=kp.id
+                JOIN document_chunks c ON c.id=s.chunk_id WHERE c.document_id=? ORDER BY c.page_start,kp.canonical_name""", (document_id,)))
+
+    @app.post("/api/knowledge-points/{knowledge_point_id}/review")
+    def review_knowledge(knowledge_point_id: str, payload: ReviewKnowledgeRequest):
+        with transaction(database) as db:
+            result = db.execute("UPDATE knowledge_points SET review_status=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND archived_at IS NULL",
+                                (payload.decision, knowledge_point_id))
+            if result.rowcount == 0:
+                raise HTTPException(404, "Knowledge point not found")
+        return {"id": knowledge_point_id, "review_status": payload.decision}
 
     return app
 
