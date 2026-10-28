@@ -10,7 +10,7 @@ import {
 import QuestionBank from './components/QuestionBank.vue'
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
-  type QuizItem, type QuizSession } from './api'
+  type QuizItem, type QuizSession, type KnowledgePoint } from './api'
 
 type View = 'overview' | 'practice' | 'report' | 'bank'
 type Choice = string | boolean | null
@@ -25,6 +25,7 @@ const banner = ref('')
 const courses = ref<Course[]>([])
 const courseId = ref('')
 const questions = ref<QuestionSummary[]>([])
+const knowledgePoints = ref<KnowledgePoint[]>([])
 const report = ref<LearningReport | null>(null)
 const quiz = ref<QuizSession | null>(null)
 const count = ref(1)
@@ -35,7 +36,11 @@ const pendingRequest = ref<{ itemId: string, key: string, response: string | boo
 const latestMastery = ref<{ itemId: string, before: number, after: number } | null>(null)
 
 const currentCourse = computed(() => courses.value.find(c => c.id === courseId.value))
-const approvedCount = computed(() => questions.value.filter(q => q.review_status === 'approved').length)
+const approvedCount = computed(() => {
+  const approvedIds = new Set(knowledgePoints.value.filter(k => k.review_status === 'approved').map(k => k.id))
+  return questions.value.filter(q => q.review_status === 'approved' &&
+    q.primary_knowledge_point_id !== null && approvedIds.has(q.primary_knowledge_point_id)).length
+})
 const pendingCount = computed(() => questions.value.filter(q => q.review_status === 'pending').length)
 const maxCount = computed(() => Math.min(20, approvedCount.value))
 const countOptions = computed(() => Array.from({ length: maxCount.value }, (_, i) => i + 1))
@@ -106,15 +111,18 @@ async function loadCourseData(id: string) {
   quiz.value = null
   latestMastery.value = null
   questions.value = []
+  knowledgePoints.value = []
   report.value = null
   banner.value = ''
   try {
-    const [qResult, rResult] = await Promise.allSettled([api.questions(id), api.report(id)])
+    const [qResult, rResult, kResult] = await Promise.allSettled([api.questions(id), api.report(id), api.knowledgePoints(id)])
     if (version !== requestVersion) return
     if (qResult.status === 'fulfilled') questions.value = qResult.value
     else showError(qResult.reason)
     if (rResult.status === 'fulfilled') report.value = rResult.value
     else showError(rResult.reason)
+    if (kResult.status === 'fulfilled') knowledgePoints.value = kResult.value
+    else showError(kResult.reason)
     count.value = Math.max(1, Math.min(count.value, Math.max(1, maxCount.value)))
     const saved = localStorage.getItem(sessionKey(id))
     if (saved) {
@@ -156,9 +164,10 @@ async function refresh() {
   if (!courseId.value || refreshing.value) return
   refreshing.value = true
   try {
-    const [q, r] = await Promise.all([api.questions(courseId.value), api.report(courseId.value)])
+    const [q, r, k] = await Promise.all([api.questions(courseId.value), api.report(courseId.value), api.knowledgePoints(courseId.value)])
     questions.value = q
     report.value = r
+    knowledgePoints.value = k
     if (quiz.value) {
       quiz.value = await api.quiz(quiz.value.id)
       if (quiz.value.status === 'active') firstUnanswered()
@@ -321,7 +330,7 @@ onMounted(() => { void initialize() })
             </section>
 
             <section class="stats-grid" aria-label="本课程学习数据">
-              <div class="stat-card panel"><div class="stat-icon teal-bg"><FileQuestion :size="21" /></div><div class="stat-number">{{ approvedCount }}</div><div class="stat-label">已审核题目</div><span class="stat-helper">可以用于普通练习</span></div>
+              <div class="stat-card panel"><div class="stat-icon teal-bg"><FileQuestion :size="21" /></div><div class="stat-number">{{ approvedCount }}</div><div class="stat-label">可练习题目</div><span class="stat-helper">题目和知识点均已审核</span></div>
               <div class="stat-card panel"><div class="stat-icon blue-bg"><ClipboardList :size="21" /></div><div class="stat-number">{{ report?.answered ?? 0 }}</div><div class="stat-label">累计作答</div><span class="stat-helper">{{ report?.sessions ?? 0 }} 场测评记录</span></div>
               <div class="stat-card panel"><div class="stat-icon orange-bg"><Target :size="21" /></div><div class="stat-number">{{ percent(report?.accuracy) }}</div><div class="stat-label">累计正确率</div><span class="stat-helper">依据实际答题记录计算</span></div>
             </section>
