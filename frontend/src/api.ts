@@ -1,5 +1,53 @@
 /** Typed, same-origin API client. Vite proxies /api to FastAPI during local development. */
 
+export type RelationType = 'prerequisite_required' | 'prerequisite_recommended'
+  | 'related' | 'uses' | 'compares'
+
+export interface RelationSummary {
+  id: string
+  source_kp_id: string
+  target_kp_id: string
+  source_name: string
+  target_name: string
+  relation_type: RelationType
+  rationale: string
+  review_status: 'pending' | 'approved' | 'rejected'
+  sources: SourceEvidence[]
+}
+
+export interface RelationTaskOptions {
+  focus_id: string
+  target_id?: string | null
+  count: number
+}
+
+export interface RelationImportResult {
+  created: number
+  relation_ids: string[]
+  warnings: string[]
+  review_status: 'pending'
+  origin: 'external' | 'api'
+  provider?: string
+  tool_calls?: number
+  retrieved_chunks?: number
+  usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }
+}
+
+export interface StudyPath {
+  course_id: string
+  items: {
+    id: string
+    name: string
+    mastery: number | null
+    observations: number
+    rank: number
+  }[]
+  total: number
+  required_edges: number
+  method: string
+  notice: string
+}
+
 export interface GraphNode {
   id: string
   kind: 'course' | 'chapter' | 'knowledge'
@@ -302,6 +350,34 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  relations: (courseId: string) =>
+    request<RelationSummary[]>('/api/courses/' + encodeURIComponent(courseId) + '/knowledge-relations'),
+  relationPrompt: (courseId: string, options: RelationTaskOptions) =>
+    request<{ prompt: string; point_count: number; source_chunks: number; privacy_warning: string }>(
+      '/api/courses/' + encodeURIComponent(courseId) + '/relations/prompt',
+      { method: 'POST', body: JSON.stringify(options) }),
+  importRelations: (courseId: string, options: RelationTaskOptions & { response_text: string }) =>
+    request<RelationImportResult>('/api/courses/' + encodeURIComponent(courseId) + '/relations/import',
+      { method: 'POST', body: JSON.stringify(options) }),
+  generateRelations: (courseId: string, options: RelationTaskOptions & { provider: AIProviderId }) =>
+    request<RelationImportResult>('/api/courses/' + encodeURIComponent(courseId) + '/relations/generate',
+      { method: 'POST', body: JSON.stringify(options) }),
+  createRelation: (courseId: string, relation: {
+    source_kp_id: string
+    target_kp_id: string
+    relation_type: RelationType
+    rationale: string
+    source_chunk_id: string
+    quote: string
+  }) => request<{id:string; review_status:'pending'}>(
+    '/api/courses/' + encodeURIComponent(courseId) + '/relations/manual',
+    { method: 'POST', body: JSON.stringify(relation) }),
+  reviewRelation: (id: string, decision: 'approved' | 'rejected') =>
+    request<{id:string; review_status:'approved' | 'rejected'}>(
+      '/api/knowledge-relations/' + encodeURIComponent(id) + '/review',
+      { method: 'POST', body: JSON.stringify({ decision }) }),
+  studyPath: (courseId: string, limit = 12) =>
+    request<StudyPath>('/api/courses/' + encodeURIComponent(courseId) + '/study-path?limit=' + limit),
   knowledgeGraph: (courseId: string, options: { limit?: number, include_pending?: boolean } = {}) => {
     const params = new URLSearchParams()
     params.set('limit', String(options.limit ?? 300))
