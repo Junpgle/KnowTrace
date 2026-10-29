@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -100,18 +101,27 @@ class MimoProvider:
             headers={"Content-Type": "application/json", "api-key": self.api_key},
             method="POST",
         )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                data = response.read(1_000_001)
-            if len(data) > 1_000_000:
-                raise AIServiceError("MiMo response exceeds safety limit")
-            result = json.loads(data)
-        except HTTPError as exc:
-            # Never include provider response bodies: they can contain secrets
-            # or echo part of the prompt/document.
-            raise AIServiceError(f"MiMo API HTTP {exc.code}; check key, quota and model") from exc
-        except (URLError, TimeoutError, UnicodeError, ValueError) as exc:
-            raise AIServiceError(f"MiMo request failed: {type(exc).__name__}") from exc
+        result = None
+        for attempt in range(3):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    data = response.read(1_000_001)
+                if len(data) > 1_000_000:
+                    raise AIServiceError("MiMo response exceeds safety limit")
+                result = json.loads(data)
+                break
+            except HTTPError as exc:
+                # 429 / 503 are temporary; retry at most twice. No retries
+                # on ambiguous network timeouts (may have been billed).
+                if exc.code in (429, 503) and attempt < 2:
+                    retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+                    delay = min(4.0, float(retry_after)) if retry_after.replace(".", "", 1).isdigit() else 1.0 * (attempt + 1)
+                    time.sleep(delay)
+                    continue
+                # Do not echo API response bodies or credentials.
+                raise AIServiceError(f"MiMo API HTTP {exc.code}; check key, quota and model") from exc
+            except (URLError, TimeoutError, UnicodeError, ValueError) as exc:
+                raise AIServiceError(f"MiMo request failed: {type(exc).__name__}") from exc
         if not isinstance(result, dict) or not isinstance(result.get("choices"), list) or not result["choices"]:
             raise AIServiceError("MiMo returned an invalid completion")
         return result
