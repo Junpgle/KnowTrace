@@ -10,7 +10,7 @@ const emit=defineEmits<{updated:[]}>()
 const provider=ref<AIProviderId>('default')
 const focusLimit=ref(30)
 const perFocus=ref(2)
-const mode=ref<'single'|'grouped'>('grouped')
+const mode=ref<'single'|'grouped'|'bridge'>('grouped')
 const groupSize=ref(12)
 const confirmCost=ref(false)
 const confirmApproval=ref(false)
@@ -81,9 +81,11 @@ async function start(){
       per_focus:perFocus.value,mode:mode.value,group_size:groupSize.value,
       confirm_large_run:confirmCost.value
     })
-    message.value=mode.value==='grouped'
-      ? '已将 '+r.total_points+' 个知识点分为 '+r.total+' 组。每组一次 AI 分析，结果仍然逐条核验原文后进入待审核区。'
-      : '已启动 '+r.total+' 个知识点的逐点关系分析（兼容模式）。'
+    message.value=mode.value==='bridge'
+      ? '已筛选 '+r.total+' 组跨章节候选（'+r.total_points+' 个参与点次）。AI 仅分析候选组，不穷举所有跨章节组合。'
+      : mode.value==='grouped'
+        ? '已将 '+r.total_points+' 个知识点分为 '+r.total+' 组，逐条核验后进入待审核区。'
+        : '已启动 '+r.total+' 个知识点的逐点分析（兼容模式）。'
     await reload()
   }catch(e){error.value=e instanceof Error?e.message:'批量生成启动失败'}
   finally{busy.value=false}
@@ -138,10 +140,11 @@ async function approve(){
     </div>
     <div class="rb-setup rb-strategy">
       <label>分析策略<select v-model="mode" :disabled="active||busy">
-        <option value="grouped">章节 + 相似知识点分组（推荐）</option>
+        <option value="grouped">第一轮 · 章节内相似知识点分组</option>
+        <option value="bridge">第二轮 · 跨章节桥接关系（推荐补全）</option>
         <option value="single">逐点分析（旧模式）</option>
       </select></label>
-      <label v-if="mode==='grouped'">每组知识点数<select v-model.number="groupSize" :disabled="active||busy">
+      <label v-if="mode!=='single'">每组知识点数<select v-model.number="groupSize" :disabled="active||busy">
         <option :value="6">6 个（输入较短）</option>
         <option :value="8">8 个</option>
         <option :value="12">12 个（推荐）</option>
@@ -153,6 +156,11 @@ async function approve(){
       每组调用一次 AI，模型可比较组内任意两个知识点，只有真实原文支持的候选关系才会保存。
       单组最多输出 18 条候选，不保证每组一定有关系。
     </p>
+    <p class="rb-hint" v-else-if="mode==='bridge'">
+      跨章节桥接：通过课程名称、知识点名称、摘要及共享课件证据，快速检索不同真实章节（未分章按课件区分）的候选点，
+      按小组调用 AI，且仅保存真正跨章节的关系。此轮与章节内任务独立；已完成的跨章节候选组合不再重复提交。
+      找不到足够匹配线索时会提示，不会强行编造关系。
+    </p>
     <p class="rb-hint" v-else>
       旧版逐点模式：每个知识点单独分析，最多考虑11个候选，可能较慢。已经完成的知识点会被跳过。
     </p>
@@ -162,7 +170,7 @@ async function approve(){
     <label v-if="focusLimit>30" class="rb-check">
       <input v-model="confirmCost" type="checkbox"/>
       我确认本轮最多处理 {{focusLimit}} 个知识点；
-      {{mode==='grouped'?'预计约 '+Math.ceil(focusLimit/groupSize)+' 组模型请求（按章节实际分组可能更多）':'逐点模式可能发起同等数量的多轮模型请求'}}。
+      {{mode==='single'?'逐点模式可能发起同等数量的多轮模型请求':'预计不超过 '+Math.ceil(focusLimit/2)+' 组候选请求（实际按可检索的章节匹配情况决定）'}}。
       MiMo 按实际 Token 收费；分组模式可能增加单次输入长度。
     </label>
     <button type="button" class="button button-primary" :disabled="active||busy||approvedCount<2||(focusLimit>30&&!confirmCost)" @click="start">
@@ -175,7 +183,7 @@ async function approve(){
         已完成 {{current.completed}} / {{current.total}} 组 · {{current.progress}}%</span></div>
       <div class="rb-track"><span :style="{width:current.progress+'%'}"/></div>
       <p>已生成 <strong>{{current.created_relations}}</strong> 条待审核关系；跳过 {{current.skipped}} 组/点；校验提醒 {{current.warning_count}} 条。</p>
-      <p v-if="current.current_focus">当前正在分析{{current.mode==='grouped'?'知识点分组':'知识点'}}，代表 ID：{{current.current_focus}}</p>
+      <p v-if="current.current_focus">当前正在分析{{current.mode==='single'?'知识点':'知识点分组'}}，代表 ID：{{current.current_focus}}</p>
       <p v-if="current.last_error" class="rb-alert error"><AlertTriangle :size="15"/>{{current.last_error}}</p>
       <div class="rb-actions">
         <button v-if="current.status==='running'" type="button" class="button button-outline button-small" :disabled="busy" @click="action('stop')"><CirclePause :size="16"/>当前项完成后停止</button>
