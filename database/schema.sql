@@ -138,6 +138,44 @@ CREATE TABLE IF NOT EXISTS knowledge_point_events (
 CREATE INDEX IF NOT EXISTS idx_kp_events_point_time ON knowledge_point_events(knowledge_point_id,created_at);
 
 
+-- AI pre-review never changes canonical knowledge review_status by itself.
+-- Each proposal is tied to a fingerprint of point fields and cited source text.
+CREATE TABLE IF NOT EXISTS ai_knowledge_reviews (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    knowledge_point_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE RESTRICT,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    recommendation TEXT NOT NULL CHECK(recommendation IN ('approve','revise','reject')),
+    confidence TEXT NOT NULL CHECK(confidence IN ('high','medium','low')),
+    rationale TEXT NOT NULL,
+    issues_json TEXT NOT NULL DEFAULT '[]',
+    evidence_chunk_id TEXT,
+    evidence_quote TEXT,
+    verified_text INTEGER NOT NULL DEFAULT 0 CHECK(verified_text IN (0,1)),
+    source_kind TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_review_course ON ai_knowledge_reviews(course_id,created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_review_point ON ai_knowledge_reviews(knowledge_point_id,created_at);
+
+CREATE TABLE IF NOT EXISTS ai_knowledge_review_batches (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    provider TEXT NOT NULL CHECK(provider IN ('default','ollama','mimo')),
+    point_ids_json TEXT NOT NULL,
+    next_index INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL,
+    errors INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('running','stopping','stopped','interrupted','succeeded')),
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_review_batches_course ON ai_knowledge_review_batches(course_id,created_at);
+
 CREATE TABLE IF NOT EXISTS knowledge_relations (
     id TEXT PRIMARY KEY,
     source_kp_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE RESTRICT,
