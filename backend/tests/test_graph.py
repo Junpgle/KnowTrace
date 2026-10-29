@@ -99,3 +99,26 @@ def test_chapter_organizing_requires_reapproval_before_relations_display(tmp_pat
         assert restored.status_code==200,restored.text
         again=http.get("/api/courses/course1/knowledge-graph").json()
         assert again["stats"]["approved_semantic_edges"]==1
+
+
+def test_graph_suggests_unclassified_chapter_only_with_multiple_approved_neighbors(tmp_path):
+    db = tmp_path / "suggestions.sqlite3"
+    seed(db)
+    with connect(db) as c:
+        c.execute("UPDATE knowledge_points SET review_status='approved' WHERE id='kp3'")
+        c.execute("INSERT INTO knowledge_points (id,course_id,chapter_id,canonical_name,review_status) VALUES ('kp4','course1','ch2','模拟信号','approved')")
+        c.execute("UPDATE knowledge_relations SET review_status='approved' WHERE id='rel2'")
+        c.execute("INSERT INTO knowledge_relations (id,source_kp_id,target_kp_id,relation_type,review_status) VALUES ('rel3','kp4','kp3','related','approved')")
+    with TestClient(create_app(db_path=db, storage_dir=tmp_path / "uploads")) as http:
+        graph = http.get("/api/courses/course1/knowledge-graph").json()
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        assert nodes["kp3"]["chapter_id"] is None
+        assert nodes["kp3"]["suggested_chapter_id"] == "ch2"
+        assert nodes["kp3"]["suggestion_support"] == 2
+        assert graph["stats"]["unclassified_points"] == 1
+        assert graph["stats"]["suggested_chapter_points"] == 1
+        # Suggestions do not perform any writes, nor infer semantic edges.
+        with connect(db) as c:
+            assert c.execute("SELECT chapter_id FROM knowledge_points WHERE id='kp3'").fetchone()[0] is None
+        limited = http.get("/api/courses/course1/knowledge-graph?limit=1").json()
+        assert limited["stats"]["suggested_chapter_points"] == 0
