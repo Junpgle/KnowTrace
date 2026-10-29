@@ -52,3 +52,7 @@
     uvicorn knowtrace.main:app --reload
 
 前端可执行 npm run typecheck 和 npm run build 验证，CI自动运行相应检查。
+
+## v1.1.0 全资料批处理
+
+新版资料库在单次1–4页提取区域之前增加“一键处理整份资料”，按设定的1/2/4页批量提交模型，每批完成后保存进度；可以停止后续批次或中断后继续。模型配置入口为左侧“AI 模型设置”，支持在本机保存 MiMo Key 和 Ollama 模型参数。详情见 [AI 设置与批量任务](AI-SETTINGS-AND-BATCH.md)。
