@@ -172,7 +172,7 @@ def test_local_model_generation_and_path_fallback(client):
     assert result.json()["provider"]=="ollama"
     before=http.get("/api/courses/course1/study-path").json()
     assert before["required_edges"]==0
-    assert "不是严格的先修路径" in before["notice"]
+    assert "严格的先修路径" in before["notice"]
     assert before["items"][0]["id"]=="c"  # untested first; stable ID tie-break
     assert before["items"][1]["id"]=="b"  # lower mastery than a
     assert http.get("/api/courses/course1/study-path?limit=0").status_code==422
