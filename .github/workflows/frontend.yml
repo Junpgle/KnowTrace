@@ -72,4 +72,5 @@ jobs:
 
       - name: Summarize successful build
         if: success()
-        run: echo '### Frontend: Vue and Vite passed' >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo '### Frontend: Vue and Vite passed' >> "$GITHUB_STEP_SUMMARY"
