@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .ai import AIConfigError, OllamaProvider
+from .ai import AIConfigError, AIServiceError, OllamaProvider
 from .db import transaction
 from .mimo import MimoProvider
 
@@ -179,8 +179,15 @@ def generate_group_relations(db_path: Path, course_id: str,
             raw=provider._generate(instructions+"\n"+serialized,model=provider.text_model)
         else:
             raise AIConfigError("Configured provider does not support grouped relations")
-    except (AIConfigError,) as e:
+    except AIConfigError as e:
         raise HTTPException(503,str(e)) from e
+    except AIServiceError as e:
+        # Provide actionable provider failures without exposing credentials or
+        # the source document in task logs.
+        reason=str(e)
+        if any(secret in reason.casefold() for secret in ("authorization", "bearer ", "sk-")):
+            reason=type(e).__name__
+        raise HTTPException(502,"Grouped AI request failed: "+reason[:220]) from e
     if not isinstance(raw,str) or not raw.strip():
         raise HTTPException(502,"Model returned empty grouped relation response")
     # Same source, page, ID and quote verification as the per-focus route,
