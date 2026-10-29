@@ -618,10 +618,12 @@ export const api = {
        { method:'POST' }),
   relationBulkPreview: (courseId: string) =>
     request<RelationBulkPreview>('/api/courses/'+encodeURIComponent(courseId)+'/relations/bulk-review-preview'),
-  approveRelationTypes: (courseId: string, types: RelationType[]) =>
+  approveRelationTypes: (courseId: string, types: RelationType[], includeVisual = false) =>
     request<{approved:number;skipped:number;cycles:number;visual:number;approved_ids:string[]}>(
       '/api/courses/'+encodeURIComponent(courseId)+'/relations/bulk-approve',
-      { method:'POST',body:JSON.stringify({confirmed:true,types}) }),
+      { method:'POST',body:JSON.stringify({
+         confirmed:true,types,include_visual_sources:includeVisual
+      }) }),
   relations: (courseId: string) =>
     request<RelationSummary[]>('/api/courses/' + encodeURIComponent(courseId) + '/knowledge-relations'),
   relationPrompt: (courseId: string, options: RelationTaskOptions) =>
