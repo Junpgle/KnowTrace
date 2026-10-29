@@ -123,6 +123,7 @@ def create_app(*, db_path: str | Path | None = None,
     settings_path = database.with_name('ai_settings.json')
     recover_batches = lambda: None
     recover_ai_reviews = lambda: None
+    recover_relations = lambda: None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -130,6 +131,7 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         recover_batches()
         recover_ai_reviews()
+        recover_relations()
         yield
 
     app = FastAPI(title="KnowTrace API", version="1.3.0", lifespan=lifespan)
@@ -777,7 +779,7 @@ def create_app(*, db_path: str | Path | None = None,
     recover_batches = register_batch_routes(app, database, extract_batch_pages)
     register_manual_routes(app, database)
     register_graph_routes(app, database)
-    register_relation_routes(app, database, resolve_provider)
+    recover_relations = register_relation_routes(app, database, resolve_provider)
     recover_ai_reviews = register_ai_knowledge_review_routes(app, database, resolve_provider)
     register_direct_bulk_review(app, database)
     return app
