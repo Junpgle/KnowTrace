@@ -25,6 +25,7 @@ from .questions import validate_generated_questions, validate_question_fields
 from .quiz_api import register_quiz_routes
 from .manual_transfer import register_manual_routes
 from .graph_api import register_graph_routes
+from .source_chapter_api import register_source_chapter_routes
 from .relations_api import register_relation_routes
 from .settings_api import providers as configured_providers, public_status, register_settings_routes
 from .batch_api import register_batch_routes
@@ -779,6 +780,7 @@ def create_app(*, db_path: str | Path | None = None,
     recover_batches = register_batch_routes(app, database, extract_batch_pages)
     register_manual_routes(app, database)
     register_graph_routes(app, database)
+    register_source_chapter_routes(app, database)
     recover_relations = register_relation_routes(app, database, resolve_provider)
     recover_ai_reviews = register_ai_knowledge_review_routes(app, database, resolve_provider)
     register_direct_bulk_review(app, database)
