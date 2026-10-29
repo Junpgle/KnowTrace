@@ -142,3 +142,41 @@ def test_tool_budget_and_invalid_names_fail_safely():
         tool_call("read_source_chunk", {"chunk_id": "c2"}, id="b")])
     with pytest.raises(AIServiceError, match="budget"):
         p._tool_loop([{"role": "user", "content": "something"}], lambda name, args: {})
+
+
+def test_disjoint_windows_cannot_fake_continuous_verbatim_quote():
+    from knowtrace.questions import validate_generated_questions
+    question = {"items": [{
+        "question_type": "single_choice", "stem": "Where is the signal transmitted next?",
+        "options": {"A": "Phone network", "B": "Printer", "C": "Keyboard", "D": "Screen"},
+        "correct_answer": "A", "explanation": "It flows through the public telephone network.",
+        "difficulty": 2, "source_chunk_id": "chunk1",
+        "quote": "The source transmits a digital bit stream to the public telephone network",
+    }]}
+    a = "The source transmits a digital bit stream to"
+    b = "the public telephone network and the destination"
+    # Joining two retrieval windows and removing whitespace must not
+    # manufacture a quotation that appears in neither individual window.
+    src = {"chunk1": {"content_text": a + "\n" + b,
+                      "evidence_segments": [a, b]}}
+    accepted, warnings = validate_generated_questions(json.dumps(question), src,
+                                permitted_types={"single_choice"}, count=1)
+    assert accepted == []
+    assert "exact source quotation not found" in warnings[0]
+
+
+def test_provider_status_does_not_expose_api_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("MIMO_API_KEY", "sk-hidden-from-client")
+    monkeypatch.setenv("KNOWTRACE_AI_PROVIDER", "ollama")
+    with TestClient(create_app(db_path=tmp_path/"app.sqlite3",
+                               storage_dir=tmp_path/"upload")) as client:
+        data = client.get("/api/ai/providers").json()
+        assert data["default"] == "ollama"
+        assert data["providers"][1]["id"] == "mimo"
+        assert data["providers"][1]["available"] is True
+        assert data["providers"][1]["function_calling"] is True
+        assert "sk-hidden-from-client" not in json.dumps(data)
+    monkeypatch.setenv("MIMO_API_KEY", "tp-plan-key")
+    with TestClient(create_app(db_path=tmp_path/"app2.sqlite3",
+                               storage_dir=tmp_path/"uploads2")) as client:
+        assert client.get("/api/ai/providers").json()["providers"][1]["available"] is False
