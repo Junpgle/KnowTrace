@@ -125,6 +125,35 @@ def public_status(path: Path) -> dict:
 
 
 def register_settings_routes(app: FastAPI, path: Path):
+    @app.post("/api/settings/ai/test")
+    def test_ai_connection(request: Request, provider: Literal["ollama", "mimo"]):
+        local_request(request)
+        _, local, mimo = providers(path)
+        try:
+            if provider == "mimo":
+                if not mimo.api_key:
+                    raise HTTPException(409,"请先保存 MiMo API Key")
+                test = replace(mimo, max_output_tokens=48, timeout_seconds=20)
+                test._post([{"role":"user","content":"Return ONLY the word OK."}])
+                return {"provider":"mimo","ok":True,"message":"MiMo API 连接与鉴权成功（测试调用可能产生少量费用）"}
+            else:
+                from urllib.request import urlopen
+                from urllib.error import URLError
+                if not valid_ollama_url(local.base_url):
+                    raise HTTPException(422,"Invalid local Ollama URL")
+                with urlopen(local.base_url.rstrip("/")+"/api/tags",timeout=5) as response:
+                    if response.status != 200:
+                        raise HTTPException(502,"Ollama 服务返回异常状态")
+                return {"provider":"ollama","ok":True,"message":"本地 Ollama 服务可以连接"}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            from .ai import AIConfigError, AIServiceError
+            if isinstance(exc,(AIConfigError,AIServiceError)):
+                raise HTTPException(502,str(exc)) from exc
+            raise HTTPException(502,"Connection test failed: "+type(exc).__name__) from exc
+
+
     @app.get("/api/settings/ai")
     def get_ai_settings(request: Request):
         local_request(request)
