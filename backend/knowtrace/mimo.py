@@ -232,8 +232,10 @@ class MimoProvider:
                       "original_filename": row["original_filename"], "text": text,
                       "offset": offset, "truncated": len(row["content_text"]) > offset + len(text)}
             prior = fetched.get(chunk_id)
-            combined = (prior["content_text"] + "\n" + text) if prior else text
-            fetched[chunk_id] = {"content_text": combined, "content_kind": row["content_kind"]}
+            segments = [*prior["evidence_segments"], text] if prior else [text]
+            fetched[chunk_id] = {"content_text": "\n[RETRIEVAL_WINDOW_BOUNDARY]\n".join(segments),
+                                 "evidence_segments": segments,
+                                 "content_kind": row["content_kind"]}
             return result
 
         def handle(name: str, args: dict) -> dict:
