@@ -195,3 +195,21 @@ def test_changed_knowledge_is_eligible_for_new_batch_and_fenced_json(tmp_path):
         assert len(updated)==1
         assert updated[0]["id"]!=first.json()["id"]
         assert updated[0]["stale"] is False
+
+
+def test_approval_checks_new_duplicates_after_ai_review(tmp_path):
+    db=tmp_path/"review.sqlite3"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"upload",ai_provider=ReviewStub())) as http:
+        cid=seed(http,db,1)
+        first=http.post("/api/knowledge-points/kp1/ai-review",json={"provider":"default"})
+        assert first.status_code==200,first.text
+        with connect(db) as conn:
+            conn.execute("""INSERT INTO knowledge_points
+              (id,course_id,canonical_name,review_status)
+              VALUES('duplicate',?,'Knowledge 1','approved')""",(cid,))
+        result=http.post(f"/api/courses/{cid}/ai-knowledge-reviews/apply",
+                         json={"confirmed":True,"review_ids":[first.json()["id"]]})
+        assert result.status_code==200,result.text
+        assert result.json()["applied"]==[]
+        assert result.json()["skipped"][0]["reason"]=="New duplicate detected since AI review"
+        assert http.get("/api/knowledge-points/kp1").json()["review_status"]=="pending"
