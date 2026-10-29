@@ -36,6 +36,20 @@ def initialize(path: Path) -> None:
         for column, sql_type in extra.items():
             if column not in present:
                 connection.execute(f"ALTER TABLE batch_extractions ADD COLUMN {column} {sql_type}")
+        # v1.5 adds chapter/similarity grouped relation jobs. Preserve existing
+        # per-point snapshots and their completed progress without reset.
+        relation_columns = {row["name"] for row in connection.execute(
+            "PRAGMA table_info(relation_batch_runs)")}
+        relation_extra = {
+            "mode": "TEXT NOT NULL DEFAULT 'single'",
+            "group_size": "INTEGER NOT NULL DEFAULT 1",
+            "total_points": "INTEGER",
+            "completed_points": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, sql_type in relation_extra.items():
+            if column not in relation_columns:
+                connection.execute(f"ALTER TABLE relation_batch_runs ADD COLUMN {column} {sql_type}")
+
 
 
 
