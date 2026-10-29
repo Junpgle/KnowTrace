@@ -59,7 +59,8 @@ def uid():
     return str(uuid4())
 
 
-def catalog(db_path: Path, course_id: str, focus_id: str, target_id: str | None):
+def catalog(db_path: Path, course_id: str, focus_id: str, target_id: str | None,
+            *, include_text: bool = True):
     """Max 12 approved points and 2 linked source chunks per point."""
     with transaction(db_path) as db:
         if not db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'", (course_id,)).fetchone():
@@ -89,8 +90,9 @@ def catalog(db_path: Path, course_id: str, focus_id: str, target_id: str | None)
             raise HTTPException(422, "Need at least two approved knowledge points")
         ids = [r["id"] for r in points]
         placeholders = ",".join("?" for _ in ids)
+        text_column = "c.content_text" if include_text else "'' AS content_text"
         chunks = db.execute("""SELECT s.knowledge_point_id, c.id AS chunk_id,
-                   c.document_id,c.page_start,c.content_kind,c.content_text,
+                   c.document_id,c.page_start,c.content_kind,""" + text_column + """,
                    d.original_filename FROM knowledge_point_sources s
                    JOIN document_chunks c ON c.id=s.chunk_id
                    JOIN documents d ON d.id=c.document_id
@@ -314,8 +316,9 @@ def register_relation_routes(app: FastAPI, db_path: Path, resolve_provider):
 
     @app.post("/api/courses/{course_id}/relations/generate")
     def generate_relations(course_id: str, request: RelationGenerate):
-        points,chunks=catalog(db_path,course_id,request.focus_id,request.target_id)
         provider=resolve_provider(request.provider)
+        points,chunks=catalog(db_path,course_id,request.focus_id,request.target_id,
+                              include_text=not isinstance(provider,MimoProvider))
         try:
             if isinstance(provider,MimoProvider):
                 # MiMo sees only IDs and page metadata initially; does NOT
@@ -327,7 +330,15 @@ def register_relation_routes(app: FastAPI, db_path: Path, resolve_provider):
                     cid=args["chunk_id"]
                     if not isinstance(cid,str) or cid not in chunks:
                         return {"error":"Source is outside selected course scope"}
-                    source=chunks[cid]
+                    with transaction(db_path) as db:
+                        row = db.execute("""SELECT c.content_text FROM document_chunks c
+                            JOIN documents d ON d.id=c.document_id
+                            WHERE c.id=? AND d.course_id=? AND d.status='ready'""",
+                            (cid,course_id)).fetchone()
+                    if row is None:
+                        return {"error":"Source is no longer available"}
+                    source=dict(chunks[cid])
+                    source["content_text"]=row["content_text"][:1600]
                     fetched[cid]=source
                     return {"chunk_id":cid,"text":source["content_text"],"page":source["page_start"]}
                 system,context=prompt_text(points,chunks,request.count,lazy=True)
