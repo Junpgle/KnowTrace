@@ -133,8 +133,8 @@ def test_grouped_stop_resume_checks_one_whole_group(tmp_path):
         assert resume.status_code==200,resume.text
         final=until(http,cid,{"succeeded"})
         assert final["completed_points"]==24
-        assert final["completed"]==3
-        assert len(ai.calls)==3
+        assert final["completed"]==4  # one chapter remainder is a singleton
+        assert len(ai.calls)==3  # singleton is skipped without an API request
 
 
 def test_similar_knowledge_is_prioritized_even_when_out_of_order(tmp_path):
