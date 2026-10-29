@@ -5,19 +5,25 @@ import {
   CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList, ClipboardCheck,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
-  TrendingUp, X, XCircle, Orbit,
+  TrendingUp, X, XCircle, Orbit, FolderOpen, Plus, Upload,
 } from '@lucide/vue'
 import QuestionBank from './components/QuestionBank.vue'
 // Load the WebGL and Three.js bundle only when the user opens the graph.
 const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
+const DocumentLibrary = defineAsyncComponent(() => import('./components/DocumentLibrary.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession, type KnowledgePoint } from './api'
 
-type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy'
+type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy' | 'library'
 type Choice = string | boolean | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
+const showCourseForm = ref(false)
+const newCourseName = ref('')
+const newCourseDescription = ref('')
+const creatingCourse = ref(false)
+const bankEntryTab = ref<'knowledge' | 'questions' | 'external'>('questions')
 const loading = ref(true)
 const refreshing = ref(false)
 const starting = ref(false)
@@ -66,7 +72,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理', galaxy: '知识星系' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理', galaxy: '知识星系', library: '资料库' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -100,10 +106,34 @@ function firstUnanswered() {
   chooseIndex(next >= 0 ? next : Math.max(quiz.value.items.length - 1, 0))
 }
 function navigate(destination: View) {
+  if (destination === 'bank') bankEntryTab.value = 'questions'
   view.value = destination
   mobileMenu.value = false
   banner.value = ''
   if (destination === 'practice' && quiz.value?.status === 'active') firstUnanswered()
+}
+
+function openBankTab(tab: 'knowledge' | 'questions' | 'external') {
+  navigate('bank')
+  bankEntryTab.value = tab
+}
+async function createCourse() {
+  const title = newCourseName.value.trim()
+  if (!title || creatingCourse.value) return
+  creatingCourse.value = true
+  banner.value = ''
+  try {
+    const course = await api.createCourse({title,description:newCourseDescription.value.trim() || null})
+    courses.value = [...courses.value,course]
+    newCourseName.value = ''
+    newCourseDescription.value = ''
+    showCourseForm.value = false
+    courseId.value = course.id
+    localStorage.setItem('knowtrace:selected-course',course.id)
+    if (courses.value.length === 1) await loadCourseData(course.id)
+    navigate('library')
+  } catch (e) { showError(e) }
+  finally { creatingCourse.value = false }
 }
 
 let requestVersion = 0
@@ -262,6 +292,19 @@ onMounted(() => { void initialize() })
 <template>
   <div class="app-shell">
     <div v-if="mobileMenu" class="sidebar-scrim" @click="mobileMenu = false"></div>
+    <div v-if="showCourseForm" class="course-modal-overlay" @click.self="showCourseForm = false">
+      <form class="course-modal panel" @submit.prevent="createCourse">
+        <div class="course-modal-head"><div><p class="eyebrow">CREATE COURSE</p><h2>新建学习课程</h2></div>
+          <button type="button" class="icon-button" aria-label="关闭" @click="showCourseForm = false"><X :size="20" /></button>
+        </div>
+        <label>课程名称<input v-model="newCourseName" maxlength="120" required placeholder="例如：计算机网络、操作系统" autofocus /></label>
+        <label>课程描述（可选）<textarea v-model="newCourseDescription" maxlength="2000" rows="3" placeholder="这门课的学习目标和资料…" /></label>
+        <div class="course-modal-actions"><button type="button" class="button button-outline" @click="showCourseForm=false">取消</button>
+          <button type="submit" class="button button-primary" :disabled="creatingCourse || !newCourseName.trim()">
+            <LoaderCircle v-if="creatingCourse" class="spinning" :size="16" /><Plus v-else :size="16" /> 创建并导入资料
+          </button></div>
+      </form>
+    </div>
     <aside class="sidebar" :class="{ 'sidebar-open': mobileMenu }">
       <div class="brand-row">
         <div class="brand-mark"><Activity :size="25" :stroke-width="2.6" /></div>
@@ -273,6 +316,7 @@ onMounted(() => { void initialize() })
         <button type="button" :class="{ active: view === 'overview' }" @click="navigate('overview')"><LayoutDashboard :size="19" /><span>学习总览</span></button>
         <button type="button" :class="{ active: view === 'practice' }" @click="navigate('practice')"><BookOpen :size="19" /><span>开始练习</span><span v-if="quiz?.status === 'active'" class="nav-dot"></span></button>
         <button type="button" :class="{ active: view === 'bank' }" @click="navigate('bank')"><ClipboardCheck :size="19" /><span>题库管理</span><span v-if="pendingCount" class="nav-dot"></span></button>
+        <button type="button" :class="{ active: view === 'library' }" @click="navigate('library')"><FolderOpen :size="19" /><span>资料导入与管理</span></button>
         <button type="button" :class="{ active: view === 'galaxy' }" @click="navigate('galaxy')"><Orbit :size="19" /><span>知识星系 · 3D</span></button>
         <button type="button" :class="{ active: view === 'report' }" @click="navigate('report')"><TrendingUp :size="19" /><span>学习报告</span></button>
       </nav>
@@ -287,6 +331,7 @@ onMounted(() => { void initialize() })
         </div>
         <ChevronDown :size="16" class="course-chevron" />
       </div>
+      <button type="button" class="sidebar-add-course" @click="showCourseForm = true"><Plus :size="15" /> 新建课程</button>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-motto"><Sparkles :size="18" /><p>不只是答对题目，<br />更要看见每一次进步。</p></div>
       <div class="sidebar-footer"><div class="avatar">学</div><div><strong>个人学习空间</strong><span>本地 · 单用户模式</span></div><span class="online-mini"></span></div>
@@ -310,8 +355,8 @@ onMounted(() => { void initialize() })
         <div v-if="loading" class="loading-screen"><LoaderCircle :size="32" class="spinning" /><strong>正在整理你的学习空间…</strong><span>从本地 KnowTrace 后端读取课程与学习记录</span></div>
         <div v-else-if="!courses.length" class="blank-state panel">
           <div class="blank-illustration"><BookOpen :size="42" /></div><h2>从一门课程开始学习</h2>
-          <p>还没有找到课程。可以先在 Swagger 中创建课程，再回到这里刷新。</p>
-          <div class="blank-actions"><a class="button button-primary" href="http://127.0.0.1:8000/docs" target="_blank" rel="noopener noreferrer">打开课程管理 <ArrowRight :size="17" /></a><button class="button button-outline" @click="initialize">重新连接</button></div>
+          <p>创建一门课程，就能直接上传 PDF 或 PPTX 课件，不再需要打开 Swagger 操作。</p>
+          <div class="blank-actions"><button class="button button-primary" @click="showCourseForm=true"><Plus :size="17" /> 新建第一门课程</button><button class="button button-outline" @click="initialize">重新连接</button></div>
         </div>
 
         <template v-else>
@@ -322,7 +367,7 @@ onMounted(() => { void initialize() })
                 <div class="hero-kicker"><Sparkles :size="15" /> 智能评测 · 让进步可见</div>
                 <h2>每一次练习，<br /><span>都让知识更清晰。</span></h2>
                 <p>从真实课件出发，用每一道题发现薄弱点，让学习不再凭感觉。</p>
-                <div class="hero-actions"><button class="button button-light" @click="navigate('practice')">开始今日练习 <ArrowRight :size="18" /></button><button class="hero-secondary" @click="navigate('report')">查看学习报告 <ChevronRight :size="18" /></button></div>
+                <div class="hero-actions"><button class="button button-light" @click="navigate('library')"><Upload :size="18" /> 导入课件资料</button><button class="hero-secondary" @click="navigate('practice')">开始练习 <ChevronRight :size="18" /></button></div>
               </div>
               <div class="hero-art" aria-hidden="true">
                 <div class="orbit orbit-1"></div><div class="orbit orbit-2"></div>
@@ -439,7 +484,9 @@ onMounted(() => { void initialize() })
             </template>
           </div>
 
-          <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" @updated="refresh" />
+          <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" :initial-tab="bankEntryTab" @updated="refresh" />
+          <DocumentLibrary v-else-if="view === 'library'" :course-id="courseId" :course-name="currentCourse?.title || '课程'"
+            @updated="refresh" @open-review="openBankTab('knowledge')" @open-external="openBankTab('external')" />
           <KnowledgeGalaxy v-else-if="view === 'galaxy'" :course-id="courseId"
             :course-name="currentCourse?.title || '课程'"
             @open-bank="navigate('bank')" @open-practice="navigate('practice')" />
@@ -468,7 +515,7 @@ onMounted(() => { void initialize() })
           </div>
         </template>
       </main>
-      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v0.9.0</span></footer>
+      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v1.0.0</span></footer>
     </div>
   </div>
 </template>
