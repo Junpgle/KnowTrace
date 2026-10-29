@@ -121,8 +121,6 @@ def register_batch_routes(app: FastAPI, db_path: Path, extract_page_range: Calla
                 raise HTTPException(404, "Ready document not found")
             if body.include_visual and doc["media_type"] != "application/pdf":
                 raise HTTPException(422, "Visual extraction supports PDF only")
-            if body.include_visual and body.provider == "mimo":
-                raise HTTPException(422, "Visual extraction requires local Ollama")
             existing = db.execute("""SELECT id FROM batch_extractions WHERE document_id=?
                     AND status IN ('running','stopping') LIMIT 1""",(document_id,)).fetchone()
             if existing:
