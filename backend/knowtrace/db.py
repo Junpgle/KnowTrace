@@ -45,6 +45,7 @@ def initialize(path: Path) -> None:
             "group_size": "INTEGER NOT NULL DEFAULT 1",
             "total_points": "INTEGER",
             "completed_points": "INTEGER NOT NULL DEFAULT 0",
+            "bridge_strategy": "INTEGER NOT NULL DEFAULT 0",
         }
         for column, sql_type in relation_extra.items():
             if column not in relation_columns:
