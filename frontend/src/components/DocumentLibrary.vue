@@ -8,7 +8,7 @@ import {
 } from '@lucide/vue'
 import { api, documentPagePreviewUrl, type AIProviderId, type AIProviderStatus,
   type CourseDocument, type DocumentChunk, type DocumentQuality,
-  type ExtractKnowledgeResult } from '../api'
+  type BatchExtraction } from '../api'
 
 const props = defineProps<{ courseId: string; courseName: string }>()
 const emit = defineEmits<{ updated: []; openReview: []; openExternal: [documentId: string] }>()
@@ -35,7 +35,7 @@ const chosenProvider = ref<AIProviderId>('ollama')
 const aiProviders = ref<AIProviderStatus | null>(null)
 const visual = ref(false)
 const extracting = ref(false)
-const extractResult = ref<ExtractKnowledgeResult | null>(null)
+const manualJob = ref<BatchExtraction | null>(null)
 const input = ref<HTMLInputElement | null>(null)
 let loadNumber = 0
 let documentNumber = 0
@@ -70,7 +70,7 @@ function isValid(file: File): string | null {
   if (!file.size) return file.name + '：文件为空'
   return null
 }
-function clearOutcome() { error.value = ''; success.value = ''; extractResult.value = null }
+function clearOutcome() { error.value = ''; success.value = ''; manualJob.value = null }
 async function reload() {
   const token = ++loadNumber
   fetching.value = true
@@ -94,7 +94,7 @@ async function selectDocument(id: string) {
   rangeStart.value = 1
   rangeEnd.value = 1
   visual.value = false
-  extractResult.value = null
+  manualJob.value = null
   error.value = ''
   if (!id) return
   qualityBusy.value = true
@@ -124,7 +124,7 @@ function nextPage(direction: number) {
   activePage.value = next
   rangeStart.value = next
   rangeEnd.value = next
-  extractResult.value = null
+  manualJob.value = null
   if (displayedChunks.value.length === 0 && chunkMore.value) void loadMoreChunks()
 }
 function choosePage(page: number) {
@@ -132,7 +132,7 @@ function choosePage(page: number) {
   activePage.value = page
   rangeStart.value = page
   rangeEnd.value = page
-  extractResult.value = null
+  manualJob.value = null
   if (displayedChunks.value.length === 0 && chunkMore.value) void loadMoreChunks()
 }
 async function addFiles(list: File[]) {
@@ -193,14 +193,21 @@ async function extract() {
   if (!selected.value || !readyToExtract.value) return
   clearOutcome()
   extracting.value = true
+  const id = selected.value.id
+  const first = rangeStart.value
+  const last = rangeEnd.value
   try {
-    const output = await api.extractKnowledge(selected.value.id, {
-      page_start: rangeStart.value, page_end: rangeEnd.value,
+    // The same durable background queue now runs *both* selected-page and
+    // whole-document extraction. The task center owns notifications/results.
+    const job = await api.startBatchExtraction(id, {
+      page_start: first, page_end: last,
+      pages_per_batch: last - first + 1,
       include_visual: visual.value, provider: chosenProvider.value,
     })
-    extractResult.value = output
-    success.value = '本次新增 ' + output.created + ' 个待审核知识点，关联 ' + output.reused + ' 个已有知识点。'
-    if (output.created || output.reused) emit('updated')
+    if (selectedId.value === id) {
+      manualJob.value = job
+      success.value = '已创建第 ' + first + '–' + last + ' 页的提取任务。顶部铃铛可实时查看进度与最终结果。'
+    }
   } catch (e) { setError(e) }
   finally { extracting.value = false }
 }
@@ -220,11 +227,11 @@ watch(selectedId, id => { void selectDocument(id) })
 watch(rangeStart, start => {
   if (rangeEnd.value < start) rangeEnd.value = start
   if (rangeEnd.value > start + 3) rangeEnd.value = start + 3
-  extractResult.value = null
+  manualJob.value = null
 })
-watch(rangeEnd, () => { extractResult.value = null })
-watch(chosenProvider, () => { extractResult.value = null })
-watch(visual, () => { extractResult.value = null })
+watch(rangeEnd, () => { manualJob.value = null })
+watch(chosenProvider, () => { manualJob.value = null })
+watch(visual, () => { manualJob.value = null })
 void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing optional */})
 </script>
 
@@ -376,18 +383,14 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
               :disabled="!readyToExtract || (visual && visionCount>2)" @click="extract">
               <LoaderCircle v-if="extracting" :size="18" class="spinning" />
               <Sparkles v-else :size="18" />
-              {{ extracting?'正在提取并核验原文证据…':'开始提取所选页面' }}
+              {{ extracting?'正在创建任务…':'提交所选页面提取任务' }}
               <ArrowRight :size="18" />
             </button>
-            <div v-if="extractResult" class="library-extract-result">
-              <div><CheckCircle2 :size="22" /><strong>提取任务完成</strong></div>
-              <p>新增 <b>{{ extractResult.created }}</b> 个待审核知识点，复用 <b>{{ extractResult.reused }}</b> 个已有知识点。</p>
-              <p v-if="extractResult.vision_pages.length">使用视觉描述的页码：{{ extractResult.vision_pages.join('、') }}（需核验原图）</p>
-              <p v-if="extractResult.skipped_sparse_pages.length">跳过的低文字量页码：{{ extractResult.skipped_sparse_pages.join('、') }}</p>
-              <p v-for="(message,index) in extractResult.warnings" :key="index">{{ message }}</p>
-              <button class="button button-primary" type="button" @click="emit('openReview')">
-                <ClipboardCheck :size="17" /> 前往知识点审核 <ArrowRight :size="17" />
-              </button>
+            <div v-if="manualJob" class="library-extract-result" role="status">
+              <div><LoaderCircle :size="21" class="spinning" /><strong>提取任务已提交</strong></div>
+              <p>已将第 {{manualJob.range_start}}–{{manualJob.range_end}} 页提交给后端任务队列。顶部铃铛会分别显示此任务的处理页码、成功或失败通知。</p>
+              <p>完成后到「题库管理 → 知识点审核」查看新知识点；不需要一直停留在此页。</p>
+              <button type="button" class="button button-outline" @click="emit('openReview')"><ClipboardCheck :size="17" /> 查看知识点审核</button>
             </div>
             <div class="library-other-options">
               <span>不想调用 API？</span>
