@@ -8,9 +8,15 @@ export interface RelationBatch {
   course_id: string
   provider: AIProviderId
   per_focus: number
+  mode: 'single' | 'grouped'
+  group_size: number
   total: number
   next_index: number
   completed: number
+  total_points: number
+  completed_points: number
+  remaining_requests: number
+  estimated_request_count: number
   skipped: number
   created_relations: number
   warning_count: number
@@ -607,7 +613,8 @@ export const api = {
   relationBatches: (courseId: string) =>
     request<RelationBatch[]>('/api/courses/'+encodeURIComponent(courseId)+'/relation-batches'),
   startRelationBatch: (courseId: string, options: {
-    provider: AIProviderId; max_focus_points: number; per_focus: number; confirm_large_run: boolean
+    provider: AIProviderId; max_focus_points: number; per_focus: number;
+    mode: 'single' | 'grouped'; group_size: number; confirm_large_run: boolean
   }) => request<RelationBatch>('/api/courses/'+encodeURIComponent(courseId)+'/relation-batches',
        { method: 'POST', body: JSON.stringify(options) }),
   stopRelationBatch: (jobId: string) =>
