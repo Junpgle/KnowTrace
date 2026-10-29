@@ -341,9 +341,12 @@ def register_ai_knowledge_review_routes(app: FastAPI, db_path: Path, resolve_pro
                 ORDER BY created_at,id""",(course_id,)).fetchall()
             ids=[]
             for row in rows:
-                old=db.execute("""SELECT 1 FROM ai_knowledge_reviews
+                old=db.execute("""SELECT fingerprint FROM ai_knowledge_reviews
                     WHERE knowledge_point_id=? ORDER BY rowid DESC LIMIT 1""",(row["id"],)).fetchone()
-                if not old:ids.append(row["id"])
+                # New or materially edited knowledge points are eligible.
+                # An old review of an earlier version must not block re-review.
+                if not old or old["fingerprint"]!=material(db,row["id"])["fingerprint"]:
+                    ids.append(row["id"])
                 if len(ids)>=body.limit:break
             if not ids:raise HTTPException(409,"No pending points without an AI review")
             bid=uid()
