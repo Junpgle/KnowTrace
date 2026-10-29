@@ -271,6 +271,23 @@ export interface ExternalKnowledgeImportResult {
   warnings: string[]
 }
 
+export interface DirectApprovalPoint {
+  id: string
+  canonical_name: string
+  review_status: 'pending'
+  source_count: number
+  has_visual: boolean
+  duplicate_name: boolean
+  ai_generated: boolean
+  eligible: boolean
+}
+export interface DirectApprovalPreview {
+  points: DirectApprovalPoint[]
+  eligible: number
+  ai_generated: number
+  visual: number
+  missing_evidence: number
+}
 export type KnowledgeAIRecommendation = 'approve' | 'revise' | 'reject'
 export interface KnowledgeAIReview {
   id: string
@@ -506,6 +523,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  directApprovalPreview: (courseId: string) =>
+    request<DirectApprovalPreview>('/api/courses/'+encodeURIComponent(courseId)+'/knowledge-points/bulk-approval-preview'),
+  directBulkApprove: (courseId: string, ids: string[]) =>
+    request<{applied:string[];skipped:{id:string;reason:string}[]}>(
+      '/api/courses/'+encodeURIComponent(courseId)+'/knowledge-points/bulk-approve',
+      {method:'POST',body:JSON.stringify({confirmed:true,bypass_ai_review:true,point_ids:ids})}),
   reviewKnowledgeWithAI: (id: string, provider: AIProviderId = 'default') =>
     request<KnowledgeAIReview>('/api/knowledge-points/' + encodeURIComponent(id) + '/ai-review',
       { method: 'POST', body: JSON.stringify({ provider }) }),
