@@ -72,7 +72,7 @@ onMounted(()=>{void reload()})
     <template v-else-if="data">
       <div class="as-grid">
         <section class="panel as-panel">
-          <div class="as-panel-title"><span class="as-icon"><KeyRound :size="22"/></span><div><h2>小米 MiMo API</h2><p>云端文本提取 · 出题 · 知识关系分析</p></div></div>
+          <div class="as-panel-title"><span class="as-icon"><KeyRound :size="22"/></span><div><h2>小米 MiMo API</h2><p>云端多模态识别 · 知识点提取 · 出题 · 关系分析</p></div></div>
           <div :class="['as-state',{ok:data.mimo_key_configured}]"><span></span>
             {{data.mimo_key_configured?'已配置 API Key':'尚未配置 API Key'}}
             <small v-if="data.mimo_key_source==='environment'">（来自终端环境变量）</small>
