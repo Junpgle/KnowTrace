@@ -129,6 +129,17 @@ CREATE TABLE IF NOT EXISTS knowledge_relations (
 );
 CREATE INDEX IF NOT EXISTS idx_kr_target ON knowledge_relations(target_kp_id, relation_type);
 
+CREATE TABLE IF NOT EXISTS knowledge_relation_events (
+    id TEXT PRIMARY KEY,
+    relation_id TEXT NOT NULL REFERENCES knowledge_relations(id) ON DELETE RESTRICT,
+    action TEXT NOT NULL CHECK(action IN ('approved','rejected')),
+    before_status TEXT NOT NULL,
+    after_status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_relation_events_relation
+    ON knowledge_relation_events(relation_id,created_at);
+
 CREATE TABLE IF NOT EXISTS knowledge_relation_sources (
     relation_id TEXT NOT NULL REFERENCES knowledge_relations(id) ON DELETE RESTRICT,
     chunk_id TEXT NOT NULL REFERENCES document_chunks(id) ON DELETE RESTRICT,
