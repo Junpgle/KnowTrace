@@ -287,6 +287,8 @@ export interface BatchExtraction {
   skipped_pages: number
   status: BatchStatus
   last_error: string | null
+  created_at: string
+  updated_at: string
   progress: number
   stop_note: string
 }
