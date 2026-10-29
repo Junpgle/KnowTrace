@@ -44,6 +44,18 @@ Vite 在开发时自动把 /api 和 /health 转发到 http://127.0.0.1:8000，�
 
 以后再次启动只需要在各自的终端启动后端和 npm run dev，通常无需重复 npm install。
 
+## v0.6.0：在网页中切换本地模型与小米 MiMo
+
+“题库管理 → 知识点审核 → 基于此知识点生成题目”新增 **出题模型** 下拉框：
+
+- 默认模型：使用后端 KNOWTRACE_AI_PROVIDER 指定的 Ollama（默认）或 MiMo。
+- 本地 Ollama：Qwen3.5 4B，保留原有离线流程。
+- 小米 MiMo · Function Calling：选择后只给模型知识点概要和资料目录，由模型按需调用后端的受限检索工具读取小段证据，不会直接发送整份课件。
+
+在后端终端先设置 MIMO_API_KEY（**只能使用按量付费 API Key，不能使用 Token Plan 套餐 Key**）。密钥不会保存在网页中。模型默认 mimo-v2.6-flash，可以在后端通过 KNOWTRACE_MIMO_MODEL=mimo-v2.6-pro 切换。
+
+生成结果展示 MiMo 工具调用次数、读取资料片段数及 API 返回的 Token 用量，便于对比本地模型。详见 [小米 MiMo 接入指南](MIMO-API.md)。
+
 ## 新增：网页内生成、审核题目
 
 打开左侧 **题库管理**，无需再用 Swagger 管理题目。
