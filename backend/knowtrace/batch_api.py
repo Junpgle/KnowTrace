@@ -58,6 +58,18 @@ def register_batch_routes(app: FastAPI, db_path: Path, extract_page_range: Calla
                 try:
                     result = extract_page_range(row["document_id"], start, end,
                                                 bool(row["include_visual"]), row["provider"])
+                except HTTPException as exc:
+                    # A completely image-only chunk without vision is a *skip*,
+                    # not an unrecoverable failure for whole-document extraction.
+                    if exc.status_code == 422 and exc.detail == "No sufficiently detailed text found; enable vision or select different pages":
+                        result = {"created":0,"reused":0,
+                                  "skipped_sparse_pages":list(range(start,end+1))}
+                    else:
+                        with transaction(db_path) as db:
+                            db.execute("""UPDATE batch_extractions SET status='stopped',
+                               last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                               (f"Pages {start}-{end}: {str(exc.detail)[:350]}", job_id))
+                        return
                 except Exception as exc:
                     # Model outage is recoverable from last *committed* batch.
                     # Do not log exception repr: hosted AI errors may contain
