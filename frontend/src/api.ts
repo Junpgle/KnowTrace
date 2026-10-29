@@ -1,4 +1,49 @@
 /** Typed, same-origin API client. Vite proxies /api to FastAPI during local development. */
+
+export interface GraphNode {
+  id: string
+  kind: 'course' | 'chapter' | 'knowledge'
+  name: string
+  chapter_id: string | null
+  summary: string | null
+  difficulty: number | null
+  review_status: 'pending' | 'approved' | 'rejected'
+  mastery: number | null
+  observations: number
+  source_count: number
+  question_count: number
+  virtual: boolean
+}
+
+export interface GraphEdge {
+  id: string
+  source: string
+  target: string
+  type: 'contains' | 'prerequisite_required' | 'prerequisite_recommended'
+    | 'related' | 'uses' | 'compares'
+  structural: boolean
+  verified: boolean
+  rationale: string | null
+}
+
+export interface KnowledgeGraph {
+  course_id: string
+  course_name: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  stats: {
+    total_knowledge_points: number
+    shown_knowledge_points: number
+    approved_points: number
+    pending_points: number
+    mastery_estimated_points: number
+    approved_semantic_edges: number
+    truncated: boolean
+    limit: number
+  }
+  notice: string
+}
+
 export interface Course {
   id: string
   title: string
@@ -257,6 +302,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  knowledgeGraph: (courseId: string, options: { limit?: number, include_pending?: boolean } = {}) => {
+    const params = new URLSearchParams()
+    params.set('limit', String(options.limit ?? 300))
+    params.set('include_pending', String(options.include_pending ?? true))
+    return request<KnowledgeGraph>('/api/courses/' + encodeURIComponent(courseId)
+      + '/knowledge-graph?' + params.toString())
+  },
   health: () => request<{ status: string }>('/health'),
   courses: () => request<Course[]>('/api/courses'),
   questions: (courseId: string) => request<QuestionSummary[]>(
