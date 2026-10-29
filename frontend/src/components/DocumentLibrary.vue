@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import BatchExtractionPanel from './BatchExtractionPanel.vue'
 import {
   AlertCircle, ArrowRight, BookOpenCheck, CheckCircle2, ChevronLeft, ChevronRight,
   ClipboardCheck, CloudUpload, File, FileCheck2, FileText, Image,
@@ -343,9 +344,11 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
             </div>
           </section>
 
+          <BatchExtractionPanel :key="selected.id" :document="selected" @updated="emit('updated')"
+            @open-review="emit('openReview')" />
           <section class="library-extract panel">
             <div class="library-section-heading"><div class="library-section-icon mint"><Sparkles :size="22" /></div>
-              <div><h2>AI 提取知识点</h2><p>每次选取 1–4 页，系统会将提取结果保存为待审核知识点。</p></div>
+              <div><h2>AI 提取知识点</h2><p>用于试运行或精细选择指定页面；想处理整份资料请使用上方“一键处理整份资料”。</p></div>
             </div>
             <div class="library-extract-form">
               <label>起始页<input v-model.number="rangeStart" type="number" min="1" :max="selected.total_pages" /></label>
