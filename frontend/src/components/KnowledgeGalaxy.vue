@@ -10,6 +10,7 @@ import RelationStudio from './RelationStudio.vue'
 import {
   api, sourcePreviewUrl,
   type GraphEdge, type GraphNode, type KnowledgeGraph, type KnowledgePointDetail,
+  type PDFSourceChapterMapping, type PDFSourceChapterPreview,
 } from '../api'
 
 const props = defineProps<{ courseId: string; courseName: string }>()
@@ -39,6 +40,68 @@ const newChapter = ref('')
 const chapterChoice = ref('')
 const chapterBusy = ref(false)
 const chapterMessage = ref('')
+const showPDFClassification = ref(false)
+const pdfPanel = ref<HTMLDivElement | null>(null)
+const pdfPreview = ref<PDFSourceChapterPreview | null>(null)
+const pdfBusy = ref(false)
+const pdfError = ref('')
+const pdfMessage = ref('')
+const pdfSelection = ref<Record<string, string>>({})
+const pdfTitles = ref<Record<string, string>>({})
+const pdfConfirmed = ref(false)
+const pdfMappings = computed<PDFSourceChapterMapping[]>(() => (
+  pdfPreview.value?.documents.flatMap(doc => {
+    const selected = pdfSelection.value[doc.document_id] ?? 'skip'
+    if (selected === 'skip') return []
+    if (selected === 'new') return [{
+      document_id: doc.document_id,
+      chapter_title: (pdfTitles.value[doc.document_id] ?? '').trim(),
+    }]
+    return [{ document_id: doc.document_id, chapter_id: selected.slice('chapter:'.length) }]
+  }) ?? []
+))
+const pdfReady = computed(() => pdfMappings.value.length > 0
+  && pdfMappings.value.every(mapping => Boolean(mapping.chapter_id || mapping.chapter_title)))
+async function loadPDFPreview() {
+  pdfBusy.value = true
+  pdfError.value = ''
+  try {
+    const data = await api.previewSourceChapters(props.courseId)
+    pdfPreview.value = data
+    pdfSelection.value = Object.fromEntries(data.documents.map(doc => [
+      doc.document_id,
+      doc.matching_chapter_id ? 'chapter:' + doc.matching_chapter_id : 'new',
+    ]))
+    pdfTitles.value = Object.fromEntries(data.documents.map(doc => [
+      doc.document_id, doc.suggested_title,
+    ]))
+    pdfConfirmed.value = false
+  } catch (e) {
+    pdfError.value = e instanceof Error ? e.message : 'PDF 来源预览失败'
+  } finally { pdfBusy.value = false }
+}
+async function togglePDFClassification() {
+  showPDFClassification.value = !showPDFClassification.value
+  if (!showPDFClassification.value) return
+  if (!pdfPreview.value) await loadPDFPreview()
+  await nextTick()
+  pdfPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+async function applyPDFClassification() {
+  if (!pdfConfirmed.value || !pdfReady.value || pdfBusy.value) return
+  pdfBusy.value = true
+  pdfError.value = ''
+  pdfMessage.value = ''
+  try {
+    const result = await api.applySourceChapters(props.courseId, pdfMappings.value)
+    pdfMessage.value = `已归类 ${result.assigned_points} 个知识点，新建 ${result.created_chapters.length} 个章节；剩余 ${result.remaining_unclassified} 个未归类。`
+    // Refresh the actual graph and reload the database-backed preview.
+    await refresh()
+    await loadPDFPreview()
+  } catch (e) {
+    pdfError.value = e instanceof Error ? e.message : '批量归类失败'
+  } finally { pdfBusy.value = false }
+}
 const canvas = ref<InstanceType<typeof Graph3DCanvas> | null>(null)
 let requestToken = 0
 let detailToken = 0
@@ -208,6 +271,11 @@ watch(() => props.courseId, () => {
   query.value = ''
   filter.value = 'all'
   detail.value = null
+  showPDFClassification.value = false
+  pdfPreview.value = null
+  pdfMessage.value = ''
+  pdfError.value = ''
+  pdfConfirmed.value = false
   void refresh()
 }, { immediate: true })
 </script>
@@ -220,6 +288,9 @@ watch(() => props.courseId, () => {
         <p class="section-description">以真实知识为星球，以经过审核的关联为星际航路。</p>
       </div>
       <div class="kg-top-actions">
+        <button type="button" class="button button-outline button-small" @click="togglePDFClassification">
+          <FileText :size="16" /> {{ showPDFClassification ? '收起 PDF 归类' : '按来源 PDF 归类' }}
+        </button>
         <button type="button" class="button button-primary button-small" @click="toggleStudio"><Network :size="16" /> {{ showStudio ? "收起关系工作台" : "提取 / 审核关系" }}</button>
         <button type="button" class="button button-outline button-small" :disabled="loading" @click="refresh"><RefreshCw :size="16" /> 刷新</button>
         <button type="button" class="button button-outline button-small" @click="resetView"><RotateCcw :size="16" /> 返回总览</button>
@@ -242,6 +313,59 @@ watch(() => props.courseId, () => {
         本次仅加载 {{ graph.stats.shown_knowledge_points }} / {{ graph.stats.total_knowledge_points }} 个知识点；
         后续将增加分页和分章节按需加载，不应把未加载知识点视为不存在。
       </p>
+      <section v-if="showPDFClassification" ref="pdfPanel" class="kg-source-classifier panel">
+        <div class="kg-source-heading">
+          <div>
+            <h2><FileText :size="18" /> 依据来源 PDF 批量归类</h2>
+            <p>每份 PDF 对应一个章节。按文件名新建章节或选用已有章节；只处理目前没有章节的知识点。</p>
+          </div>
+          <button type="button" class="button button-outline button-small" :disabled="pdfBusy"
+            @click="loadPDFPreview"><RefreshCw :size="14" /> 重新预览</button>
+        </div>
+        <p v-if="pdfError" class="kg-error" role="alert">{{ pdfError }}</p>
+        <p v-if="pdfMessage" class="kg-tip" role="status">{{ pdfMessage }}</p>
+        <p v-if="pdfBusy" class="kg-muted"><LoaderCircle class="spinning" :size="15" /> 正在处理来源映射…</p>
+        <template v-if="pdfPreview">
+          <p class="kg-source-summary">
+            未归类 {{ pdfPreview.unclassified_points }} 个 · 单一 PDF 来源 {{ pdfPreview.single_pdf_points }} 个 ·
+            跨多份资料 {{ pdfPreview.multi_document_points }} 个 · 无来源 {{ pdfPreview.no_source_points }} 个
+          </p>
+          <p v-if="!pdfPreview.documents.length" class="kg-muted">
+            暂无具有未归类知识点来源引用的 PDF。请确认知识点保留了 PDF 来源记录。
+          </p>
+          <div v-else class="kg-source-rows">
+            <div v-for="doc in pdfPreview.documents" :key="doc.document_id" class="kg-source-row">
+              <div class="kg-source-doc">
+                <strong>{{ doc.filename }}</strong>
+                <small>引用此 PDF 的未归类知识点 {{ doc.linked_unclassified }} 个，其中仅来自这份 PDF 的 {{ doc.single_source_points }} 个</small>
+              </div>
+              <div class="kg-source-controls">
+                <select v-model="pdfSelection[doc.document_id]" :aria-label="'选择 '+doc.filename+' 对应章节'">
+                  <option value="skip">暂不处理</option>
+                  <option value="new">新建章节（从文件名）</option>
+                  <option v-for="chapter in chapters.filter(x => !x.virtual)" :key="chapter.id"
+                    :value="'chapter:' + chapter.chapter_id">{{ chapter.name }}</option>
+                </select>
+                <input v-if="pdfSelection[doc.document_id] === 'new'"
+                  v-model="pdfTitles[doc.document_id]" maxlength="160"
+                  :aria-label="'为 '+doc.filename+' 设置章节名称'" placeholder="输入新章节名" />
+              </div>
+            </div>
+          </div>
+          <p class="kg-muted">
+            只有一个知识点的所有来源 PDF 都映射到同一章节时才会归类；跨不同章节、缺少来源或包含未映射资料的知识点保持未归类。
+            此操作保留原有审核状态、题目、BKT 数据和关系边，不会覆盖已有章节归属。
+          </p>
+          <label class="kg-source-confirm">
+            <input v-model="pdfConfirmed" type="checkbox" />
+            我已检查 PDF 与章节的对应关系，同意仅批量归类未分章知识点。
+          </label>
+          <button type="button" class="button button-primary" :disabled="pdfBusy || !pdfConfirmed || !pdfReady"
+            @click="applyPDFClassification">
+            <BookOpen :size="16" /> 确认归类 {{ pdfMappings.length }} 份 PDF 对应知识点
+          </button>
+        </template>
+      </section>
       <div class="kg-layout">
         <aside class="kg-filter panel">
           <h2><Search :size="17" /> 星系导航</h2>
@@ -393,6 +517,22 @@ watch(() => props.courseId, () => {
 
 <style scoped>
 .kg-page{display:grid;gap:20px;min-width:0}
+.kg-source-classifier{padding:19px;display:grid;gap:13px;scroll-margin-top:20px}
+.kg-source-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.kg-source-heading h2{font-size:15px;color:#315465;display:flex;gap:8px;align-items:center;margin:0 0 7px}
+.kg-source-heading p{font-size:11px;color:#7893a1;line-height:1.7;margin:0}
+.kg-source-summary{font-size:12px;color:#287f74;background:#eef8f5;border-radius:9px;padding:12px;margin:0}
+.kg-source-rows{display:grid;gap:7px;max-height:380px;overflow:auto}
+.kg-source-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(210px,1fr);gap:12px;align-items:center;padding:12px;border:1px solid #e0eaec;border-radius:9px}
+.kg-source-doc{display:grid;gap:6px;min-width:0}
+.kg-source-doc strong{font-size:12px;color:#315465;overflow-wrap:anywhere}
+.kg-source-doc small{font-size:10px;color:#829ba8}
+.kg-source-controls{display:grid;gap:7px}
+.kg-source-controls select,.kg-source-controls input{width:100%;min-width:0;min-height:37px;border:1px solid #dce8ea;background:#fff;border-radius:8px;padding:8px;color:#315465;font-size:11px}
+.kg-source-confirm{display:flex;gap:9px;align-items:flex-start;font-size:11px;color:#526b78;line-height:1.8}
+.kg-source-confirm input{accent-color:#149e8d;margin-top:4px}
+@media(max-width:660px){.kg-source-row{grid-template-columns:1fr}}
+
 .kg-studio-anchor{scroll-margin-top:22px;min-width:0}
 .kg-heading{display:flex;justify-content:space-between;align-items:center;gap:17px;flex-wrap:wrap}
 .kg-heading h1{font-size:30px;margin:5px 0}
