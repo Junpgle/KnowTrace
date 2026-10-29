@@ -51,7 +51,7 @@ const readyToExtract = computed(() => Boolean(selected.value?.status === 'ready'
   && Number.isInteger(rangeStart.value) && Number.isInteger(rangeEnd.value)
   && rangeStart.value > 0 && rangeEnd.value >= rangeStart.value
   && rangeEnd.value - rangeStart.value <= 3 && rangeEnd.value <= (selected.value?.total_pages ?? 0)
-  && (!visual.value || (isPdf.value && chosenProvider.value === 'ollama'))))
+  && (!visual.value || isPdf.value)))
 const visionCount = computed(() => selectedQuality.value?.pages.filter(
   p => p.needs_review && p.page >= rangeStart.value && p.page <= rangeEnd.value).length ?? 0)
 const selectedAI = computed(() => aiProviders.value?.providers.find(p =>
@@ -223,7 +223,7 @@ watch(rangeStart, start => {
   extractResult.value = null
 })
 watch(rangeEnd, () => { extractResult.value = null })
-watch(chosenProvider, () => { extractResult.value = null; if (chosenProvider.value === 'mimo') visual.value = false })
+watch(chosenProvider, () => { extractResult.value = null })
 watch(visual, () => { extractResult.value = null })
 void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing optional */})
 </script>
@@ -361,14 +361,14 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
               </label>
             </div>
             <label v-if="isPdf" class="library-visual-toggle">
-              <input v-model="visual" type="checkbox" :disabled="chosenProvider !== 'ollama'" />
-              <span><strong>对低文字量 PDF 页面启用本地视觉模型</strong>
-                <small>需要配置 Ollama 视觉模型；最多 2 页，提取的图示描述需人工核查。MiMo 文本模型不会自动识图。</small></span>
+              <input v-model="visual" type="checkbox" />
+              <span><strong>对扫描页 / 图片页启用多模态识别</strong>
+                <small>当前选择 Ollama 时使用本地视觉模型；选择 MiMo 时由 MiMo 2.6 直接识别上传的页面图片。每次最多 2 个低文字量页面；图像描述需人工核验。</small></span>
             </label>
             <div v-if="visual && visionCount>2" class="library-feedback error"><AlertCircle :size="17" />
               所选范围中有 {{ visionCount }} 页低文字量页面；视觉模式每次最多处理 2 页，请缩小范围。</div>
             <p class="library-ai-note">
-              <template v-if="chosenProvider==='mimo'">当前选用 MiMo：仅在点击“开始提取”时提交选定的页面文字，请确认资料允许发送给第三方；PDF 视觉提取需切换至本地 Ollama。</template>
+              <template v-if="chosenProvider==='mimo'">当前选用 MiMo：点击“开始提取”会提交选定页面文字；开启视觉识别后，还会将低文字量 PDF 页面渲染成 PNG，以 Base64 形式发送给 MiMo，请确认分享权限及费用。</template>
               <template v-else>当前使用本地 Ollama。请先确保模型服务运行，并已安装对应文本模型。</template>
               <span v-if="selectedAI"> 检测到模型：{{ selectedAI.model }}。</span>
             </p>
