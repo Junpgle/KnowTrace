@@ -25,7 +25,7 @@ class StartRelations(BaseModel):
     provider: Literal["default","ollama","mimo"] = "default"
     max_focus_points: int = Field(default=30, ge=1, le=2000)
     per_focus: int = Field(default=2, ge=1, le=5)
-    mode: Literal["single","grouped","bridge"] = "grouped"
+    mode: Literal["single","grouped","bridge"] = "single"
     group_size: int = Field(default=12, ge=2, le=16)
     confirm_large_run: bool = False
 
