@@ -228,6 +228,12 @@ def store(db_path: Path, course_id: str, items: list[dict], *, engine: str):
     with transaction(db_path) as db:
         if not db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'", (course_id,)).fetchone():
             raise HTTPException(404,"Course not found")
+        job_id=uid()
+        db.execute("""INSERT INTO processing_jobs
+                     (id,course_id,job_type,engine_name,prompt_version,status,finished_at)
+                     VALUES (?,?,'relation_extract',?,'relation_v1','succeeded',
+                             strftime('%Y-%m-%dT%H:%M:%fZ','now'))""",
+                   (job_id,course_id,engine))
         for item in items:
             a,b,t,cid=(item[k] for k in ("source_kp_id","target_kp_id","relation_type","source_chunk_id"))
             approved = db.execute("""SELECT COUNT(*) FROM knowledge_points
@@ -252,9 +258,9 @@ def store(db_path: Path, course_id: str, items: list[dict], *, engine: str):
                 continue
             rid=uid()
             db.execute("""INSERT INTO knowledge_relations
-                 (id,source_kp_id,target_kp_id,relation_type,rationale,review_status)
-                 VALUES(?,?,?,?,?,'pending')""",
-                 (rid,a,b,t,item["rationale"]))
+                 (id,source_kp_id,target_kp_id,relation_type,rationale,review_status,created_job_id)
+                 VALUES(?,?,?,?,?,'pending',?)""",
+                 (rid,a,b,t,item["rationale"],job_id))
             db.execute("""INSERT INTO knowledge_relation_sources(relation_id,chunk_id,evidence_note)
                  VALUES(?,?,?)""",(rid,cid,engine+"; exact quotation: "+item["quote"]))
             created.append(rid)
