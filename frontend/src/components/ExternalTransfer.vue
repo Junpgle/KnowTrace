@@ -7,6 +7,7 @@ const props = defineProps<{
   courseId: string
   knowledgePoints: KnowledgePoint[]
   preferredKnowledgePointId: string
+  preferredDocumentId?: string
 }>()
 const emit = defineEmits<{
   imported: [payload: { kind: 'questions' | 'knowledge'; ids: string[]; created: number; reused?: number }]
@@ -22,7 +23,7 @@ type PromptSnapshot = {
   end: number
 }
 
-const kind = ref<Kind>('questions')
+const kind = ref<Kind>(props.preferredDocumentId ? 'knowledge' : 'questions')
 const kpId = ref('')
 const documents = ref<CourseDocument[]>([])
 const docId = ref('')
@@ -87,7 +88,8 @@ watch(() => props.courseId, async (course) => {
     const docs = await api.documents(course)
     if (id !== loadId) return
     documents.value = docs
-    docId.value = docs.find(d => d.status === 'ready')?.id ?? ''
+    docId.value = docs.find(d => d.id === props.preferredDocumentId && d.status === 'ready')?.id
+      ?? docs.find(d => d.status === 'ready')?.id ?? ''
     pageStart.value = 1
     pageEnd.value = 1
   } catch (e) {
@@ -96,6 +98,13 @@ watch(() => props.courseId, async (course) => {
     if (id === loadId) loading.value = false
   }
 }, { immediate: true })
+watch(() => props.preferredDocumentId, value => {
+  if (!value) return
+  if (documents.value.some(d => d.id === value && d.status === 'ready')) {
+    kind.value = 'knowledge'
+    docId.value = value
+  }
+})
 watch(docId, () => {
   pageStart.value = 1
   pageEnd.value = 1
