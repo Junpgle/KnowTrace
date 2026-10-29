@@ -107,12 +107,17 @@ def catalog(db_path: Path, course_id: str, focus_id: str, target_id: str | None)
         chunk_counts[kp] = chunk_counts.get(kp,0) + 1
         raw = dict(row)
         raw["content_text"] = raw["content_text"][:1600]
-        source_map[raw["chunk_id"]] = raw
+        cid = raw["chunk_id"]
+        if cid in source_map:
+            source_map[cid]["knowledge_point_ids"].append(kp)
+        else:
+            raw["knowledge_point_ids"] = [kp]
+            source_map[cid] = raw
     return points, source_map
 
 
 def prompt_text(points: list[dict], chunks: dict[str,dict], count: int, *, lazy: bool):
-    sources = [{"chunk_id": cid, "knowledge_point_id": x["knowledge_point_id"],
+    sources = [{"chunk_id": cid, "knowledge_point_ids": x["knowledge_point_ids"],
                 "filename": x["original_filename"], "page": x["page_start"],
                 "kind": x["content_kind"],
                 **({} if lazy else {"text": x["content_text"]})}
@@ -171,7 +176,7 @@ def verify_candidates(raw: str, points: list[dict], chunks: dict[str,dict], *, c
             warnings.append(f"candidate {idx}: invalid IDs, relation type or explanation")
             continue
         source = chunks[cid]
-        if source["knowledge_point_id"] not in {a,b}:
+        if not ({a,b} & set(source["knowledge_point_ids"])):
             warnings.append(f"candidate {idx}: evidence belongs to neither endpoint")
             continue
         # Some retrievals are separate windows of the same chunk: don't
