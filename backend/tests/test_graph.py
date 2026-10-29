@@ -80,3 +80,22 @@ def test_graph_respects_review_filter_limit_and_course_isolation(tmp_path):
         assert http.get("/api/courses/nope/knowledge-graph").status_code==404
         assert http.get("/api/courses/course1/knowledge-graph?limit=0").status_code==422
         assert http.get("/api/courses/course1/knowledge-graph?limit=10000").status_code==422
+
+
+def test_chapter_organizing_requires_reapproval_before_relations_display(tmp_path):
+    db=tmp_path/"graph.sqlite3"
+    seed(db)
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"files")) as http:
+        result=http.post("/api/courses/course1/chapters",json={"title":"复习专题","ordinal":8})
+        assert result.status_code==201,result.text
+        chapter_id=result.json()["id"]
+        moved=http.patch("/api/knowledge-points/kp1",json={"chapter_id":chapter_id})
+        assert moved.status_code==200,moved.text
+        assert moved.json()["review_status"]=="pending"
+        graph=http.get("/api/courses/course1/knowledge-graph").json()
+        assert next(n for n in graph["nodes"] if n["id"]=="kp1")["chapter_id"]==chapter_id
+        assert graph["stats"]["approved_semantic_edges"]==0
+        restored=http.post("/api/knowledge-points/kp1/review",json={"decision":"approved"})
+        assert restored.status_code==200,restored.text
+        again=http.get("/api/courses/course1/knowledge-graph").json()
+        assert again["stats"]["approved_semantic_edges"]==1
