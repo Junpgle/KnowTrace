@@ -167,7 +167,8 @@ function rebuild() {
     const ids: string[] = []
     knowledge.forEach((node, index) => {
       const position = positions.get(node.id)!
-      const radius = node.id === props.selectedId ? 1.6 : 1
+      // Highlight the selected point without blowing up the planet itself.
+      const radius = node.id === props.selectedId ? 1.24 : 1
       size.setScalar(radius)
       matrix.compose(position, rotation, size)
       cluster.setMatrixAt(index, matrix)
@@ -233,13 +234,25 @@ function rebuild() {
   addLines(positionsSemantic, 0xffd184, 0.79)
 }
 
+// Automatic selection should move the camera to the chosen node, NOT dive
+// into its surface. Keep the user's current zoom within a comfortable range,
+// so switching between nearby knowledge points doesn't bounce in and out.
+export function selectionDistance(kind: GraphNode['kind'], current: number): number {
+  const [minimum, maximum] = kind === 'course' ? [105, 145]
+    : kind === 'chapter' ? [78, 112] : [58, 94]
+  return THREE.MathUtils.clamp(current, minimum, maximum)
+}
+
 function focus(id: string | null) {
   if (!camera || !controls) return
   const coordinate = id ? positions.get(id) : undefined
+  if (id && !coordinate) return
   desiredTarget.copy(coordinate || new THREE.Vector3())
   const selected = props.nodes.find(n => n.id === id)
-  const distance = !id ? Math.max(68, Math.max(18, props.nodes.filter(n => n.kind === 'chapter').length * 5.2) * 2.7)
-    : selected?.kind === 'course' ? 45 : selected?.kind === 'chapter' ? 22 : 13
+  const currentDistance = camera.position.distanceTo(controls.target)
+  const distance = !id
+    ? Math.max(85, Math.max(18, props.nodes.filter(n => n.kind === 'chapter').length * 5.2) * 2.7)
+    : selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < 0.01) direction.set(1, .6, 1)
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
@@ -317,7 +330,7 @@ function initialize() {
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
-  controls.minDistance = 6
+  controls.minDistance = 18
   controls.maxDistance = 280
   controls.minPolarAngle = 0.2
   controls.maxPolarAngle = Math.PI - 0.2
@@ -357,9 +370,16 @@ function initialize() {
   draw()
 }
 onMounted(initialize)
-watch(() => [props.nodes, props.edges, props.selectedId, props.showRelations], () => {
+// Changing line visibility must never zoom the camera. Only a change of
+// selected node should trigger automatic focus.
+watch(() => [props.nodes, props.edges], () => {
   rebuild()
   if (props.selectedId) focus(props.selectedId)
+})
+watch(() => props.showRelations, rebuild)
+watch(() => props.selectedId, id => {
+  rebuild()
+  focus(id)
 })
 onBeforeUnmount(() => {
   disposed = true
