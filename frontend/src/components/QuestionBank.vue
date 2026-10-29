@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import ExternalTransfer from './ExternalTransfer.vue'
 import {
   AlertCircle, ArrowRight, BookOpen, CheckCircle2, ChevronRight,
   ClipboardCheck, FileQuestion, FileText, Image, LoaderCircle,
@@ -15,7 +16,7 @@ import {
 const props = defineProps<{ courseId: string }>()
 const emit = defineEmits<{ updated: [] }>()
 
-type Tab = 'knowledge' | 'questions'
+type Tab = 'knowledge' | 'questions' | 'external'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
 const tab = ref<Tab>('questions')
 const filter = ref<Filter>('pending')
@@ -115,6 +116,19 @@ watch(() => props.courseId, () => {
 function switchTab(value: Tab) {
   tab.value = value
   resetFeedback()
+}
+async function importedExternal(payload: { kind: 'questions' | 'knowledge'; ids: string[]; created: number; reused?: number }) {
+  if (payload.kind === 'questions') {
+    filter.value = 'pending'
+    await reload(selectedKpId.value, payload.ids[0] || '')
+    tab.value = 'questions'
+    success.value = '外部 AI 的 ' + payload.created + ' 道题已进入待审核区。请逐题核对。'
+  } else {
+    await reload(payload.ids[0] || '', selectedQuestionId.value)
+    tab.value = 'knowledge'
+    success.value = '已导入 ' + payload.created + ' 个新知识点，复用 ' + (payload.reused || 0) + ' 个；请核对并审核。'
+  }
+  emit('updated')
 }
 function chooseFilter(value: Filter) {
   filter.value = value
@@ -344,9 +358,14 @@ function previewAvailable(source: SourceEvidence): boolean {
       <button role="tab" :aria-selected="tab === 'questions'" :class="{ active: tab === 'questions' }" @click="switchTab('questions')">
         <FileQuestion :size="18" /> 2. AI 题目审核 <span v-if="pendingQuestions" class="qb-count">{{ pendingQuestions }}</span>
       </button>
+      <button role="tab" :aria-selected="tab === 'external'" :class="{ active: tab === 'external' }" @click="switchTab('external')">
+        <ClipboardCheck :size="18" /> 3. 外部 AI 接力
+      </button>
     </div>
 
     <div v-if="loading" class="qb-empty panel"><LoaderCircle class="spinning" :size="26" /> 正在读取题库…</div>
+    <ExternalTransfer v-else-if="tab === 'external'" :course-id="props.courseId"
+      :knowledge-points="knowledge" :preferred-knowledge-point-id="selectedKpId" @imported="importedExternal" />
 
     <div v-else-if="tab === 'knowledge'" class="qb-columns">
       <aside class="qb-list panel">
