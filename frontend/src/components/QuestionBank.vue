@@ -13,7 +13,7 @@ import {
   type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
-const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external' }>()
+const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external'; initialDocumentId?: string }>()
 const emit = defineEmits<{ updated: [] }>()
 
 type Tab = 'knowledge' | 'questions' | 'external'
@@ -371,7 +371,8 @@ function previewAvailable(source: SourceEvidence): boolean {
 
     <div v-if="loading" class="qb-empty panel"><LoaderCircle class="spinning" :size="26" /> 正在读取题库…</div>
     <ExternalTransfer v-else-if="tab === 'external'" :course-id="props.courseId"
-      :knowledge-points="knowledge" :preferred-knowledge-point-id="selectedKpId" @imported="importedExternal" />
+      :knowledge-points="knowledge" :preferred-knowledge-point-id="selectedKpId"
+      :preferred-document-id="props.initialDocumentId" @imported="importedExternal" />
 
     <div v-else-if="tab === 'knowledge'" class="qb-columns">
       <aside class="qb-list panel">
