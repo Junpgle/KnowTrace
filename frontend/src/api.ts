@@ -271,6 +271,46 @@ export interface ExternalKnowledgeImportResult {
   warnings: string[]
 }
 
+export type BatchStatus = 'running' | 'stopping' | 'stopped' | 'interrupted' | 'succeeded' | 'failed'
+export interface BatchExtraction {
+  id: string
+  course_id: string
+  document_id: string
+  provider: AIProviderId
+  pages_per_batch: number
+  include_visual: number
+  next_page: number
+  total_pages: number
+  completed_pages: number
+  created_points: number
+  reused_points: number
+  skipped_pages: number
+  status: BatchStatus
+  last_error: string | null
+  progress: number
+  stop_note: string
+}
+export interface AISettings {
+  default: 'ollama' | 'mimo'
+  providers: AIProviderInfo[]
+  security: string
+  mimo_key_configured: boolean
+  mimo_key_source: string
+  ollama_url: string
+  ollama_text_model: string
+  ollama_vision_model: string
+  mimo_model: string
+}
+export interface AISettingsPatch {
+  default_provider?: 'ollama' | 'mimo'
+  mimo_model?: 'mimo-v2.6-flash' | 'mimo-v2.6-pro'
+  mimo_api_key?: string
+  clear_mimo_key?: boolean
+  ollama_url?: string
+  ollama_text_model?: string
+  ollama_vision_model?: string
+}
+
 export type AIProviderId = 'default' | 'ollama' | 'mimo'
 
 export interface AIProviderInfo {
@@ -405,6 +445,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  aiSettings: () => request<AISettings>('/api/settings/ai'),
+  saveAISettings: (body: AISettingsPatch) =>
+    request<AISettings>('/api/settings/ai', {method:'PATCH', body:JSON.stringify(body)}),
+  testAIConnection: (provider:'mimo'|'ollama') =>
+    request<{provider:string;ok:boolean;message:string}>('/api/settings/ai/test?provider='+provider,
+      {method:'POST'}),
+  batchExtractions: (docId: string) =>
+    request<BatchExtraction[]>('/api/documents/'+encodeURIComponent(docId)+'/batch-extractions'),
+  startBatchExtraction: (docId: string, options: {
+    provider: AIProviderId; pages_per_batch: number; include_visual: boolean
+  }) => request<BatchExtraction>('/api/documents/'+encodeURIComponent(docId)+'/batch-extractions',
+      {method:'POST',body:JSON.stringify(options)}),
+  batchExtraction: (id: string) =>
+    request<BatchExtraction>('/api/batch-extractions/'+encodeURIComponent(id)),
+  stopBatchExtraction: (id: string) =>
+    request<BatchExtraction>('/api/batch-extractions/'+encodeURIComponent(id)+'/stop',
+      {method:'POST'}),
+  resumeBatchExtraction: (id: string) =>
+    request<BatchExtraction>('/api/batch-extractions/'+encodeURIComponent(id)+'/resume',
+      {method:'POST'}),
   chapters: (courseId: string) =>
     request<Chapter[]>('/api/courses/' + encodeURIComponent(courseId) + '/chapters'),
   createChapter: (courseId: string, data: { title: string; parent_chapter_id?: string | null; ordinal?: number }) =>
