@@ -1,0 +1,32 @@
+name: Backend tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "database/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "database/**"
+      - ".github/workflows/backend.yml"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run tests without real API keys
+        env:
+          PYTHONPATH: backend
+          KNOWTRACE_AI_PROVIDER: ollama
+        run: pytest -q backend/tests
