@@ -196,6 +196,47 @@ export interface LearningReport {
 }
 
 
+export interface DocumentUploadResult {
+  id: string
+  course_id: string
+  filename: string
+  total_pages: number
+  chunks: number
+  status: 'ready'
+}
+
+export interface DocumentPageQuality {
+  page: number
+  extracted_characters_approx: number
+  needs_review: boolean
+  reason: 'no_text' | 'low_text' | null
+}
+export interface DocumentQuality {
+  document_id: string
+  filename: string
+  total_pages: number
+  pages_needing_review: number
+  warning: string
+  pages: DocumentPageQuality[]
+}
+export interface DocumentChunk {
+  id: string
+  chunk_index: number
+  page_start: number
+  page_end: number
+  content_kind: string
+  content_text: string
+}
+export interface ExtractKnowledgeResult {
+  job_id: string
+  created: number
+  reused: number
+  created_ids: string[]
+  review_status: 'pending'
+  vision_pages: number[]
+  skipped_sparse_pages: number[]
+  warnings: string[]
+}
 export interface CourseDocument {
   id: string
   original_filename: string
@@ -331,7 +372,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       ...options,
       headers: {
         Accept: 'application/json',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
     })
@@ -348,6 +389,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     const message = typeof detail === 'string' ? detail : ({
       404: '找不到相应记录，请刷新重试。',
+      413: '文件超过 30 MiB 上限。',
+      415: '不支持此文件类型。仅接受 PDF 和 PPTX。',
+      502: '模型调用或回复解析失败，请检查后端日志。',
       409: '当前操作与已有状态冲突，请刷新后重试。',
       422: '提交的数据不符合要求。',
       503: '后端暂时无法提供服务。',
@@ -425,6 +469,23 @@ export const api = {
     { method: 'POST', body: JSON.stringify(body) },
   ),
 
+  createCourse: (data: {title:string;description?:string|null;code?:string|null}) =>
+    request<Course>('/api/courses', {method:'POST',body:JSON.stringify(data)}),
+  uploadDocument: (courseId: string, file: File) => {
+    const form = new FormData()
+    form.append('file',file,file.name)
+    return request<DocumentUploadResult>('/api/courses/' + encodeURIComponent(courseId) + '/documents',
+      {method:'POST',body:form})
+  },
+  documentQuality: (docId: string) =>
+    request<DocumentQuality>('/api/documents/' + encodeURIComponent(docId) + '/quality'),
+  documentChunks: (docId: string, limit = 50, offset = 0) =>
+    request<DocumentChunk[]>('/api/documents/' + encodeURIComponent(docId) +
+      '/chunks?limit='+encodeURIComponent(String(limit))+'&offset='+encodeURIComponent(String(offset))),
+  extractKnowledge: (docId: string, options: {
+    page_start:number; page_end:number; include_visual:boolean; provider?: AIProviderId
+  }) => request<ExtractKnowledgeResult>('/api/documents/'+encodeURIComponent(docId)+'/extract-knowledge',
+       {method:'POST',body:JSON.stringify(options)}),
   documents: (courseId: string) => request<CourseDocument[]>(
     '/api/courses/' + encodeURIComponent(courseId) + '/documents',
   ),
