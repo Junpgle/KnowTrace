@@ -95,6 +95,22 @@ export interface LearningReport {
 }
 
 
+export type AIProviderId = 'default' | 'ollama' | 'mimo'
+
+export interface AIProviderInfo {
+  id: 'ollama' | 'mimo'
+  label: string
+  model: string
+  available: boolean
+  vision_model: string
+  function_calling: boolean
+}
+export interface AIProviderStatus {
+  default: 'ollama' | 'mimo'
+  providers: AIProviderInfo[]
+  security: string
+}
+
 export type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
 export interface SourceEvidence {
@@ -140,6 +156,11 @@ export interface QuestionVersion {
 
 export interface GenerationResult {
   job_id: string
+  provider?: string
+  model?: string
+  tool_calls?: number
+  retrieved_chunks?: number
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
   created: number
   question_version_ids: string[]
   review_status: 'pending'
@@ -239,7 +260,8 @@ export const api = {
     request<{ id: string; review_status: ReviewStatus }>(
       '/api/knowledge-points/' + encodeURIComponent(id) + '/review',
       { method: 'POST', body: JSON.stringify({ decision }) }),
-  generateQuestions: (id: string, options: { count: number; question_types: ('single_choice' | 'true_false')[] }) =>
+  aiProviders: () => request<AIProviderStatus>('/api/ai/providers'),
+  generateQuestions: (id: string, options: { count: number; question_types: ('single_choice' | 'true_false')[]; provider?: AIProviderId }) =>
     request<GenerationResult>('/api/knowledge-points/' + encodeURIComponent(id) + '/generate-questions',
       { method: 'POST', body: JSON.stringify(options) }),
   questionVersion: (id: string) => request<QuestionVersion>(
