@@ -37,11 +37,21 @@ class KnowledgeImport(KnowledgeOptions):
 def parse_reply(text: str) -> str:
     """Accept JSON, one Markdown JSON code block, or a JSON object in prose."""
     text = text.strip().lstrip("\ufeff")
-    def valid(value):
-        return isinstance(value, dict) and isinstance(value.get("items"), list)
+    def normalize(value):
+        # Several chat products return a bare array or wrap it as "questions".
+        # Normalize only wrappers, never infer or modify question content.
+        if isinstance(value, list):
+            return {"items": value}
+        if isinstance(value, dict):
+            if isinstance(value.get("items"), list):
+                return value
+            for key in ("questions", "knowledge_points"):
+                if isinstance(value.get(key), list):
+                    return {"items": value[key]}
+        return None
     try:
-        obj = json.loads(text)
-        if valid(obj):
+        obj = normalize(json.loads(text))
+        if obj is not None:
             return json.dumps(obj, ensure_ascii=False)
     except ValueError:
         pass
@@ -49,8 +59,8 @@ def parse_reply(text: str) -> str:
                         text, flags=re.IGNORECASE)
     if len(blocks) == 1:
         try:
-            obj = json.loads(blocks[0].strip())
-            if valid(obj):
+            obj = normalize(json.loads(blocks[0].strip()))
+            if obj is not None:
                 return json.dumps(obj, ensure_ascii=False)
         except ValueError:
             pass
@@ -61,7 +71,8 @@ def parse_reply(text: str) -> str:
             obj, _ = decoder.raw_decode(text, m.start())
         except ValueError:
             continue
-        if valid(obj):
+        obj = normalize(obj)
+        if obj is not None:
             candidates.append(obj)
         if len(candidates) > 1:
             break
