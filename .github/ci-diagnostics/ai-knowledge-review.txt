@@ -1,0 +1,148 @@
+Collecting fastapi<1,>=0.115 (from -r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 1))
+  Downloading fastapi-0.162.0-py3-none-any.whl.metadata (26 kB)
+Collecting uvicorn<1,>=0.30 (from -r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 2))
+  Downloading uvicorn-0.54.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting pydantic<3,>=2 (from -r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 3))
+  Downloading pydantic-2.14.1-py3-none-any.whl.metadata (133 kB)
+Collecting python-multipart<1,>=0.0.9 (from -r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 4))
+  Downloading python_multipart-0.0.32-py3-none-any.whl.metadata (2.1 kB)
+Collecting PyMuPDF<2,>=1.24 (from -r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 5))
+  Downloading pymupdf-1.28.2-cp310-abi3-manylinux_2_28_x86_64.whl.metadata (26 kB)
+Collecting python-pptx<2,>=1.0 (from -r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 6))
+  Downloading python_pptx-1.0.2-py3-none-any.whl.metadata (2.5 kB)
+Collecting pytest<10,>=8 (from -r backend/requirements-dev.txt (line 2))
+  Downloading pytest-9.2.0-py3-none-any.whl.metadata (7.9 kB)
+Collecting httpx<1,>=0.27 (from -r backend/requirements-dev.txt (line 3))
+  Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting starlette>=0.46.0 (from fastapi<1,>=0.115->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 1))
+  Downloading starlette-1.10.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting typing-extensions>=4.8.0 (from fastapi<1,>=0.115->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 1))
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting typing-inspection>=0.4.2 (from fastapi<1,>=0.115->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 1))
+  Downloading typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+Collecting annotated-doc>=0.0.2 (from fastapi<1,>=0.115->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 1))
+  Downloading annotated_doc-0.0.5-py3-none-any.whl.metadata (6.5 kB)
+Collecting opentelemetry-api>=1.44.0 (from fastapi<1,>=0.115->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 1))
+  Downloading opentelemetry_api-1.45.1-py3-none-any.whl.metadata (1.4 kB)
+Collecting click>=7.0 (from uvicorn<1,>=0.30->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 2))
+  Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting h11>=0.8 (from uvicorn<1,>=0.30->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 2))
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting annotated-types>=0.6.0 (from pydantic<3,>=2->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 3))
+  Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.50.1 (from pydantic<3,>=2->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 3))
+  Downloading pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.5 kB)
+Collecting Pillow>=3.3.2 (from python-pptx<2,>=1.0->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 6))
+  Downloading pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+Collecting XlsxWriter>=0.5.7 (from python-pptx<2,>=1.0->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 6))
+  Downloading xlsxwriter-3.3.1-py3-none-any.whl.metadata (2.9 kB)
+Collecting lxml>=3.1.0 (from python-pptx<2,>=1.0->-r /home/runner/work/KnowTrace/KnowTrace/backend/requirements.txt (line 6))
+  Downloading lxml-6.1.3-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl.metadata (3.3 kB)
+Collecting iniconfig>=2 (from pytest<10,>=8->-r backend/requirements-dev.txt (line 2))
+  Downloading iniconfig-2.3.1-py3-none-any.whl.metadata (2.8 kB)
+Collecting packaging>=24 (from pytest<10,>=8->-r backend/requirements-dev.txt (line 2))
+  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting pluggy<2,>=1.6 (from pytest<10,>=8->-r backend/requirements-dev.txt (line 2))
+  Downloading pluggy-1.7.0-py3-none-any.whl.metadata (5.0 kB)
+Collecting pygments>=2.15 (from pytest<10,>=8->-r backend/requirements-dev.txt (line 2))
+  Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting anyio (from httpx<1,>=0.27->-r backend/requirements-dev.txt (line 3))
+  Downloading anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+Collecting certifi (from httpx<1,>=0.27->-r backend/requirements-dev.txt (line 3))
+  Downloading certifi-2026.10.23-py3-none-any.whl.metadata (2.5 kB)
+Collecting httpcore==1.* (from httpx<1,>=0.27->-r backend/requirements-dev.txt (line 3))
+  Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting idna (from httpx<1,>=0.27->-r backend/requirements-dev.txt (line 3))
+  Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Downloading fastapi-0.162.0-py3-none-any.whl (148 kB)
+Downloading uvicorn-0.54.0-py3-none-any.whl (87 kB)
+Downloading pydantic-2.14.1-py3-none-any.whl (488 kB)
+Downloading pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.2/2.2 MB 16.7 MB/s  0:00:00
+Downloading python_multipart-0.0.32-py3-none-any.whl (30 kB)
+Downloading pymupdf-1.28.2-cp310-abi3-manylinux_2_28_x86_64.whl (25.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 25.8/25.8 MB 38.7 MB/s  0:00:00
+Downloading python_pptx-1.0.2-py3-none-any.whl (472 kB)
+Downloading pytest-9.2.0-py3-none-any.whl (411 kB)
+Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+Downloading pluggy-1.7.0-py3-none-any.whl (27 kB)
+Downloading annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+Downloading click-8.5.0-py3-none-any.whl (125 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading iniconfig-2.3.1-py3-none-any.whl (7.6 kB)
+Downloading lxml-6.1.3-cp312-cp312-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl (5.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.2/5.2 MB 138.2 MB/s  0:00:00
+Downloading opentelemetry_api-1.45.1-py3-none-any.whl (60 kB)
+Downloading packaging-26.3-py3-none-any.whl (129 kB)
+Downloading pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (7.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 7.1/7.1 MB 154.4 MB/s  0:00:00
+Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 77.2 MB/s  0:00:00
+Downloading starlette-1.10.0-py3-none-any.whl (80 kB)
+Downloading anyio-4.15.1-py3-none-any.whl (132 kB)
+Downloading idna-3.20-py3-none-any.whl (69 kB)
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+Downloading xlsxwriter-3.3.1-py3-none-any.whl (180 kB)
+Downloading certifi-2026.10.23-py3-none-any.whl (135 kB)
+Installing collected packages: XlsxWriter, typing-extensions, python-multipart, PyMuPDF, pygments, pluggy, Pillow, packaging, lxml, iniconfig, idna, h11, click, certifi, annotated-types, annotated-doc, uvicorn, typing-inspection, python-pptx, pytest, pydantic-core, opentelemetry-api, httpcore, anyio, starlette, pydantic, httpx, fastapi
+
+Successfully installed Pillow-13.0.0 PyMuPDF-1.28.2 XlsxWriter-3.3.1 annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.15.1 certifi-2026.10.23 click-8.5.0 fastapi-0.162.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 iniconfig-2.3.1 lxml-6.1.3 opentelemetry-api-1.45.1 packaging-26.3 pluggy-1.7.0 pydantic-2.14.1 pydantic-core-2.50.1 pygments-2.21.0 pytest-9.2.0 python-multipart-0.0.32 python-pptx-1.0.2 starlette-1.10.0 typing-extensions-4.16.0 typing-inspection-0.4.4 uvicorn-0.54.0
+============================= test session starts ==============================
+platform linux -- Python 3.12.15, pytest-9.2.0, pluggy-1.7.0
+rootdir: /home/runner/work/KnowTrace/KnowTrace
+plugins: anyio-4.15.1
+collected 58 items
+
+backend/tests/test_api.py ..........                                     [ 17%]
+backend/tests/test_batch_settings.py .....                               [ 25%]
+backend/tests/test_graph.py ...                                          [ 31%]
+backend/tests/test_knowledge_ai_review.py FFFF.                          [ 39%]
+backend/tests/test_knowledge_edit.py ...                                 [ 44%]
+backend/tests/test_manual_transfer.py .....                              [ 53%]
+backend/tests/test_mimo.py ..........                                    [ 70%]
+backend/tests/test_ollama_provider.py ..                                 [ 74%]
+backend/tests/test_questions.py ......                                   [ 84%]
+backend/tests/test_quiz.py ....                                          [ 91%]
+backend/tests/test_relations.py .....                                    [100%]
+
+=================================== FAILURES ===================================
+_____________ test_one_point_verified_review_and_explicit_approval _____________
+backend/tests/test_knowledge_ai_review.py:76: in test_one_point_verified_review_and_explicit_approval
+    assert review.status_code==200,review.text
+E   AssertionError: {"detail":"无法识别唯一的 JSON 结果；请让外部 AI 只输出包含 items 数组的 JSON，可以粘贴 Markdown 代码块。"}
+E   assert 422 == 200
+E    +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+___________ test_revision_stales_prior_ai_review_and_blocks_approval ___________
+backend/tests/test_knowledge_ai_review.py:107: in test_revision_stales_prior_ai_review_and_blocks_approval
+    review=http.get("/api/courses/"+cid+"/ai-knowledge-reviews").json()[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+_________________ test_visual_only_source_never_bulk_approved __________________
+backend/tests/test_knowledge_ai_review.py:124: in test_visual_only_source_never_bulk_approved
+    assert response.status_code==200,response.text
+E   AssertionError: {"detail":"无法识别唯一的 JSON 结果；请让外部 AI 只输出包含 items 数组的 JSON，可以粘贴 Markdown 代码块。"}
+E   assert 422 == 200
+E    +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+_______________ test_batch_stop_resume_and_no_double_processing ________________
+backend/tests/test_knowledge_ai_review.py:150: in test_batch_stop_resume_and_no_double_processing
+    assert paused["completed"]==1
+E   assert 0 == 1
+=============================== warnings summary ===============================
+../../../../../opt/hostedtoolcache/Python/3.12.15/x64/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /opt/hostedtoolcache/Python/3.12.15/x64/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_knowledge_ai_review.py::test_one_point_verified_review_and_explicit_approval - AssertionError: {"detail":"无法识别唯一的 JSON 结果；请让外部 AI 只输出包含 items 数组的 JSON，可以粘贴 Markdown 代码块。"}
+assert 422 == 200
+ +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+FAILED backend/tests/test_knowledge_ai_review.py::test_revision_stales_prior_ai_review_and_blocks_approval - IndexError: list index out of range
+FAILED backend/tests/test_knowledge_ai_review.py::test_visual_only_source_never_bulk_approved - AssertionError: {"detail":"无法识别唯一的 JSON 结果；请让外部 AI 只输出包含 items 数组的 JSON，可以粘贴 Markdown 代码块。"}
+assert 422 == 200
+ +  where 422 = <Response [422 Unprocessable Entity]>.status_code
+FAILED backend/tests/test_knowledge_ai_review.py::test_batch_stop_resume_and_no_double_processing - assert 0 == 1
+=================== 4 failed, 54 passed, 1 warning in 6.62s ====================
