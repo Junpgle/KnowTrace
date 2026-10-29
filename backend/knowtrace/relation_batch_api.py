@@ -18,13 +18,14 @@ from pydantic import BaseModel, Field
 from .db import transaction
 from .relations_api import creates_required_cycle
 from .grouped_relations import plan_groups, generate_group_relations
+from .cross_chapter import bridge_groups, completed_bridge_pairs
 
 
 class StartRelations(BaseModel):
     provider: Literal["default","ollama","mimo"] = "default"
     max_focus_points: int = Field(default=30, ge=1, le=2000)
     per_focus: int = Field(default=2, ge=1, le=5)
-    mode: Literal["single","grouped"] = "single"
+    mode: Literal["single","grouped","bridge"] = "grouped"
     group_size: int = Field(default=12, ge=2, le=16)
     confirm_large_run: bool = False
 
@@ -51,6 +52,8 @@ def register_relation_batch_routes(
 
     def public(row: dict) -> dict:
         result={k:v for k,v in row.items() if k!="focus_ids_json"}
+        if row["bridge_strategy"]:
+            result["mode"]="bridge"
         result["total_points"]=row["total_points"] or row["total"]
         result["completed_points"]=(
             row["completed_points"] if row["mode"]=="grouped" else row["completed"]
@@ -88,7 +91,8 @@ def register_relation_batch_routes(
                     if job["mode"]=="grouped":
                         result=generate_group_relations(
                             db_path,job["course_id"],focus,job["provider"],
-                            job["per_focus"],resolve_provider)
+                            job["per_focus"],resolve_provider,
+                            cross_chapter_only=bool(job["bridge_strategy"]))
                     else:
                         result=generate_for_focus(job["course_id"],focus_id,
                                                   job["provider"],job["per_focus"])
@@ -156,51 +160,57 @@ def register_relation_batch_routes(
             exists=db.execute("""SELECT 1 FROM relation_batch_runs
                 WHERE course_id=? AND status IN ('running','stopping')""",(course_id,)).fetchone()
             if exists:raise HTTPException(409,"This course already has a running relation discovery job")
-            # Include approved points with at least one *ready* source only.
-            # This avoids thousands of pointless requests on source-less items.
-            # Checkpoints from earlier runs are excluded on future starts,
-            # avoiding a paid repeat of the first 30 when a user scales up.
-            done=set()
-            for row in db.execute("""SELECT focus_ids_json,next_index
-                FROM relation_batch_runs WHERE course_id=?""",(course_id,)).fetchall():
-                for checkpoint in json.loads(row["focus_ids_json"])[:row["next_index"]]:
-                    if isinstance(checkpoint,list):
-                        done.update(checkpoint)
-                    else:
-                        done.add(checkpoint)
-            ids=[]
-            for row in db.execute("""SELECT kp.id FROM knowledge_points kp
-                WHERE kp.course_id=? AND kp.review_status='approved'
-                  AND kp.archived_at IS NULL
-                  AND EXISTS (SELECT 1 FROM knowledge_point_sources s
-                    JOIN document_chunks c ON c.id=s.chunk_id
-                    JOIN documents d ON d.id=c.document_id
-                    WHERE s.knowledge_point_id=kp.id
-                      AND d.course_id=kp.course_id AND d.status='ready')
-                ORDER BY kp.created_at,kp.id""",(course_id,)).fetchall():
-                if row["id"] not in done:
-                    ids.append(row["id"])
-                if len(ids)>=payload.max_focus_points:break
-            if len(ids)<2:
-                raise HTTPException(409,"Need at least two unprocessed approved source-linked knowledge points")
-            if payload.mode=="grouped":
-                groups=plan_groups(db_path,course_id,done,payload.max_focus_points,payload.group_size)
-                # The planner returns real chapter/source clusters, never
-                # Cartesian pairs. Count all selected nodes for progress.
-                plan=groups
-                point_count=sum(map(len,groups))
+            if payload.mode=="bridge":
+                # Cross-chapter comparison is independent of already completed
+                # intra-chapter runs. A point may participate again in a NEW
+                # chapter pair, but a previously completed bridge group is not
+                # repeated or billed a second time.
+                compared=completed_bridge_pairs(db,course_id)
+                plan=bridge_groups(db_path,course_id,compared,
+                                   payload.max_focus_points,payload.group_size)
+                point_count=sum(map(len,plan))
             else:
-                plan=ids
-                point_count=len(ids)
+                done=set()
+                for row in db.execute("""SELECT focus_ids_json,next_index
+                    FROM relation_batch_runs WHERE course_id=? AND bridge_strategy=0""",
+                    (course_id,)).fetchall():
+                    for checkpoint in json.loads(row["focus_ids_json"])[:row["next_index"]]:
+                        if isinstance(checkpoint,list):done.update(checkpoint)
+                        else:done.add(checkpoint)
+                ids=[]
+                for row in db.execute("""SELECT kp.id FROM knowledge_points kp
+                    WHERE kp.course_id=? AND kp.review_status='approved'
+                      AND kp.archived_at IS NULL
+                      AND EXISTS (SELECT 1 FROM knowledge_point_sources s
+                        JOIN document_chunks c ON c.id=s.chunk_id
+                        JOIN documents d ON d.id=c.document_id
+                        WHERE s.knowledge_point_id=kp.id
+                          AND d.course_id=kp.course_id AND d.status='ready')
+                    ORDER BY kp.created_at,kp.id""",(course_id,)).fetchall():
+                    if row["id"] not in done:
+                        ids.append(row["id"])
+                    if len(ids)>=payload.max_focus_points:break
+                if payload.mode=="grouped":
+                    plan=plan_groups(db_path,course_id,done,payload.max_focus_points,
+                                     payload.group_size)
+                    point_count=sum(map(len,plan))
+                else:
+                    plan=ids
+                    point_count=len(ids)
             if not plan:
-                raise HTTPException(409,"No remaining knowledge points for this batch")
+                raise HTTPException(409,
+                    "No unexamined cross-chapter candidates with source/term overlap"
+                    if payload.mode=="bridge" else
+                    "No remaining approved source-linked knowledge points")
             id=str(uuid4())
             db.execute("""INSERT INTO relation_batch_runs
                 (id,course_id,provider,focus_ids_json,per_focus,total,
-                 mode,group_size,total_points,status)
-                VALUES(?,?,?,?,?,?,?,?,?,'running')""",
+                 mode,bridge_strategy,group_size,total_points,status)
+                VALUES(?,?,?,?,?,?,?,?,?,?,'running')""",
                 (id,course_id,payload.provider,json.dumps(plan),payload.per_focus,len(plan),
-                 payload.mode,payload.group_size if payload.mode=="grouped" else 1,point_count))
+                 "grouped" if payload.mode=="bridge" else payload.mode,
+                 int(payload.mode=="bridge"),
+                 payload.group_size if payload.mode!="single" else 1,point_count))
             result=public(get(db,id))
         spawn(id)
         return result
