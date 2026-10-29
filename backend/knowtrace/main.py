@@ -132,7 +132,7 @@ def create_app(*, db_path: str | Path | None = None,
         recover_ai_reviews()
         yield
 
-    app = FastAPI(title="KnowTrace API", version="1.2.0", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="1.3.0", lifespan=lifespan)
     if ai_provider is not None:
         app.state.ai_provider = ai_provider
 
@@ -160,7 +160,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "1.2.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "1.3.0"}
 
     @app.get("/api/courses")
     def list_courses():
