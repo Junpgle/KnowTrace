@@ -60,7 +60,7 @@ def seed_documents(http,db):
             conn.execute("""INSERT INTO documents
                  (id,course_id,uploaded_by,original_filename,media_type,storage_key,
                   sha256,total_pages,status) VALUES (?,?,'local',?,'application/pdf',
-                  'dummy.pdf',?,3,'ready')""",(doc_id,course,f"{label}.pdf",doc_id))
+                  ?, ?,3,'ready')""",(doc_id,course,f"{label}.pdf",f"{doc_id}.pdf",doc_id))
             for page in range(1,4):
                 conn.execute("""INSERT INTO document_chunks
                    (id,document_id,chunk_index,page_start,page_end,content_kind,content_text)
