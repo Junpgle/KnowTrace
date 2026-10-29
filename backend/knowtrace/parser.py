@@ -68,6 +68,13 @@ def extract_chunks(filename: str, data: bytes, *, chunk_size: int = 1600,
                                "content_kind": "text", "content_text": section})
             if start + chunk_size >= len(text):
                 break
+    if not pages:
+        raise ParseError("Document has no pages")
     if not chunks:
-        raise ParseError("No selectable text found; scanned/image-only files are not supported yet")
+        if Path(filename).suffix.lower() == ".pdf":
+            # A scanned or image-only PDF is valid source material. It can be
+            # rendered page-by-page for explicit Ollama/MiMo multimodal analysis.
+            # A zero-text document must not be misrepresented as parsed text.
+            return len(pages), []
+        raise ParseError("PPTX contains no extractable text; image-only slides are not yet supported")
     return len(pages), chunks
