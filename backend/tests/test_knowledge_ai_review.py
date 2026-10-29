@@ -170,3 +170,28 @@ def test_no_evidence_is_flagged_without_model_call(tmp_path):
         assert response.status_code==200
         assert response.json()["recommendation"]=="revise"
         assert not stub.calls
+
+
+def test_changed_knowledge_is_eligible_for_new_batch_and_fenced_json(tmp_path):
+    db=tmp_path/"review.sqlite3"
+    stub=ReviewStub()
+    original=stub.review_knowledge
+    stub.review_knowledge=lambda system,context: "```json\n" + original(system,context) + "\n```"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"upload",ai_provider=stub)) as http:
+        cid=seed(http,db,1)
+        first=http.post("/api/knowledge-points/kp1/ai-review",json={"provider":"default"})
+        assert first.status_code==200,first.text
+        assert http.post(f"/api/courses/{cid}/ai-review-batches",
+                         json={"provider":"default"}).status_code==409
+        changed=http.patch("/api/knowledge-points/kp1",
+                           json={"summary":"A revised summary that requires a new review."})
+        assert changed.status_code==200
+        started=http.post(f"/api/courses/{cid}/ai-review-batches",
+                          json={"provider":"default"})
+        assert started.status_code==201,started.text
+        finished=await_status(http,started.json(),{"succeeded"})
+        assert finished["completed"]==1
+        updated=http.get(f"/api/courses/{cid}/ai-knowledge-reviews").json()
+        assert len(updated)==1
+        assert updated[0]["id"]!=first.json()["id"]
+        assert updated[0]["stale"] is False
