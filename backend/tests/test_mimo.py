@@ -44,6 +44,10 @@ def test_mimo_http_shape_and_secret_is_server_side():
 def test_mimo_requires_key_and_locked_official_host():
     with pytest.raises(AIConfigError):
         MimoProvider(api_key="").extract({1: "text"})
+    with pytest.raises(AIConfigError, match="Token Plan"):
+        MimoProvider(api_key="tp-package-key").extract({1: "text"})
+    with pytest.raises(AIConfigError, match="Token Plan"):
+        MimoProvider(api_key="ttp-team-package-key").extract({1: "text"})
     with pytest.raises(AIConfigError):
         MimoProvider(api_key="valid", base_url="http://127.0.0.1:8000/v1").extract({1: "text"})
     with pytest.raises(AIConfigError):
