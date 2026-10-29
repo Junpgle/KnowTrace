@@ -21,7 +21,7 @@ def register_graph_routes(app: FastAPI, database: Path) -> None:
     @app.get("/api/courses/{course_id}/knowledge-graph")
     def course_knowledge_graph(
         course_id: str,
-        limit: int = Query(default=300, ge=1, le=600),
+        limit: int = Query(default=1600, ge=1, le=2500),
         include_pending: bool = True,
     ):
         with transaction(database) as db:
