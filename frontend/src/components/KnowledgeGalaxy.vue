@@ -49,17 +49,20 @@ const pdfMessage = ref('')
 const pdfSelection = ref<Record<string, string>>({})
 const pdfTitles = ref<Record<string, string>>({})
 const pdfConfirmed = ref(false)
-const pdfMappings = computed<PDFSourceChapterMapping[]>(() => (
-  pdfPreview.value?.documents.flatMap(doc => {
+const pdfMappings = computed<PDFSourceChapterMapping[]>(() =>
+  (pdfPreview.value?.documents ?? []).reduce<PDFSourceChapterMapping[]>((mappings, doc) => {
     const selected = pdfSelection.value[doc.document_id] ?? 'skip'
-    if (selected === 'skip') return []
-    if (selected === 'new') return [{
-      document_id: doc.document_id,
-      chapter_title: (pdfTitles.value[doc.document_id] ?? '').trim(),
-    }]
-    return [{ document_id: doc.document_id, chapter_id: selected.slice('chapter:'.length) }]
-  }) ?? []
-))
+    if (selected === 'new') {
+      mappings.push({
+        document_id: doc.document_id,
+        chapter_title: (pdfTitles.value[doc.document_id] ?? '').trim(),
+      })
+    } else if (selected.startsWith('chapter:')) {
+      mappings.push({ document_id: doc.document_id, chapter_id: selected.slice('chapter:'.length) })
+    }
+    return mappings
+  }, [])
+)
 const pdfReady = computed(() => pdfMappings.value.length > 0
   && pdfMappings.value.every(mapping => Boolean(mapping.chapter_id || mapping.chapter_title)))
 async function loadPDFPreview() {
