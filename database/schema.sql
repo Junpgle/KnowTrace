@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS relation_batch_runs (
     provider TEXT NOT NULL CHECK(provider IN ('default','ollama','mimo')),
     focus_ids_json TEXT NOT NULL,
     per_focus INTEGER NOT NULL CHECK(per_focus BETWEEN 1 AND 5),
-    mode TEXT NOT NULL DEFAULT 'single' CHECK(mode IN ('single','grouped')),
+    mode TEXT NOT NULL DEFAULT 'single' CHECK(mode IN ('single','grouped','bridge')),
     group_size INTEGER NOT NULL DEFAULT 1,
     total_points INTEGER,
     completed_points INTEGER NOT NULL DEFAULT 0,
