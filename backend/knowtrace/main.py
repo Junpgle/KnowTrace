@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .db import connect, initialize, transaction
 from .ai import AIConfigError, AIServiceError, OllamaProvider, compact, grounded_items
+from .mimo import MimoProvider
 from .parser import ParseError, SUPPORTED_EXTENSIONS, extract_chunks
 from .questions import validate_generated_questions, validate_question_fields
 from .quiz_api import register_quiz_routes
@@ -43,6 +44,7 @@ class ExtractKnowledgeRequest(BaseModel):
     page_start: int = Field(default=1, ge=1)
     page_end: int | None = Field(default=None, ge=1)
     include_visual: bool = False
+    provider: Literal['default', 'ollama', 'mimo'] = 'default'
 
 
 class ReviewKnowledgeRequest(BaseModel):
@@ -70,6 +72,7 @@ class KnowledgePointUpdate(BaseModel):
 
 
 class GenerateQuestionsRequest(BaseModel):
+    provider: Literal['default', 'ollama', 'mimo'] = 'default'
     count: int = Field(default=2, ge=1, le=4)
     question_types: list[Literal["single_choice", "true_false"]] = Field(
         default_factory=lambda: ["single_choice", "true_false"], min_length=1, max_length=2)
@@ -117,8 +120,36 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.4.0", lifespan=lifespan)
-    app.state.ai_provider = ai_provider if ai_provider is not None else OllamaProvider.from_env()
+    app = FastAPI(title="KnowTrace API", version="0.6.0", lifespan=lifespan)
+    configured_provider = os.getenv("KNOWTRACE_AI_PROVIDER", "ollama").strip().lower()
+    if configured_provider not in ("ollama", "mimo"):
+        raise AIConfigError("KNOWTRACE_AI_PROVIDER must be ollama or mimo")
+    app.state.ai_provider = ai_provider if ai_provider is not None else (
+        MimoProvider.from_env() if configured_provider == "mimo" else OllamaProvider.from_env())
+
+    def resolve_provider(selected: str):
+        if selected == "default":
+            return app.state.ai_provider
+        if selected == "mimo":
+            return MimoProvider.from_env()
+        if selected == "ollama":
+            return OllamaProvider.from_env()
+        raise HTTPException(422, "Unsupported AI provider")
+
+    @app.get("/api/ai/providers")
+    def ai_provider_status():
+        local = OllamaProvider.from_env()
+        mimo = MimoProvider.from_env()
+        return {"default": configured_provider,
+                "providers": [
+                  {"id": "ollama", "label": "本地 Ollama", "model": local.text_model,
+                   "available": bool(local.text_model), "vision_model": local.vision_model,
+                   "function_calling": False},
+                  {"id": "mimo", "label": "小米 MiMo API", "model": mimo.text_model,
+                   "available": bool(mimo.api_key), "vision_model": local.vision_model,
+                   "function_calling": True}
+                ],
+                "security": "API keys are configured on the backend only and never returned."}
 
     def ensure_course(db: sqlite3.Connection, course_id: str) -> None:
         if not db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'", (course_id,)).fetchone():
@@ -126,7 +157,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.4.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "0.6.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -389,6 +420,7 @@ def create_app(*, db_path: str | Path | None = None,
         Opt-in vision is limited to two sparse PDF pages per call. All generated
         knowledge remains pending review; no AI answer is silently approved.
         """
+        provider = resolve_provider(payload.provider)
         page_end = payload.page_end or payload.page_start
         if page_end < payload.page_start or page_end - payload.page_start >= 4:
             raise HTTPException(422, "Select 1 to 4 consecutive pages")
@@ -414,7 +446,7 @@ def create_app(*, db_path: str | Path | None = None,
         if payload.include_visual:
             if doc["media_type"] != "application/pdf":
                 raise HTTPException(415, "Visual extraction currently supports PDF only")
-            if not getattr(app.state.ai_provider, "vision_model", None):
+            if not getattr(provider, "vision_model", None):
                 raise HTTPException(503, "Configure KNOWTRACE_VISION_MODEL to enable visual extraction")
             sparse = [p for p in sources if p not in page_texts]
             if len(sparse) > 2:
@@ -426,7 +458,7 @@ def create_app(*, db_path: str | Path | None = None,
                 with fitz.open(filepath) as pdf:
                     for page in sparse:
                         image = pdf[page - 1].get_pixmap(matrix=fitz.Matrix(1.3, 1.3), alpha=False).tobytes("png")
-                        desc = app.state.ai_provider.describe_visual(base64.b64encode(image).decode("ascii"))
+                        desc = provider.describe_visual(base64.b64encode(image).decode("ascii"))
                         if desc and desc != "无法辨识":
                             page_texts[page] = desc
                             vision_pages.append(page)
@@ -438,7 +470,6 @@ def create_app(*, db_path: str | Path | None = None,
             raise HTTPException(422, "No sufficiently detailed text found; enable vision or select different pages")
 
         job_id = _uuid()
-        provider = app.state.ai_provider
         model_name = getattr(provider, "text_model", "test-model")
         with transaction(database) as db:
             db.execute("INSERT INTO processing_jobs(id,course_id,document_id,job_type,engine_name,prompt_version,status) VALUES (?,?,?,'knowledge_extract',?,'kp_v1','running')",
@@ -540,6 +571,7 @@ def create_app(*, db_path: str | Path | None = None,
         """Generate pending questions only from approved concepts + their sources."""
         if len(set(payload.question_types)) != len(payload.question_types):
             raise HTTPException(422, "question_types must not contain duplicates")
+        provider = resolve_provider(payload.provider)
         with transaction(database) as db:
             kp = db.execute("""SELECT id,course_id,canonical_name,summary,review_status
                     FROM knowledge_points WHERE id=? AND archived_at IS NULL""",
@@ -560,9 +592,11 @@ def create_app(*, db_path: str | Path | None = None,
             existing_stems = {compact(row["stem"]) for row in db.execute("""SELECT v.stem FROM question_versions v
                                 JOIN questions q ON q.id=v.question_id
                                 WHERE q.course_id=? AND q.archived_at IS NULL""", (kp["course_id"],))}
-        # Strictly bind evidence to the snippets that actually reached the model.
-        sources = {row["id"]: {**row, "content_text": row["content_text"][:2200]} for row in source_rows}
-        provider = app.state.ai_provider
+        # MiMo initially receives only a tiny source catalog. It uses tool calls
+        # to retrieve exact chunks as needed. Ollama keeps the legacy bounded
+        # excerpts workflow. Only retrieved bytes are eligible evidence.
+        sources = {row["id"]: {**row, "content_text": row["content_text"][:2200]}
+                   for row in source_rows} if not isinstance(provider, MimoProvider) else {}
         job_id = _uuid()
         with transaction(database) as db:
             db.execute("""INSERT INTO processing_jobs
@@ -570,9 +604,18 @@ def create_app(*, db_path: str | Path | None = None,
                        VALUES (?,?,?,'question_generate',?,'questions_v1','running')""",
                        (job_id, kp["course_id"], None, getattr(provider,"text_model","local")))
         try:
-            raw = provider.generate_questions(knowledge_name=kp["canonical_name"],
-                knowledge_summary=kp["summary"] or "", sources=list(sources.values()),
-                count=payload.count, question_types=payload.question_types)
+            metadata = {"tool_calls": 0, "retrieved_chunks": 0, "usage": {}}
+            if isinstance(provider, MimoProvider):
+                result = provider.generate_questions_lazy(
+                    db_path=database, knowledge_point_id=knowledge_point_id,
+                    knowledge_name=kp["canonical_name"], knowledge_summary=kp["summary"] or "",
+                    count=payload.count, question_types=payload.question_types)
+                raw, sources = result["raw"], result["sources"]
+                metadata = {key: result[key] for key in metadata}
+            else:
+                raw = provider.generate_questions(knowledge_name=kp["canonical_name"],
+                    knowledge_summary=kp["summary"] or "", sources=list(sources.values()),
+                    count=payload.count, question_types=payload.question_types)
             valid, warnings = validate_generated_questions(raw, sources,
                 permitted_types=set(payload.question_types),count=payload.count,
                 existing_stems=existing_stems)
@@ -608,6 +651,10 @@ def create_app(*, db_path: str | Path | None = None,
                            finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",(job_id,))
             return {"job_id":job_id,"created":len(new_versions),
                     "question_version_ids":new_versions,"review_status":"pending",
+                    "provider": "mimo" if isinstance(provider, MimoProvider) else "ollama",
+                    "model": getattr(provider, "text_model", "test-model"),
+                    "tool_calls": metadata["tool_calls"],
+                    "retrieved_chunks": metadata["retrieved_chunks"], "usage": metadata["usage"],
                     "warnings":warnings}
         except (AIConfigError, AIServiceError) as exc:
             with transaction(database) as db:
