@@ -48,6 +48,14 @@ export interface StudyPath {
   notice: string
 }
 
+export interface Chapter {
+  id: string
+  course_id: string
+  parent_chapter_id: string | null
+  title: string
+  ordinal: number
+}
+
 export interface GraphNode {
   id: string
   kind: 'course' | 'chapter' | 'knowledge'
@@ -350,6 +358,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  chapters: (courseId: string) =>
+    request<Chapter[]>('/api/courses/' + encodeURIComponent(courseId) + '/chapters'),
+  createChapter: (courseId: string, data: { title: string; parent_chapter_id?: string | null; ordinal?: number }) =>
+    request<Chapter>('/api/courses/' + encodeURIComponent(courseId) + '/chapters',
+      { method: 'POST', body: JSON.stringify(data) }),
+  assignKnowledgeChapter: (id: string, chapterId: string | null) =>
+    request<KnowledgePointDetail>('/api/knowledge-points/' + encodeURIComponent(id),
+      { method: 'PATCH', body: JSON.stringify({ chapter_id: chapterId }) }),
   relations: (courseId: string) =>
     request<RelationSummary[]>('/api/courses/' + encodeURIComponent(courseId) + '/knowledge-relations'),
   relationPrompt: (courseId: string, options: RelationTaskOptions) =>
