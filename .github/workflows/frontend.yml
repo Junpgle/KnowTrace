@@ -14,16 +14,35 @@ on:
 jobs:
   typecheck-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
-        working-directory: frontend
-      - name: Typecheck and build Vue frontend
-        run: npm run build
-        working-directory: frontend
+
+      - name: TypeScript and Vue SFC check
+        run: npm run typecheck
+
+      - name: Vite production build
+        run: npx vite build
+
+      - name: Summarize successful build
+        if: success()
+        run: |
+          echo '### Frontend ✅' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Vue type checking and Vite build succeeded.' >> "$GITHUB_STEP_SUMMARY"
