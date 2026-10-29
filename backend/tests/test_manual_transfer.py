@@ -142,11 +142,11 @@ def test_external_knowledge_bad_page_or_fake_evidence(env):
 
 def test_external_reply_parser_formats_and_ambiguity():
     obj='{"items":[]}'
-    assert parse_reply(obj)==obj
-    assert parse_reply("回复如下：\n"+chr(96)*3+"json\n"+obj+"\n"+chr(96)*3)==obj
-    assert parse_reply("这是结果："+obj+"\n以上。")==obj
-    assert parse_reply('[]') == obj
-    assert parse_reply('{"questions":[]}') == obj
-    assert parse_reply('{"knowledge_points":[]}') == obj
+    assert json.loads(parse_reply(obj)) == {"items": []}
+    assert json.loads(parse_reply("回复如下：\n"+chr(96)*3+"json\n"+obj+"\n"+chr(96)*3)) == {"items": []}
+    assert json.loads(parse_reply("这是结果："+obj+"\n以上。")) == {"items": []}
+    assert json.loads(parse_reply('[]')) == {"items": []}
+    assert json.loads(parse_reply('{"questions":[]}')) == {"items": []}
+    assert json.loads(parse_reply('{"knowledge_points":[]}')) == {"items": []}
     with pytest.raises(Exception):
         parse_reply("第一版 "+obj+" 第二版 "+obj)
