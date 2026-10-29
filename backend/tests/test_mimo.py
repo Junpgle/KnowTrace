@@ -211,7 +211,7 @@ def test_mimo_vision_sends_native_png_data_url_without_local_ollama():
         mock_response("Diagram: a source system sends digital data via a communication channel to a destination.")
     ).encode("utf-8")
     with patch("knowtrace.mimo.urlopen", return_value=context) as opener, \
-         patch("knowtrace.mimo.OllamaProvider.from_env", side_effect=AssertionError("Must not call Ollama")):
+         patch("knowtrace.ai.OllamaProvider.from_env", side_effect=AssertionError("Must not call Ollama")):
         description = provider.describe_visual(encoded)
     assert "source system" in description
     request = opener.call_args.args[0]
