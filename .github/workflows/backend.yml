@@ -55,6 +55,7 @@ jobs:
 
       - name: Surface first CI failure in commit status
         if: always()
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
