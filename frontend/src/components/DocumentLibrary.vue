@@ -10,7 +10,7 @@ import { api, documentPagePreviewUrl, type AIProviderId, type AIProviderStatus,
   type ExtractKnowledgeResult } from '../api'
 
 const props = defineProps<{ courseId: string; courseName: string }>()
-const emit = defineEmits<{ updated: []; openReview: []; openExternal: [] }>()
+const emit = defineEmits<{ updated: []; openReview: []; openExternal: [documentId: string] }>()
 type LocalFile = { id: number; name: string; status: 'queued' | 'uploading' | 'uploaded' | 'failed'; error?: string }
 const maxBytes = 30 * 1024 * 1024
 const files = ref<CourseDocument[]>([])
@@ -388,7 +388,7 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
             </div>
             <div class="library-other-options">
               <span>不想调用 API？</span>
-              <button type="button" @click="emit('openExternal')">复制提示词，交给其他 AI 提取 <ArrowRight :size="16" /></button>
+              <button type="button" @click="emit('openExternal', selected.id)">复制提示词，交给其他 AI 提取 <ArrowRight :size="16" /></button>
             </div>
           </section>
         </template>
