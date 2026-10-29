@@ -410,6 +410,9 @@ function previewAvailable(source: SourceEvidence): boolean {
             <label>数量<select v-model.number="questionCount" :disabled="busy"><option :value="1">1 道</option><option :value="2">2 道</option><option :value="3">3 道</option><option :value="4">4 道</option></select></label>
             <fieldset :disabled="busy"><legend>题型</legend><label><input v-model="useSingle" type="checkbox" /> 单选题</label><label><input v-model="useBoolean" type="checkbox" /> 判断题</label></fieldset>
           </div>
+          <p class="qb-hint" v-if="aiStatus && !aiStatus.providers.some(p => p.id === 'mimo' && p.available)">
+            尚未启用小米 MiMo：请在后端终端设置按量付费的 MIMO_API_KEY（sk-），然后重启后端；不要在网页输入密钥。
+          </p>
           <p class="qb-hint" v-if="selectedModel?.id === 'mimo'">MiMo {{ selectedModel.model }}：按需调用课件检索函数；不会预先上传整份课件。API Key 仅配置在后端。</p>
           <p class="qb-hint" v-else>本地 {{ selectedModel?.model || 'Ollama' }}：只使用知识点关联的少量课件片段。</p>
           <button class="button button-primary qb-generate-button" :disabled="!canGenerate || busy || editingKnowledge || selectedModel?.available === false" @click="generate">
