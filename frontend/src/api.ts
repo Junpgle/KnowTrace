@@ -271,6 +271,39 @@ export interface ExternalKnowledgeImportResult {
   warnings: string[]
 }
 
+export type KnowledgeAIRecommendation = 'approve' | 'revise' | 'reject'
+export interface KnowledgeAIReview {
+  id: string
+  course_id: string
+  knowledge_point_id: string
+  provider: string
+  model: string
+  fingerprint: string
+  recommendation: KnowledgeAIRecommendation
+  confidence: 'high' | 'medium' | 'low'
+  rationale: string
+  issues: string[]
+  evidence_chunk_id: string | null
+  evidence_quote: string | null
+  verified_text: boolean
+  source_kind: string | null
+  stale: boolean
+  created_at: string
+}
+export interface KnowledgeAIReviewBatch {
+  id: string
+  course_id: string
+  provider: AIProviderId
+  next_index: number
+  completed: number
+  total: number
+  errors: number
+  status: 'running' | 'stopping' | 'stopped' | 'interrupted' | 'succeeded'
+  last_error: string | null
+  progress: number
+  created_at: string
+  updated_at: string
+}
 export type BatchStatus = 'running' | 'stopping' | 'stopped' | 'interrupted' | 'succeeded' | 'failed'
 export interface BatchExtraction {
   id: string
@@ -447,6 +480,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  reviewKnowledgeWithAI: (id: string, provider: AIProviderId = 'default') =>
+    request<KnowledgeAIReview>('/api/knowledge-points/' + encodeURIComponent(id) + '/ai-review',
+      { method: 'POST', body: JSON.stringify({ provider }) }),
+  knowledgeAIReviews: (courseId: string) =>
+    request<KnowledgeAIReview[]>('/api/courses/' + encodeURIComponent(courseId) + '/ai-knowledge-reviews'),
+  applyKnowledgeAIReviews: (courseId: string, reviewIds: string[]) =>
+    request<{ applied: string[]; skipped: { id: string; reason: string }[] }>(
+      '/api/courses/' + encodeURIComponent(courseId) + '/ai-knowledge-reviews/apply',
+      { method: 'POST', body: JSON.stringify({ confirmed: true, review_ids: reviewIds }) }),
+  knowledgeAIReviewBatches: (courseId: string) =>
+    request<KnowledgeAIReviewBatch[]>('/api/courses/' + encodeURIComponent(courseId) + '/ai-review-batches'),
+  startKnowledgeAIReviewBatch: (courseId: string, provider: AIProviderId, limit = 200) =>
+    request<KnowledgeAIReviewBatch>('/api/courses/' + encodeURIComponent(courseId) + '/ai-review-batches',
+      { method: 'POST', body: JSON.stringify({ provider, limit }) }),
+  stopKnowledgeAIReviewBatch: (id: string) =>
+    request<KnowledgeAIReviewBatch>('/api/ai-review-batches/' + encodeURIComponent(id) + '/stop',
+      { method: 'POST' }),
+  resumeKnowledgeAIReviewBatch: (id: string) =>
+    request<KnowledgeAIReviewBatch>('/api/ai-review-batches/' + encodeURIComponent(id) + '/resume',
+      { method: 'POST' }),
   aiSettings: () => request<AISettings>('/api/settings/ai'),
   saveAISettings: (body: AISettingsPatch) =>
     request<AISettings>('/api/settings/ai', {method:'PATCH', body:JSON.stringify(body)}),
