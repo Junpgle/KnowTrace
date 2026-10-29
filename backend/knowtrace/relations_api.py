@@ -167,7 +167,7 @@ def prompt_text(points: list[dict], chunks: dict[str,dict], count: int, *, lazy:
     return instructions, json.dumps(context, ensure_ascii=False)
 
 
-def verify_candidates(raw: str, points: list[dict], chunks: dict[str,dict], *, count: int):
+def verify_candidates(raw: str, points: list[dict], chunks: dict[str,dict], *, count: int, require_focus: bool = True):
     try:
         data = json.loads(parse_reply(raw))
     except (ValueError, TypeError) as exc:
@@ -192,7 +192,7 @@ def verify_candidates(raw: str, points: list[dict], chunks: dict[str,dict], *, c
             or len(rationale)>1000 or not isinstance(quote,str) or len(compact(quote))<10):
             warnings.append(f"candidate {idx}: invalid IDs, relation type or explanation")
             continue
-        if focus_id not in {a,b}:
+        if require_focus and focus_id not in {a,b}:
             warnings.append(f"candidate {idx}: relation does not involve selected focus point")
             continue
         source = chunks[cid]
