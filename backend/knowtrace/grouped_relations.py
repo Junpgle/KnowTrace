@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from collections import defaultdict
 from pathlib import Path
 
@@ -91,7 +92,8 @@ def plan_groups(db_path: Path, course_id: str, done: set[str],
 def generate_group_relations(db_path: Path, course_id: str,
                              ids: list[str], provider_name: str,
                              per_point: int, resolve_provider,
-                             *, cross_chapter_only: bool = False) -> dict:
+                             *, cross_chapter_only: bool = False,
+                             on_delta: Callable[[str],None] | None = None) -> dict:
     """One AI request per 2-16 knowledge points, with bounded real source text."""
     from .relations_api import verify_candidates, store
 
@@ -190,14 +192,29 @@ def generate_group_relations(db_path: Path, course_id: str,
         )
     serialized=json.dumps(context,ensure_ascii=False)
     try:
-        if hasattr(provider,"generate_relation_group"):
+        if on_delta is not None and hasattr(provider,"generate_relation_group_stream"):
+            raw=provider.generate_relation_group_stream(instructions,serialized,on_delta)
+        elif hasattr(provider,"generate_relation_group"):
             raw=provider.generate_relation_group(instructions,serialized)
+            if on_delta is not None and isinstance(raw,str):
+                on_delta(raw)
         elif isinstance(provider,MimoProvider):
-            response=provider._post([{"role":"system","content":instructions},
-                                     {"role":"user","content":serialized}])
-            raw=(response.get("choices") or [{}])[0].get("message",{}).get("content")
+            if on_delta is not None:
+                from .relation_streaming import mimo_relation_stream
+                raw=mimo_relation_stream(
+                    provider,[{"role":"system","content":instructions},
+                              {"role":"user","content":serialized}],on_delta)
+            else:
+                response=provider._post([{"role":"system","content":instructions},
+                                         {"role":"user","content":serialized}])
+                raw=(response.get("choices") or [{}])[0].get("message",{}).get("content")
         elif isinstance(provider,OllamaProvider):
-            raw=provider._generate(instructions+"\n"+serialized,model=provider.text_model)
+            prompt=instructions+"\n"+serialized
+            if on_delta is not None:
+                from .relation_streaming import ollama_relation_stream
+                raw=ollama_relation_stream(provider,prompt,on_delta)
+            else:
+                raw=provider._generate(prompt,model=provider.text_model)
         else:
             raise AIConfigError("Configured provider does not support grouped relations")
     except AIConfigError as e:
