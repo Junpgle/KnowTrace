@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import {
   Activity, AlertCircle, ArrowRight, Award, BookOpen, Check,
   CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList, ClipboardCheck,
@@ -131,6 +131,7 @@ async function createCourse() {
     courseId.value = course.id
     localStorage.setItem('knowtrace:selected-course',course.id)
     if (courses.value.length === 1) await loadCourseData(course.id)
+    await nextTick() // Allow the course-switch watcher to run before choosing the library.
     navigate('library')
   } catch (e) { showError(e) }
   finally { creatingCourse.value = false }
