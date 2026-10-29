@@ -3,6 +3,29 @@
 export type RelationType = 'prerequisite_required' | 'prerequisite_recommended'
   | 'related' | 'uses' | 'compares'
 
+export interface RelationBatch {
+  id: string
+  course_id: string
+  provider: AIProviderId
+  per_focus: number
+  total: number
+  next_index: number
+  completed: number
+  skipped: number
+  created_relations: number
+  warning_count: number
+  status: 'running' | 'stopping' | 'stopped' | 'interrupted' | 'succeeded'
+  last_error: string | null
+  current_focus: string | null
+  progress: number
+  created_at: string
+  updated_at: string
+}
+export interface RelationBulkPreview {
+  types: { relation_type: RelationType; total: number; missing_evidence: number; visual: number }[]
+  total: number
+}
+
 export interface RelationSummary {
   id: string
   source_kp_id: string
@@ -581,6 +604,24 @@ export const api = {
   assignKnowledgeChapter: (id: string, chapterId: string | null) =>
     request<KnowledgePointDetail>('/api/knowledge-points/' + encodeURIComponent(id),
       { method: 'PATCH', body: JSON.stringify({ chapter_id: chapterId }) }),
+  relationBatches: (courseId: string) =>
+    request<RelationBatch[]>('/api/courses/'+encodeURIComponent(courseId)+'/relation-batches'),
+  startRelationBatch: (courseId: string, options: {
+    provider: AIProviderId; max_focus_points: number; per_focus: number; confirm_large_run: boolean
+  }) => request<RelationBatch>('/api/courses/'+encodeURIComponent(courseId)+'/relation-batches',
+       { method: 'POST', body: JSON.stringify(options) }),
+  stopRelationBatch: (jobId: string) =>
+    request<RelationBatch>('/api/relation-batches/'+encodeURIComponent(jobId)+'/stop',
+       { method:'POST' }),
+  resumeRelationBatch: (jobId: string) =>
+    request<RelationBatch>('/api/relation-batches/'+encodeURIComponent(jobId)+'/resume',
+       { method:'POST' }),
+  relationBulkPreview: (courseId: string) =>
+    request<RelationBulkPreview>('/api/courses/'+encodeURIComponent(courseId)+'/relations/bulk-review-preview'),
+  approveRelationTypes: (courseId: string, types: RelationType[]) =>
+    request<{approved:number;skipped:number;cycles:number;visual:number;approved_ids:string[]}>(
+      '/api/courses/'+encodeURIComponent(courseId)+'/relations/bulk-approve',
+      { method:'POST',body:JSON.stringify({confirmed:true,types}) }),
   relations: (courseId: string) =>
     request<RelationSummary[]>('/api/courses/' + encodeURIComponent(courseId) + '/knowledge-relations'),
   relationPrompt: (courseId: string, options: RelationTaskOptions) =>
