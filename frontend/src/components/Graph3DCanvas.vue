@@ -124,10 +124,12 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
 function clearGraph() {
   if (!group || !scene) return
   scene.remove(group)
+  const geometries = new Set<THREE.BufferGeometry>()
   group.traverse(object => {
     if (object instanceof THREE.Mesh || object instanceof THREE.Line ||
         object instanceof THREE.Points || object instanceof THREE.Sprite) {
-      object.geometry?.dispose()
+      if ('geometry' in object && object.geometry instanceof THREE.BufferGeometry)
+        geometries.add(object.geometry)
       const materials = Array.isArray(object.material) ? object.material : [object.material]
       materials.forEach(m => {
         if (m instanceof THREE.SpriteMaterial && m.map) m.map.dispose()
@@ -135,6 +137,7 @@ function clearGraph() {
       })
     }
   })
+  geometries.forEach(geometry => geometry.dispose())
   meshes.splice(0)
   positions.clear()
   group = null
@@ -178,7 +181,6 @@ function rebuild() {
       }
     }
   })
-  sphere.dispose() // WebGL upload retains geometry until objects disposed; see note below
   const activeEdges = props.edges.filter(edge => edge.structural || props.showRelations)
   const positionsStructural: number[] = []
   const positionsSemantic: number[] = []
