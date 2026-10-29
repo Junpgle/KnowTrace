@@ -10,6 +10,8 @@ const emit=defineEmits<{updated:[]}>()
 const provider=ref<AIProviderId>('default')
 const focusLimit=ref(30)
 const perFocus=ref(2)
+const mode=ref<'single'|'grouped'>('grouped')
+const groupSize=ref(12)
 const confirmCost=ref(false)
 const confirmApproval=ref(false)
 const allowVisual=ref(false)
@@ -64,7 +66,7 @@ watch(()=>props.courseId,()=>{
   message.value='';error.value=''
   void reload()
 },{immediate:true})
-watch([provider,focusLimit,perFocus],()=>{confirmCost.value=false})
+watch([provider,focusLimit,perFocus,groupSize,mode],()=>{confirmCost.value=false})
 watch(chosenTypes,()=>{confirmApproval.value=false},{deep:true})
 onBeforeUnmount(()=>{if(polling)clearInterval(polling);++token})
 async function start(){
@@ -76,9 +78,12 @@ async function start(){
   try{
     const r=await api.startRelationBatch(props.courseId,{
       provider:provider.value,max_focus_points:focusLimit.value,
-      per_focus:perFocus.value,confirm_large_run:confirmCost.value
+      per_focus:perFocus.value,mode:mode.value,group_size:groupSize.value,
+      confirm_large_run:confirmCost.value
     })
-    message.value='已启动 '+r.total+' 个知识点的批量关系发现。每个知识点调用一次模型，生成候选关系后再统一审核。'
+    message.value=mode.value==='grouped'
+      ? '已将 '+r.total_points+' 个知识点分为 '+r.total+' 组。每组一次 AI 分析，结果仍然逐条核验原文后进入待审核区。'
+      : '已启动 '+r.total+' 个知识点的逐点关系分析（兼容模式）。'
     await reload()
   }catch(e){error.value=e instanceof Error?e.message:'批量生成启动失败'}
   finally{busy.value=false}
@@ -126,18 +131,39 @@ async function approve(){
       <label>本轮分析知识点<select v-model.number="focusLimit" :disabled="active||busy">
         <option v-for="count in options" :key="count" :value="count">{{count===30?'先试运行 30 个':count+' 个'}}</option>
       </select></label>
-      <label>每点最多关系数<select v-model.number="perFocus" :disabled="active||busy">
+      <label>每点关系候选上限<select v-model.number="perFocus" :disabled="active||busy">
         <option :value="1">1 条</option><option :value="2">2 条</option>
         <option :value="3">3 条</option><option :value="5">5 条</option>
       </select></label>
     </div>
-    <p class="rb-hint">只分析已审核、有关联课件证据的知识点。每个重点最多比较 11 个候选点，优先共享课件片段与同章节内容。找不到可靠证据时允许不生成连线。</p>
+    <div class="rb-setup rb-strategy">
+      <label>分析策略<select v-model="mode" :disabled="active||busy">
+        <option value="grouped">章节 + 相似知识点分组（推荐）</option>
+        <option value="single">逐点分析（旧模式）</option>
+      </select></label>
+      <label v-if="mode==='grouped'">每组知识点数<select v-model.number="groupSize" :disabled="active||busy">
+        <option :value="6">6 个（输入较短）</option>
+        <option :value="8">8 个</option>
+        <option :value="12">12 个（推荐）</option>
+        <option :value="16">16 个（输入较长）</option>
+      </select></label>
+    </div>
+    <p class="rb-hint" v-if="mode==='grouped'">
+      先按真实章节划分；未分章的知识点按原始课件来源聚合，再根据名称、摘要和共享课件片段的相似程度分组。
+      每组调用一次 AI，模型可比较组内任意两个知识点，只有真实原文支持的候选关系才会保存。
+      单组最多输出 18 条候选，不保证每组一定有关系。
+    </p>
+    <p class="rb-hint" v-else>
+      旧版逐点模式：每个知识点单独分析，最多考虑11个候选，可能较慢。已经完成的知识点会被跳过。
+    </p>
     <p v-if="approvedCount<2" class="rb-alert error">
       当前可用的已审核知识点不足 2 个。请先到「题库管理 → 知识点审核 → 直接批量通过」批准有课件来源的知识点。
     </p>
     <label v-if="focusLimit>30" class="rb-check">
       <input v-model="confirmCost" type="checkbox"/>
-      我确认本轮最多处理 {{focusLimit}} 个知识点；MiMo 每个知识点可能触发多次模型请求及工具调用并产生费用，且会按需读取课件内容。
+      我确认本轮最多处理 {{focusLimit}} 个知识点；
+      {{mode==='grouped'?'预计约 '+Math.ceil(focusLimit/groupSize)+' 组模型请求（按章节实际分组可能更多）':'逐点模式可能发起同等数量的多轮模型请求'}}。
+      MiMo 按实际 Token 收费；分组模式可能增加单次输入长度。
     </label>
     <button type="button" class="button button-primary" :disabled="active||busy||approvedCount<2||(focusLimit>30&&!confirmCost)" @click="start">
       <LoaderCircle v-if="busy" class="spinning" :size="16"/><Play v-else :size="16"/>
@@ -145,10 +171,11 @@ async function approve(){
     </button>
     <div v-if="current" class="rb-progress">
       <div class="rb-progress-head"><strong>本轮任务：{{current.status==='running'?'分析中':current.status==='stopping'?'等待当前请求完成':current.status==='succeeded'?'已完成':current.status==='interrupted'?'服务重启后中断':'已停止'}}</strong>
-        <span>{{current.completed}} / {{current.total}} · {{current.progress}}%</span></div>
+        <span>{{current.completed_points}} / {{current.total_points}} 个知识点 ·
+        已完成 {{current.completed}} / {{current.total}} 组 · {{current.progress}}%</span></div>
       <div class="rb-track"><span :style="{width:current.progress+'%'}"/></div>
-      <p>已生成 <strong>{{current.created_relations}}</strong> 条待审核关系；跳过 {{current.skipped}} 个知识点；校验提醒 {{current.warning_count}} 条。</p>
-      <p v-if="current.current_focus">当前正在分析知识点 ID：{{current.current_focus}}</p>
+      <p>已生成 <strong>{{current.created_relations}}</strong> 条待审核关系；跳过 {{current.skipped}} 组/点；校验提醒 {{current.warning_count}} 条。</p>
+      <p v-if="current.current_focus">当前正在分析{{current.mode==='grouped'?'知识点分组':'知识点'}}，代表 ID：{{current.current_focus}}</p>
       <p v-if="current.last_error" class="rb-alert error"><AlertTriangle :size="15"/>{{current.last_error}}</p>
       <div class="rb-actions">
         <button v-if="current.status==='running'" type="button" class="button button-outline button-small" :disabled="busy" @click="action('stop')"><CirclePause :size="16"/>当前项完成后停止</button>
