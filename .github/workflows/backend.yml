@@ -16,17 +16,35 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: backend
+      KNOWTRACE_AI_PROVIDER: ollama
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Python 3.12
+
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - name: Install test dependencies
-        run: pip install -r backend/requirements-dev.txt
-      - name: Run tests without real API keys
-        env:
-          PYTHONPATH: backend
-          KNOWTRACE_AI_PROVIDER: ollama
-        run: pytest -q backend/tests
+          python-version: "3.12"
+
+      - name: Show Python and pip versions
+        run: |
+          python --version
+          python -m pip --version
+
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Compile backend Python files
+        run: python -m compileall -q backend/knowtrace backend/tests
+
+      - name: Run pytest with concise tracebacks
+        run: python -m pytest -ra --tb=short backend/tests
+
+      - name: Summarize successful tests
+        if: success()
+        run: |
+          echo '### Backend ✅' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Python syntax check and regression tests succeeded.' >> "$GITHUB_STEP_SUMMARY"
