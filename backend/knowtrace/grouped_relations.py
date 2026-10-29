@@ -90,7 +90,8 @@ def plan_groups(db_path: Path, course_id: str, done: set[str],
 
 def generate_group_relations(db_path: Path, course_id: str,
                              ids: list[str], provider_name: str,
-                             per_point: int, resolve_provider) -> dict:
+                             per_point: int, resolve_provider,
+                             *, cross_chapter_only: bool = False) -> dict:
     """One AI request per 2-16 knowledge points, with bounded real source text."""
     from .relations_api import verify_candidates, store
 
@@ -101,9 +102,15 @@ def generate_group_relations(db_path: Path, course_id: str,
     provider=resolve_provider(provider_name)
     placeholders=",".join("?" for _ in ids)
     with transaction(db_path) as db:
-        points=[dict(r) for r in db.execute("""SELECT id,canonical_name,summary,chapter_id
-                FROM knowledge_points WHERE course_id=? AND review_status='approved'
-                AND archived_at IS NULL AND id IN ("""+placeholders+")",
+        points=[dict(r) for r in db.execute("""SELECT p.id,p.canonical_name,
+                  p.summary,p.chapter_id,
+                  (SELECT MIN(d.id) FROM knowledge_point_sources s
+                    JOIN document_chunks c ON c.id=s.chunk_id
+                    JOIN documents d ON d.id=c.document_id
+                    WHERE s.knowledge_point_id=p.id
+                      AND d.course_id=p.course_id AND d.status='ready') AS document_id
+                FROM knowledge_points p WHERE p.course_id=? AND p.review_status='approved'
+                AND p.archived_at IS NULL AND p.id IN ("""+placeholders+")",
                 (course_id,*ids)).fetchall()]
         if len(points)!=len(ids):
             raise HTTPException(409,"Knowledge point changed during grouped relation generation")
@@ -194,6 +201,20 @@ def generate_group_relations(db_path: Path, course_id: str,
     # except group edges can connect ANY two nodes within this batch.
     valid,warnings=verify_candidates(raw,effective,sources,
                                      count=output_limit,require_focus=False)
-    created,extra=store(db_path,course_id,valid,engine=type(provider).__name__+" grouped")
+    if cross_chapter_only:
+        # The LLM may suggest intra-chapter links even when it was asked for
+        # bridge links. Only persist edges crossing actual chapter/source
+        # buckets; never invent a chapter for unclassified material.
+        def bucket(p):
+            return ("chapter",p["chapter_id"]) if p["chapter_id"] else (
+                "document",p["document_id"])
+        membership={p["id"]:bucket(p) for p in effective}
+        cross=[edge for edge in valid if membership[edge["source_kp_id"]]
+               != membership[edge["target_kp_id"]]]
+        if len(cross)<len(valid):
+            warnings.append(f"{len(valid)-len(cross)} same-bucket edges omitted in bridge mode")
+        valid=cross
+    created,extra=store(db_path,course_id,valid,
+                        engine=type(provider).__name__+(" bridge" if cross_chapter_only else " grouped"))
     return {"created":len(created),"warnings":warnings+extra,
             "group_size":len(effective),"source_chunks":len(sources)}
