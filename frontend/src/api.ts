@@ -95,6 +95,40 @@ export interface LearningReport {
 }
 
 
+export interface CourseDocument {
+  id: string
+  original_filename: string
+  total_pages: number
+  status: string
+  created_at: string
+}
+export interface ExternalPrompt {
+  prompt: string
+  privacy_warning: string
+  requires_review: boolean
+  source_chunks?: number
+  available_pages?: number[]
+  skipped_pages?: number[]
+}
+export interface ExternalQuestionImportResult {
+  job_id: string
+  created: number
+  question_version_ids: string[]
+  review_status: 'pending'
+  origin: 'manual_external'
+  warnings: string[]
+}
+export interface ExternalKnowledgeImportResult {
+  job_id: string
+  created: number
+  reused: number
+  created_ids: string[]
+  review_status: 'pending'
+  skipped_pages: number[]
+  origin: 'manual_external'
+  warnings: string[]
+}
+
 export type AIProviderId = 'default' | 'ollama' | 'mimo'
 
 export interface AIProviderInfo {
@@ -247,6 +281,21 @@ export const api = {
     { method: 'POST', body: JSON.stringify(body) },
   ),
 
+  documents: (courseId: string) => request<CourseDocument[]>(
+    '/api/courses/' + encodeURIComponent(courseId) + '/documents',
+  ),
+  externalQuestionPrompt: (kpId: string, data: { count: number; question_types: ('single_choice' | 'true_false')[] }) =>
+    request<ExternalPrompt>('/api/knowledge-points/' + encodeURIComponent(kpId) + '/external-question-prompt',
+      { method: 'POST', body: JSON.stringify(data) }),
+  importExternalQuestions: (kpId: string, data: { count: number; question_types: ('single_choice' | 'true_false')[]; response_text: string }) =>
+    request<ExternalQuestionImportResult>('/api/knowledge-points/' + encodeURIComponent(kpId) + '/import-external-questions',
+      { method: 'POST', body: JSON.stringify(data) }),
+  externalKnowledgePrompt: (docId: string, data: { page_start: number; page_end: number }) =>
+    request<ExternalPrompt>('/api/documents/' + encodeURIComponent(docId) + '/external-knowledge-prompt',
+      { method: 'POST', body: JSON.stringify(data) }),
+  importExternalKnowledge: (docId: string, data: { page_start: number; page_end: number; response_text: string }) =>
+    request<ExternalKnowledgeImportResult>('/api/documents/' + encodeURIComponent(docId) + '/import-external-knowledge',
+      { method: 'POST', body: JSON.stringify(data) }),
   knowledgePoints: (courseId: string) => request<KnowledgePoint[]>(
     '/api/courses/' + encodeURIComponent(courseId) + '/knowledge-points',
   ),
