@@ -441,7 +441,7 @@ function previewAvailable(source: SourceEvidence): boolean {
             <fieldset :disabled="busy"><legend>题型</legend><label><input v-model="useSingle" type="checkbox" /> 单选题</label><label><input v-model="useBoolean" type="checkbox" /> 判断题</label></fieldset>
           </div>
           <p class="qb-hint" v-if="aiStatus && !aiStatus.providers.some(p => p.id === 'mimo' && p.available)">
-            尚未启用小米 MiMo：请在后端终端设置按量付费的 MIMO_API_KEY（sk-），然后重启后端；不要在网页输入密钥。
+            尚未配置小米 MiMo：请在左侧「AI 模型设置」中填写按量付费 API Key（sk-），保存后即可使用。
           </p>
           <p class="qb-hint" v-if="selectedModel?.id === 'mimo'">MiMo {{ selectedModel.model }}：按需调用课件检索函数；不会预先上传整份课件。API Key 仅配置在后端。</p>
           <p class="qb-hint" v-else>本地 {{ selectedModel?.model || 'Ollama' }}：只使用知识点关联的少量课件片段。</p>
