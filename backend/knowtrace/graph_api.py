@@ -145,6 +145,44 @@ def register_graph_routes(app: FastAPI, database: Path) -> None:
                 "structural": True, "rationale": None,
             })
 
+        # Chapter assignment and semantic relations are intentionally separate.
+        # Use only *approved* relations to suggest, never silently mutate chapters.
+        # Require at least two distinct assigned neighbours and an unambiguous majority.
+        from collections import Counter
+        chapter_votes = {}
+        assigned = {p["id"]: p["chapter_id"] for p in rows
+                    if p["chapter_id"] in chapter_ids}
+        for rel in relations:
+            a, b = rel["source_kp_id"], rel["target_kp_id"]
+            if a not in actual or b not in actual or a == b:
+                continue
+            if a in assigned and b not in assigned:
+                chapter_votes.setdefault(b, {})[a] = assigned[a]
+            if b in assigned and a not in assigned:
+                chapter_votes.setdefault(a, {})[b] = assigned[b]
+        suggested_count = 0
+        unclassified_count = 0
+        for node in nodes:
+            if node["kind"] != "knowledge":
+                continue
+            node["suggested_chapter_id"] = None
+            node["suggestion_support"] = 0
+            node["suggestion_total"] = 0
+            if node["chapter_id"] in chapter_ids:
+                continue
+            unclassified_count += 1
+            votes = Counter(chapter_votes.get(node["id"], {}).values())
+            if not votes:
+                continue
+            winner, support = votes.most_common(1)[0]
+            total_votes = sum(votes.values())
+            node["suggestion_total"] = total_votes
+            if (support >= 2 and support * 3 >= total_votes * 2
+                    and list(votes.values()).count(support) == 1):
+                node["suggested_chapter_id"] = winner
+                node["suggestion_support"] = support
+                suggested_count += 1
+
         semantic_edges = 0
         for relation in relations:
             if relation["source_kp_id"] not in actual or relation["target_kp_id"] not in actual:
@@ -171,6 +209,8 @@ def register_graph_routes(app: FastAPI, database: Path) -> None:
                 "pending_points": sum(p["review_status"] == "pending" for p in rows),
                 "mastery_estimated_points": sum(bool(p["observations"]) for p in rows),
                 "approved_semantic_edges": semantic_edges,
+                "unclassified_points": unclassified_count,
+                "suggested_chapter_points": suggested_count,
                 "truncated": len(rows) < total,
                 "limit": limit,
             },
