@@ -413,3 +413,33 @@ h1,h2,h3,p { margin-top: 0; }
 @media(prefers-reduced-motion:reduce) {
   *,*::before,*::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+
+/* Source library onboarding: course creation is available without Swagger. */
+.sidebar-add-course {
+  display: flex; align-items: center; gap: 9px; width: calc(100% - 28px);
+  margin: 9px 14px; padding: 10px 15px; border: 1px dashed #457c83;
+  border-radius: 10px; background: transparent; color: #a8d4d1;
+  font-size: 12px; font-weight: 750; cursor: pointer;
+}
+.sidebar-add-course:hover { background: #17434a; border-color: #55aaa5; color: #e3fcf8; }
+.course-modal-overlay {
+  position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center;
+  background: rgba(7, 23, 36, .65); padding: 20px;
+}
+.course-modal {
+  display: grid; gap: 19px; width: min(100%, 490px); padding: 27px;
+  background: #fff; box-shadow: 0 22px 80px #0418244d;
+}
+.course-modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.course-modal-head h2 { font-size: 21px; color: #234553; margin: 4px 0 0; }
+.course-modal > label { display: grid; gap: 8px; color: #557684; font-size: 12px; font-weight: 760; }
+.course-modal > label input, .course-modal > label textarea {
+  border: 1px solid #d5e5e8; background: #fff; border-radius: 9px;
+  padding: 12px 13px; font: inherit; font-weight: 500; font-size: 13px;
+  line-height: 1.6; width: 100%; color: #2c5060; resize: vertical;
+}
+.course-modal > label input:focus, .course-modal > label textarea:focus {
+  outline: 2px solid #45baa8; outline-offset: 0;
+}
+.course-modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; }
