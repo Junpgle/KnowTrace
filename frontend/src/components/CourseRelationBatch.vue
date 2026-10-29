@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, CirclePause, GitBranch, LoaderCircle,
   Play, RefreshCw, RotateCcw, ShieldCheck, Sparkles } from '@lucide/vue'
 import { api, type AIProviderId, type RelationBatch, type RelationBulkPreview,
-  type RelationType } from '../api'
+  type RelationType, type BridgePreview } from '../api'
 
 const props=defineProps<{courseId:string; approvedCount:number}>()
 const emit=defineEmits<{updated:[]}>()
@@ -12,6 +12,10 @@ const focusLimit=ref(30)
 const perFocus=ref(2)
 const mode=ref<'single'|'grouped'|'bridge'>('grouped')
 const groupSize=ref(12)
+const bridgeInfo=ref<BridgePreview|null>(null)
+const bridgeLoading=ref(false)
+const bridgeError=ref('')
+let bridgeToken=0
 const confirmCost=ref(false)
 const confirmApproval=ref(false)
 const allowVisual=ref(false)
@@ -67,8 +71,22 @@ watch(()=>props.courseId,()=>{
   void reload()
 },{immediate:true})
 watch([provider,focusLimit,perFocus,groupSize,mode],()=>{confirmCost.value=false})
+async function loadBridgePreview(){
+  const n=++bridgeToken
+  if(mode.value!=='bridge'){bridgeInfo.value=null;bridgeError.value='';return}
+  bridgeInfo.value=null;bridgeError.value='';bridgeLoading.value=true
+  try{
+    const preview=await api.bridgePreview(props.courseId,focusLimit.value,groupSize.value)
+    if(n===bridgeToken)bridgeInfo.value=preview
+  }catch(e){
+    if(n===bridgeToken)bridgeError.value=e instanceof Error?e.message:'候选预览失败'
+  }finally{if(n===bridgeToken)bridgeLoading.value=false}
+}
+watch([mode,focusLimit,groupSize,()=>props.courseId],()=>{
+  void loadBridgePreview()
+},{immediate:true})
 watch(chosenTypes,()=>{confirmApproval.value=false},{deep:true})
-onBeforeUnmount(()=>{if(polling)clearInterval(polling);++token})
+onBeforeUnmount(()=>{if(polling)clearInterval(polling);++token;++bridgeToken})
 async function start(){
   if(busy.value||active.value)return
   if(focusLimit.value>30&&!confirmCost.value){
@@ -164,6 +182,24 @@ async function approve(){
     <p class="rb-hint" v-else>
       旧版逐点模式：每个知识点单独分析，最多考虑11个候选，可能较慢。已经完成的知识点会被跳过。
     </p>
+    <div v-if="mode==='bridge'" class="rb-bridge-preview">
+      <strong>跨章节候选预估（不会调用 AI）</strong>
+      <p v-if="bridgeLoading">正在分析章节归属与低成本候选匹配…</p>
+      <p v-else-if="bridgeError" role="alert" class="rb-alert error">{{bridgeError}}</p>
+      <template v-else-if="bridgeInfo">
+        <div class="rb-bridge-stats">
+          <span>真实章节 {{bridgeInfo.actual_chapters}}</span>
+          <span>未归类 {{bridgeInfo.unassigned_points}}</span>
+          <span>课件 {{bridgeInfo.source_documents}} 份</span>
+          <span>候选 {{bridgeInfo.candidate_groups}} 组</span>
+          <span>参与 {{bridgeInfo.participating_points}} 个点次</span>
+        </div>
+        <p>{{bridgeInfo.note}}</p>
+        <button type="button" class="rb-refresh" :disabled="bridgeLoading" @click="loadBridgePreview">
+          <RefreshCw :size="14"/>重新估算
+        </button>
+      </template>
+    </div>
     <p v-if="approvedCount<2" class="rb-alert error">
       当前可用的已审核知识点不足 2 个。请先到「题库管理 → 知识点审核 → 直接批量通过」批准有课件来源的知识点。
     </p>
@@ -173,7 +209,7 @@ async function approve(){
       {{mode==='single'?'逐点模式可能发起同等数量的多轮模型请求':'预计不超过 '+Math.ceil(focusLimit/2)+' 组候选请求（实际按可检索的章节匹配情况决定）'}}。
       MiMo 按实际 Token 收费；分组模式可能增加单次输入长度。
     </label>
-    <button type="button" class="button button-primary" :disabled="active||busy||approvedCount<2||(focusLimit>30&&!confirmCost)" @click="start">
+    <button type="button" class="button button-primary" :disabled="active||busy||approvedCount<2||(focusLimit>30&&!confirmCost)||(mode==='bridge'&&(!bridgeInfo||bridgeInfo.candidate_groups===0))" @click="start">
       <LoaderCircle v-if="busy" class="spinning" :size="16"/><Play v-else :size="16"/>
       开始批量建立关系
     </button>
@@ -218,6 +254,11 @@ async function approve(){
   </section>
 </template>
 <style scoped>
+.rb-bridge-preview{padding:13px;background:#fff;border:1px solid #d5e8e2;border-radius:10px;display:grid;gap:10px;color:#4b8076;font-size:11px}
+.rb-bridge-preview p{font-size:11px;line-height:1.75;color:#79948e;margin:0}
+.rb-bridge-stats{display:flex;flex-wrap:wrap;gap:7px}
+.rb-bridge-stats span{border-radius:7px;padding:7px;background:#edf8f4;color:#217a6a;font-size:10px}
+.rb-bridge-preview .rb-refresh{justify-self:start;display:flex;align-items:center;gap:6px;font-size:10px}
 .rb{border:1px solid #cde8e2;background:#f5fcf9;border-radius:12px;padding:17px;display:grid;gap:13px}
 .rb-title,.rb-subtitle{display:flex;align-items:center;gap:10px}
 .rb-title>div{width:39px;height:39px;display:grid;place-items:center;border-radius:10px;background:#e4f6ef;color:#1b9b86}
