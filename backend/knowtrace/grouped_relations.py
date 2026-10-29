@@ -59,34 +59,32 @@ def plan_groups(db_path: Path, course_id: str, done: set[str],
         buckets[key].append(row)
 
     groups: list[list[str]]=[]
+    used_count=0
     for group in buckets.values():
         remaining={node["id"]:node for node in group}
-        while remaining and sum(map(len,groups)) < limit:
+        while remaining and used_count < limit:
             seed=next(iter(remaining.values()))
-            selected=[remaining.pop(seed["id"])]
-            # Greedy best related candidate, with shared evidence outweighing
-            # superficial lexical similarity. Chunk overlap is a heuristic
-            # only; no relation is created without explicit AI + proof.
-            while len(selected)<min(group_size,limit-sum(map(len,groups))) and remaining:
-                def similarity(candidate):
-                    shared=max((len(candidate["chunks"] & n["chunks"]) for n in selected),default=0)
-                    common=max((len(candidate["tokens"] & n["tokens"]) for n in selected),default=0)
-                    union=max((len(candidate["tokens"] | n["tokens"]) for n in selected),default=1)
-                    return (shared>0, shared, common/union)
-                next_id=max(remaining,key=lambda id:similarity(remaining[id]))
-                selected.append(remaining.pop(next_id))
-            ids=[item["id"] for item in selected]
-            if len(ids)==1:
-                # A chapter with a singleton cannot produce intra-group links.
-                # Keep it for accounting; caller may later add cross-chapter
-                # candidate retrieval to connect this point.
-                groups.append(ids)
-            else:
-                groups.append(ids)
-            if sum(map(len,groups))>=limit:
-                break
-    # Group boundary respects selected count. Remainders are left untouched
-    # for a future run; never truncate a group in the middle.
+            del remaining[seed["id"]]
+            # Each group chooses its closest siblings from the SAME chapter
+            # (or real source document when unclassified). Ranking once around
+            # the seed costs O(N² / group_size) instead of re-scoring all
+            # remaining candidates at every added element.
+            def score(candidate):
+                shared=len(candidate["chunks"] & seed["chunks"])
+                shared_words=len(candidate["tokens"] & seed["tokens"])
+                union=len(candidate["tokens"] | seed["tokens"]) or 1
+                return (shared>0,shared,shared_words/union)
+            capacity=min(group_size-1,limit-used_count-1)
+            nearest=sorted(remaining,key=lambda id:score(remaining[id]),reverse=True)[:capacity]
+            ids=[seed["id"],*nearest]
+            for id in nearest:
+                del remaining[id]
+            # Singleton groups are checkpointed without an AI request.
+            # A later cross-chapter bridge pass may join them.
+            groups.append(ids)
+            used_count+=len(ids)
+        if used_count>=limit:
+            break
     return groups
 
 
