@@ -74,4 +74,5 @@ jobs:
 
       - name: Summarize successful tests
         if: success()
-        run: echo '### Backend: Python and pytest passed' >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo '### Backend: Python and pytest passed' >> "$GITHUB_STEP_SUMMARY"
