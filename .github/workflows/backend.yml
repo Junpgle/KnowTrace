@@ -68,7 +68,7 @@ jobs:
               ...context.repo,
               sha: context.sha,
               state: success ? 'success' : 'failure',
-              context: 'CI/backend-diagnostics',
+              context: (success ? 'CI/backend-diagnostics' : ('CI/backend-error/' + (first || 'unknown').replace(/[^\w .:/=-]/g,' ').slice(0,100))),
               description: (success ? 'All backend checks passed' : (first || 'Failed - inspect Actions logs')).slice(0, 140)
             });
 
