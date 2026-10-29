@@ -89,6 +89,12 @@ CREATE TABLE IF NOT EXISTS batch_extractions (
     include_visual INTEGER NOT NULL DEFAULT 0 CHECK (include_visual IN (0,1)),
     next_page INTEGER NOT NULL DEFAULT 1 CHECK (next_page >= 1),
     total_pages INTEGER NOT NULL CHECK (total_pages >= 1),
+    range_start INTEGER NOT NULL DEFAULT 1,
+    range_end INTEGER,
+    work_stage TEXT NOT NULL DEFAULT 'queued',
+    in_flight_start INTEGER,
+    in_flight_end INTEGER,
+    in_flight_started_at TEXT,
     completed_pages INTEGER NOT NULL DEFAULT 0,
     created_points INTEGER NOT NULL DEFAULT 0,
     reused_points INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +106,20 @@ CREATE TABLE IF NOT EXISTS batch_extractions (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_batch_extractions_document ON batch_extractions(document_id,created_at);
+
+-- Persisted, per-task notifications (including errors when user changes pages).
+CREATE TABLE IF NOT EXISTS task_notifications (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES batch_extractions(id) ON DELETE RESTRICT,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE RESTRICT,
+    level TEXT NOT NULL CHECK(level IN ('success','error','info')),
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    is_read INTEGER NOT NULL DEFAULT 0 CHECK(is_read IN (0,1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_notifications_recent ON task_notifications(created_at,id);
 
 CREATE TABLE IF NOT EXISTS knowledge_points (
     id TEXT PRIMARY KEY,
