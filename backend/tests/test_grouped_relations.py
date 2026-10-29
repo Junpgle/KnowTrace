@@ -173,3 +173,16 @@ def test_unclassified_nodes_group_by_real_document_not_invented_chapter(tmp_path
         groups=plan_groups(db,cid,set(),4,3)
         assert len(groups)==2
         assert all(len(g)==2 for g in groups)
+
+
+def test_1308_points_are_batched_into_about_110_model_requests(tmp_path):
+    db=tmp_path/"large_groups.sqlite3"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"upload")) as http:
+        cid=create_data(http,db,654)
+        groups=plan_groups(db,cid,set(),1308,12)
+        assert len(groups)==110
+        assert sum(map(len,groups))==1308
+        assert max(map(len,groups))<=12
+        all_ids=[item for group in groups for item in group]
+        assert len(all_ids)==len(set(all_ids))
+        assert all(len({id.split("-")[1] for id in group})==1 for group in groups)
