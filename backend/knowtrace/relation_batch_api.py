@@ -28,6 +28,7 @@ class StartRelations(BaseModel):
 
 class ApproveRelations(BaseModel):
     confirmed: bool
+    include_visual_sources: bool = False
     types: list[Literal["prerequisite_required","prerequisite_recommended",
                         "related","uses","compares"]] = Field(min_length=1,max_length=5)
 
@@ -252,10 +253,12 @@ def register_relation_batch_routes(
                 if not src:
                     counts["skipped"]+=1;continue
                 if src["content_kind"]=="figure_description":
-                    # An AI description is not the same as verified original PDF.
+                    # Allow a deliberate, separate user opt-in for image-based
+                    # model descriptions; never label it as verified original.
                     counts["visual"]+=1
-                    counts["skipped"]+=1
-                    continue
+                    if not body.include_visual_sources:
+                        counts["skipped"]+=1
+                        continue
                 if row["relation_type"]=="prerequisite_required" and creates_required_cycle(
                     db,row["source_kp_id"],row["target_kp_id"]):
                     counts["cycles"]+=1;counts["skipped"]+=1;continue
