@@ -45,6 +45,7 @@ let detailToken = 0
 
 const chapters = computed(() => graph.value?.nodes.filter(n => n.kind === 'chapter') ?? [])
 const allKnowledge = computed(() => graph.value?.nodes.filter(n => n.kind === 'knowledge') ?? [])
+const chapterNames = computed(() => new Map(chapters.value.filter(c => !c.virtual).map(c => [c.chapter_id, c.name])))
 const selectedNode = computed(() => graph.value?.nodes.find(n => n.id === selectedId.value) ?? null)
 const relationship = computed(() => graph.value?.edges.filter(
   e => !e.structural && (e.source === selectedId.value || e.target === selectedId.value),
@@ -233,6 +234,10 @@ watch(() => props.courseId, () => {
         <div><span>已审核关系</span><strong>{{ graph.stats.approved_semantic_edges }} 条</strong></div>
         <div><span>已有 BKT 观测</span><strong>{{ graph.stats.mastery_estimated_points }} 个</strong></div>
       </section>
+      <p v-if="graph.stats.unclassified_points" class="kg-muted">
+        未归类 {{ graph.stats.unclassified_points }} 个；其中 {{ graph.stats.suggested_chapter_points }} 个具有多个已审核关联节点支持的章节建议。
+        关系提取不会自动填写章节，选择知识点后可人工确认建议。
+      </p>
       <p v-if="graph.stats.truncated" class="kg-error">
         本次仅加载 {{ graph.stats.shown_knowledge_points }} / {{ graph.stats.total_knowledge_points }} 个知识点；
         后续将增加分页和分章节按需加载，不应把未加载知识点视为不存在。
@@ -322,6 +327,13 @@ watch(() => props.courseId, () => {
               </div>
               <p class="kg-muted">未测评不代表掌握度为 0%。</p>
               <h3><BookOpen :size="17" /> 调整章节归属</h3>
+              <div v-if="!selectedNode.chapter_id && selectedNode.suggested_chapter_id" class="kg-tip">
+                建议归入「{{ chapterNames.get(selectedNode.suggested_chapter_id) }}」：
+                {{ selectedNode.suggestion_support }} / {{ selectedNode.suggestion_total }} 个已审核关联的已归类知识点支持。
+                <button type="button" class="button button-outline button-small"
+                  @click="chapterChoice = selectedNode.suggested_chapter_id!">采纳建议（需保存）</button>
+                <p>建议不等于正式归属；保存后仍需重新审核该知识点。</p>
+              </div>
               <label class="kg-field"><span>选择归属章节（仅调整结构，不自动生成知识依赖）</span>
                 <select v-model="chapterChoice">
                   <option value="">未归类</option>
