@@ -304,6 +304,24 @@ export interface KnowledgeAIReviewBatch {
   created_at: string
   updated_at: string
 }
+export interface TaskNotification {
+  id: string
+  task_id: string
+  course_id: string
+  document_id: string
+  filename: string
+  level: 'success' | 'error' | 'info'
+  title: string
+  message: string
+  is_read: number
+  created_at: string
+}
+export interface TaskCenter {
+  tasks: (BatchExtraction & { filename: string; course_name: string })[]
+  notifications: TaskNotification[]
+  unread_count: number
+  concurrency_limit: number
+}
 export type BatchStatus = 'running' | 'stopping' | 'stopped' | 'interrupted' | 'succeeded' | 'failed'
 export interface BatchExtraction {
   id: string
@@ -314,6 +332,14 @@ export interface BatchExtraction {
   include_visual: number
   next_page: number
   total_pages: number
+  range_start: number
+  range_end: number | null
+  work_stage: 'queued' | 'extracting' | 'idle'
+  in_flight_start: number | null
+  in_flight_end: number | null
+  in_flight_started_at: string | null
+  page_count: number
+  mode: 'all' | 'range'
   completed_pages: number
   created_points: number
   reused_points: number
@@ -506,10 +532,14 @@ export const api = {
   testAIConnection: (provider:'mimo'|'ollama') =>
     request<{provider:string;ok:boolean;message:string}>('/api/settings/ai/test?provider='+provider,
       {method:'POST'}),
+  taskCenter: () => request<TaskCenter>('/api/task-center'),
+  markTaskNotificationsRead: () =>
+    request<{ok:boolean}>('/api/task-center/notifications/read', {method:'POST'}),
   batchExtractions: (docId: string) =>
     request<BatchExtraction[]>('/api/documents/'+encodeURIComponent(docId)+'/batch-extractions'),
   startBatchExtraction: (docId: string, options: {
-    provider: AIProviderId; pages_per_batch: number; include_visual: boolean
+    provider: AIProviderId; pages_per_batch: number; include_visual: boolean;
+    page_start?: number; page_end?: number
   }) => request<BatchExtraction>('/api/documents/'+encodeURIComponent(docId)+'/batch-extractions',
       {method:'POST',body:JSON.stringify(options)}),
   batchExtraction: (id: string) =>
