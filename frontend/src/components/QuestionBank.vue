@@ -9,7 +9,7 @@ import {
   api, sourcePreviewUrl,
   type GenerationResult, type KnowledgePoint, type KnowledgePointDetail,
   type QuestionRevision, type QuestionSummary, type QuestionVersion,
-  type SourceEvidence,
+  type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
 const props = defineProps<{ courseId: string }>()
@@ -46,6 +46,13 @@ const questionCount = ref(1)
 const useSingle = ref(true)
 const useBoolean = ref(false)
 const generated = ref<GenerationResult | null>(null)
+const aiStatus = ref<AIProviderStatus | null>(null)
+const selectedProvider = ref<AIProviderId>('default')
+const selectedModel = computed(() => {
+  const id = selectedProvider.value === 'default' ? aiStatus.value?.default : selectedProvider.value
+  return aiStatus.value?.providers.find(item => item.id === id)
+})
+void api.aiProviders().then(result => { aiStatus.value = result }).catch(() => { /* model listing optional */ })
 let loadToken = 0
 let kpToken = 0
 let questionToken = 0
@@ -208,7 +215,7 @@ async function generate() {
   const knowledgeId = kpDetail.value.id
   try {
     const result = await api.generateQuestions(knowledgeId, {
-      count: questionCount.value, question_types: types,
+      count: questionCount.value, question_types: types, provider: selectedProvider.value,
     })
     generated.value = result
     if (result.created) {
@@ -317,6 +324,12 @@ function previewAvailable(source: SourceEvidence): boolean {
 
     <div v-if="banner" class="qb-alert qb-error" role="alert"><AlertCircle :size="18" /> {{ banner }}</div>
     <div v-if="success" class="qb-alert qb-success" role="status"><CheckCircle2 :size="18" /> {{ success }}</div>
+    <div v-if="generated?.provider" class="qb-alert qb-success" role="status">
+      <Sparkles :size="18" />
+      <span>本次出题：{{ generated.model || generated.provider }}。
+        <template v-if="generated.provider === 'mimo'">按需工具调用 {{ generated.tool_calls ?? 0 }} 次，读取正文片段 {{ generated.retrieved_chunks ?? 0 }} 个，消耗约 {{ generated.usage?.total_tokens ?? '未知' }} Token。</template>
+      </span>
+    </div>
     <div v-if="generated?.warnings.length" class="qb-alert qb-warning" role="status">
       <AlertCircle :size="18" />
       <div><strong>有 {{ generated.warnings.length }} 条模型候选未通过校验</strong>
@@ -389,10 +402,17 @@ function previewAvailable(source: SourceEvidence): boolean {
           <div class="qb-source-title"><Sparkles :size="18" /><strong>基于此知识点生成题目</strong></div>
           <p class="qb-hint">使用本地 Qwen 生成题目，生成结果均为待审核。图示描述可能包含识别误差，请核对原图。</p>
           <div class="qb-generation-form">
+            <label>出题模型<select v-model="selectedProvider" :disabled="busy">
+              <option value="default">默认模型（{{ aiStatus?.default === 'mimo' ? 'MiMo' : 'Ollama' }}）</option>
+              <option value="ollama" :disabled="aiStatus ? !aiStatus.providers.find(p => p.id === 'ollama')?.available : false">本地 Ollama</option>
+              <option value="mimo" :disabled="aiStatus ? !aiStatus.providers.find(p => p.id === 'mimo')?.available : false">小米 MiMo · Function Calling</option>
+            </select></label>
             <label>数量<select v-model.number="questionCount" :disabled="busy"><option :value="1">1 道</option><option :value="2">2 道</option><option :value="3">3 道</option><option :value="4">4 道</option></select></label>
             <fieldset :disabled="busy"><legend>题型</legend><label><input v-model="useSingle" type="checkbox" /> 单选题</label><label><input v-model="useBoolean" type="checkbox" /> 判断题</label></fieldset>
           </div>
-          <button class="button button-primary qb-generate-button" :disabled="!canGenerate || busy || editingKnowledge" @click="generate">
+          <p class="qb-hint" v-if="selectedModel?.id === 'mimo'">MiMo {{ selectedModel.model }}：按需调用课件检索函数；不会预先上传整份课件。API Key 仅配置在后端。</p>
+          <p class="qb-hint" v-else>本地 {{ selectedModel?.model || 'Ollama' }}：只使用知识点关联的少量课件片段。</p>
+          <button class="button button-primary qb-generate-button" :disabled="!canGenerate || busy || editingKnowledge || selectedModel?.available === false" @click="generate">
             <LoaderCircle v-if="busy" class="spinning" :size="17" /><Sparkles v-else :size="17" /> {{ busy ? 'AI 正在生成或保存…' : 'AI 生成待审核题目' }}
             <ArrowRight :size="17" />
           </button>
