@@ -17,12 +17,15 @@ from pydantic import BaseModel, Field
 
 from .db import transaction
 from .relations_api import creates_required_cycle
+from .grouped_relations import plan_groups, generate_group_relations
 
 
 class StartRelations(BaseModel):
     provider: Literal["default","ollama","mimo"] = "default"
     max_focus_points: int = Field(default=30, ge=1, le=2000)
     per_focus: int = Field(default=2, ge=1, le=5)
+    mode: Literal["single","grouped"] = "single"
+    group_size: int = Field(default=12, ge=2, le=16)
     confirm_large_run: bool = False
 
 
@@ -36,6 +39,7 @@ class ApproveRelations(BaseModel):
 def register_relation_batch_routes(
     app: FastAPI, db_path: Path,
     generate_for_focus: Callable[[str,str,str,int],dict],
+    resolve_provider,
 ):
     lock=threading.RLock()
     workers: dict[str,threading.Thread]={}
@@ -48,6 +52,12 @@ def register_relation_batch_routes(
     def public(row: dict) -> dict:
         result={k:v for k,v in row.items() if k!="focus_ids_json"}
         result["progress"]=round(row["completed"]*100/max(1,row["total"]),1)
+        result["total_points"]=row["total_points"] or row["total"]
+        result["completed_points"]=(
+            row["completed_points"] if row["mode"]=="grouped" else row["completed"]
+        )
+        result["remaining_requests"]=max(0,row["total"]-row["completed"])
+        result["estimated_request_count"]=row["total"]
         return result
 
     def run(batch_id: str):
@@ -68,13 +78,19 @@ def register_relation_batch_routes(
                                       current_focus=NULL,updated_at=CURRENT_TIMESTAMP
                                       WHERE id=?""",(batch_id,))
                         return
-                    focus_id=focus_ids[i]
+                    focus=focus_ids[i]
+                    focus_id=focus[0] if isinstance(focus,list) else focus
                     db.execute("""UPDATE relation_batch_runs
                                   SET current_focus=?,updated_at=CURRENT_TIMESTAMP
                                   WHERE id=?""",(focus_id,batch_id))
                 try:
-                    result=generate_for_focus(job["course_id"],focus_id,
-                                              job["provider"],job["per_focus"])
+                    if job["mode"]=="grouped":
+                        result=generate_group_relations(
+                            db_path,job["course_id"],focus,job["provider"],
+                            job["per_focus"],resolve_provider)
+                    else:
+                        result=generate_for_focus(job["course_id"],focus_id,
+                                                  job["provider"],job["per_focus"])
                     created=int(result.get("created",0))
                     warning_count=len(result.get("warnings",[]))
                     skipped=0
@@ -103,13 +119,16 @@ def register_relation_batch_routes(
                     if current["next_index"]!=i:return
                     final=("stopped" if current["status"]=="stopping"
                            else "succeeded" if i+1>=len(focus_ids) else "running")
+                    completed_points = (current["completed_points"] or 0) + (
+                        len(focus) if isinstance(focus,list) else 1)
                     db.execute("""UPDATE relation_batch_runs
-                                 SET next_index=?,completed=?,skipped=skipped+?,
-                                   created_relations=created_relations+?,
+                                 SET next_index=?,completed=?,completed_points=?,
+                                   skipped=skipped+?,created_relations=created_relations+?,
                                    warning_count=warning_count+?,
                                    status=?,last_error=NULL,current_focus=NULL,
                                    updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                               (i+1,i+1,skipped,created,warning_count,final,batch_id))
+                               (i+1,i+1,completed_points,skipped,created,
+                                warning_count,final,batch_id))
                     if final!="running":return
         finally:
             with lock:
@@ -141,7 +160,11 @@ def register_relation_batch_routes(
             done=set()
             for row in db.execute("""SELECT focus_ids_json,next_index
                 FROM relation_batch_runs WHERE course_id=?""",(course_id,)).fetchall():
-                done.update(json.loads(row["focus_ids_json"])[:row["next_index"]])
+                for checkpoint in json.loads(row["focus_ids_json"])[:row["next_index"]]:
+                    if isinstance(checkpoint,list):
+                        done.update(checkpoint)
+                    else:
+                        done.add(checkpoint)
             ids=[]
             for row in db.execute("""SELECT kp.id FROM knowledge_points kp
                 WHERE kp.course_id=? AND kp.review_status='approved'
@@ -156,12 +179,25 @@ def register_relation_batch_routes(
                     ids.append(row["id"])
                 if len(ids)>=payload.max_focus_points:break
             if len(ids)<2:
-                raise HTTPException(409,"Need at least two approved source-linked knowledge points")
+                raise HTTPException(409,"Need at least two unprocessed approved source-linked knowledge points")
+            if payload.mode=="grouped":
+                groups=plan_groups(db_path,course_id,done,payload.max_focus_points,payload.group_size)
+                # The planner returns real chapter/source clusters, never
+                # Cartesian pairs. Count all selected nodes for progress.
+                plan=groups
+                point_count=sum(map(len,groups))
+            else:
+                plan=ids
+                point_count=len(ids)
+            if not plan:
+                raise HTTPException(409,"No remaining knowledge points for this batch")
             id=str(uuid4())
             db.execute("""INSERT INTO relation_batch_runs
-                (id,course_id,provider,focus_ids_json,per_focus,total,status)
-                VALUES(?,?,?,?,?,?,'running')""",
-                (id,course_id,payload.provider,json.dumps(ids),payload.per_focus,len(ids)))
+                (id,course_id,provider,focus_ids_json,per_focus,total,
+                 mode,group_size,total_points,status)
+                VALUES(?,?,?,?,?,?,?,?,?,'running')""",
+                (id,course_id,payload.provider,json.dumps(plan),payload.per_focus,len(plan),
+                 payload.mode,payload.group_size if payload.mode=="grouped" else 1,point_count))
             result=public(get(db,id))
         spawn(id)
         return result
