@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertCircle, ArrowRight, CheckCircle2, CirclePause, FileStack,
-  LoaderCircle, Play, RefreshCw, RotateCcw, ShieldAlert } from '@lucide/vue'
+  LoaderCircle, Play, RefreshCw, RotateCcw, ShieldAlert, Clock3 } from '@lucide/vue'
 import { api, type AIProviderId, type BatchExtraction, type CourseDocument } from '../api'
 
 const props=defineProps<{document:CourseDocument}>()
@@ -23,8 +23,8 @@ let requestId=0
 const isPdf=computed(()=>props.document.original_filename.toLowerCase().endsWith('.pdf'))
 const statusText=(status:string)=>({
   running:'正在处理',stopping:'等待本批结束后停止',stopped:'已停止，可继续',
-  interrupted:'服务重启中断，可继续',succeeded:'整份资料已处理完毕',
-  failed:'处理失败',
+  interrupted:'服务重启中断，可继续',succeeded:'资料处理完毕',
+  failed:'失败，可从当前页重试',
 } as Record<string,string>)[status]||status
 function err(e:unknown){problem.value=e instanceof Error?e.message:'操作失败'}
 async function load(){
@@ -110,8 +110,15 @@ watch(batchSize,()=>{if(visual.value&&batchSize.value>2)visual.value=false})
     </label>
     <div v-if="job" class="batch-progress">
       <div class="batch-line"><strong>{{statusText(job.status)}}</strong>
-        <span>{{ job.completed_pages }}/{{ job.total_pages }} 页 · {{ job.progress }}%</span></div>
+        <span>{{ job.completed_pages }}/{{ job.page_count }} 页 · {{ job.progress }}%</span></div>
       <div class="batch-track"><span :style="{width:job.progress+'%'}"></span></div>
+      <p v-if="active" class="batch-hint">
+        <LoaderCircle v-if="job.work_stage==='extracting'" class="spinning" :size="15" />
+        <Clock3 v-else :size="15" />
+        {{job.work_stage==='extracting'
+          ? '正在识别第 '+job.in_flight_start+'–'+job.in_flight_end+' 页（模型尚未返回本批结果）'
+          : '任务已排队，等待 AI 并发处理位置'}}
+      </p>
       <div class="batch-metrics"><span>新增知识点 <b>{{ job.created_points }}</b></span>
         <span>复用 <b>{{ job.reused_points }}</b></span>
         <span>跳过空白/图片页 <b>{{ job.skipped_pages }}</b></span></div>
@@ -121,8 +128,8 @@ watch(batchSize,()=>{if(visual.value&&batchSize.value>2)visual.value=false})
       <div class="batch-buttons">
         <button v-if="job.status==='running'" class="button button-outline" :disabled="busy" @click="stop">
           <CirclePause :size="17"/> 停止后续处理</button>
-        <button v-if="job.status==='stopped'||job.status==='interrupted'" class="button button-primary"
-          :disabled="busy" @click="resume"><RotateCcw :size="17"/> 从第 {{job.next_page}} 页继续</button>
+        <button v-if="job.status==='stopped'||job.status==='interrupted'||job.status==='failed'" class="button button-primary"
+          :disabled="busy" @click="resume"><RotateCcw :size="17"/> 从第 {{job.next_page}} 页继续 / 重试</button>
         <button v-if="job.status==='succeeded'" class="button button-outline" @click="emit('openReview')">
           <CheckCircle2 :size="16"/> 审核提取结果 <ArrowRight :size="16"/></button>
       </div>
