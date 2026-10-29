@@ -27,6 +27,10 @@ const includePending = ref(true)
 const showRelations = ref(true)
 const display = ref<'3d' | 'list'>('3d')
 const showStudio = ref(false)
+const newChapter = ref('')
+const chapterChoice = ref('')
+const chapterBusy = ref(false)
+const chapterMessage = ref('')
 const canvas = ref<InstanceType<typeof Graph3DCanvas> | null>(null)
 let requestToken = 0
 let detailToken = 0
@@ -150,6 +154,36 @@ async function select(id: string) {
   } catch { /* still show point metadata and actions */ }
   finally { if (token === detailToken) detailLoading.value = false }
 }
+async function createNewChapter() {
+  const title = newChapter.value.trim()
+  if (!title || chapterBusy.value) return
+  chapterBusy.value = true
+  chapterMessage.value = ''
+  try {
+    await api.createChapter(props.courseId, { title, ordinal: chapters.value.length + 1 })
+    newChapter.value = ''
+    await refresh()
+    chapterMessage.value = '章节已创建。可选择知识点并调整归属。'
+  } catch (e) { chapterMessage.value = e instanceof Error ? e.message : '创建章节失败' }
+  finally { chapterBusy.value = false }
+}
+async function moveToChapter() {
+  const point = selectedNode.value
+  if (!point || point.kind !== 'knowledge' || chapterBusy.value) return
+  const id = point.id
+  chapterBusy.value = true
+  chapterMessage.value = ''
+  try {
+    await api.assignKnowledgeChapter(id, chapterChoice.value || null)
+    await refresh()
+    await select(id)
+    chapterMessage.value = '章节归属已更新。根据现有审核规则，知识点需在“题库管理”中重新审核。'
+  } catch (e) { chapterMessage.value = e instanceof Error ? e.message : '归属调整失败' }
+  finally { chapterBusy.value = false }
+}
+watch(selectedNode, point => {
+  if (point?.kind === 'knowledge') chapterChoice.value = point.chapter_id || ''
+})
 async function resetView() {
   selectedId.value = null
   selectedChapter.value = 'all'
@@ -209,6 +243,12 @@ watch(() => props.courseId, () => {
               <option v-for="chapter in chapters" :key="chapter.id" :value="chapter.id">{{ chapter.name }}</option>
             </select>
           </label>
+          <h2 class="kg-subtitle"><BookOpen :size="17" /> 章节整理</h2>
+          <label class="kg-field"><span>新增真实课程章节</span>
+            <input v-model="newChapter" maxlength="160" placeholder="例如：第2章 数据通信" />
+          </label>
+          <button type="button" class="button button-outline button-small" :disabled="chapterBusy || !newChapter.trim()" @click="createNewChapter">创建章节</button>
+          <p v-if="chapterMessage" class="kg-muted" role="status">{{ chapterMessage }}</p>
           <h2 class="kg-subtitle"><Activity :size="17" /> 学习状态</h2>
           <div class="kg-filters">
             <button type="button" :class="{active:filter==='all'}" @click="filter='all'">全部</button>
@@ -275,6 +315,17 @@ watch(() => props.courseId, () => {
                 <div><span>证据来源</span><strong>{{ selectedNode.source_count }} 条</strong></div>
               </div>
               <p class="kg-muted">未测评不代表掌握度为 0%。</p>
+              <h3><BookOpen :size="17" /> 调整章节归属</h3>
+              <label class="kg-field"><span>选择归属章节（仅调整结构，不自动生成知识依赖）</span>
+                <select v-model="chapterChoice">
+                  <option value="">未归类</option>
+                  <option v-for="chapter in chapters.filter(x => !x.virtual)" :key="chapter.id" :value="chapter.chapter_id">{{ chapter.name }}</option>
+                </select>
+              </label>
+              <button type="button" class="button button-outline button-small"
+                :disabled="chapterBusy || chapterChoice === (selectedNode.chapter_id || '')"
+                @click="moveToChapter">保存章节归属</button>
+              <p class="kg-muted">调整章节后知识点重新进入待审核，不会自动保留原审核结果。</p>
               <h3><ShieldCheck :size="17" /> 已审核的知识关系</h3>
               <p v-if="!related.length" class="kg-muted">暂无已审核的前置或相关关系。系统不会凭空间邻近推测它们。</p>
               <button v-for="item in related" :key="item.edge.id" class="kg-related" @click="select(item.id)">
