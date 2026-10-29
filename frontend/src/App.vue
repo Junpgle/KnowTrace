@@ -24,6 +24,7 @@ const newCourseName = ref('')
 const newCourseDescription = ref('')
 const creatingCourse = ref(false)
 const bankEntryTab = ref<'knowledge' | 'questions' | 'external'>('questions')
+const bankDocumentId = ref('')
 const loading = ref(true)
 const refreshing = ref(false)
 const starting = ref(false)
@@ -113,6 +114,10 @@ function navigate(destination: View) {
   if (destination === 'practice' && quiz.value?.status === 'active') firstUnanswered()
 }
 
+function openDocumentExternal(documentId: string) {
+  bankDocumentId.value = documentId
+  openBankTab('external')
+}
 function openBankTab(tab: 'knowledge' | 'questions' | 'external') {
   navigate('bank')
   bankEntryTab.value = tab
@@ -485,9 +490,10 @@ onMounted(() => { void initialize() })
             </template>
           </div>
 
-          <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" :initial-tab="bankEntryTab" @updated="refresh" />
+          <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" :initial-tab="bankEntryTab"
+            :initial-document-id="bankDocumentId" @updated="refresh" />
           <DocumentLibrary v-else-if="view === 'library'" :course-id="courseId" :course-name="currentCourse?.title || '课程'"
-            @updated="refresh" @open-review="openBankTab('knowledge')" @open-external="openBankTab('external')" />
+            @updated="refresh" @open-review="openBankTab('knowledge')" @open-external="openDocumentExternal" />
           <KnowledgeGalaxy v-else-if="view === 'galaxy'" :course-id="courseId"
             :course-name="currentCourse?.title || '课程'"
             @open-bank="navigate('bank')" @open-practice="navigate('practice')" />
