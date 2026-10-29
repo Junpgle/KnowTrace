@@ -50,7 +50,7 @@ const readyToExtract = computed(() => Boolean(selected.value?.status === 'ready'
   && Number.isInteger(rangeStart.value) && Number.isInteger(rangeEnd.value)
   && rangeStart.value > 0 && rangeEnd.value >= rangeStart.value
   && rangeEnd.value - rangeStart.value <= 3 && rangeEnd.value <= (selected.value?.total_pages ?? 0)
-  && (!visual.value || isPdf.value)))
+  && (!visual.value || (isPdf.value && chosenProvider.value === 'ollama'))))
 const visionCount = computed(() => selectedQuality.value?.pages.filter(
   p => p.needs_review && p.page >= rangeStart.value && p.page <= rangeEnd.value).length ?? 0)
 const selectedAI = computed(() => aiProviders.value?.providers.find(p =>
@@ -85,6 +85,7 @@ async function selectDocument(id: string) {
   selectedId.value = id
   const token = ++documentNumber
   selectedQuality.value = null
+  chunkBusy.value = false
   chunks.value = []
   chunkOffset.value = 0
   chunkMore.value = true
@@ -114,7 +115,7 @@ async function loadMoreChunks(id = selectedId.value, token = documentNumber) {
     chunkOffset.value += batch.length
     chunkMore.value = batch.length === 50
   } catch (e) { if (token === documentNumber) setError(e) }
-  finally { chunkBusy.value = false }
+  finally { if (token === documentNumber) chunkBusy.value = false }
 }
 function nextPage(direction: number) {
   if (!selected.value) return
@@ -221,7 +222,7 @@ watch(rangeStart, start => {
   extractResult.value = null
 })
 watch(rangeEnd, () => { extractResult.value = null })
-watch(chosenProvider, () => { extractResult.value = null })
+watch(chosenProvider, () => { extractResult.value = null; if (chosenProvider.value === 'mimo') visual.value = false })
 watch(visual, () => { extractResult.value = null })
 void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing optional */})
 </script>
@@ -277,7 +278,7 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
           <small>{{ item.error || ({queued:'待上传',uploading:'正在上传与解析',uploaded:'已保存',failed:'失败'})[item.status] }}</small>
         </div>
       </div>
-      <p class="library-privacy">文件上传至你运行的 KnowTrace 后端并保存在本地。**仅上传**不会自动发送到 MiMo 或其他云端 AI；只有你主动选择云端模型并执行提取时，相关页面文字才可能发送给该服务。</p>
+      <p class="library-privacy">文件上传至你运行的 KnowTrace 后端并保存在本地。<strong>仅上传</strong>不会自动发送到 MiMo 或其他云端 AI；只有你主动选择云端模型并执行提取时，相关页面文字才可能发送给该服务。</p>
     </section>
 
     <div class="library-grid">
@@ -357,14 +358,14 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
               </label>
             </div>
             <label v-if="isPdf" class="library-visual-toggle">
-              <input v-model="visual" type="checkbox" />
+              <input v-model="visual" type="checkbox" :disabled="chosenProvider !== 'ollama'" />
               <span><strong>对低文字量 PDF 页面启用本地视觉模型</strong>
                 <small>需要配置 Ollama 视觉模型；最多 2 页，提取的图示描述需人工核查。MiMo 文本模型不会自动识图。</small></span>
             </label>
             <div v-if="visual && visionCount>2" class="library-feedback error"><AlertCircle :size="17" />
               所选范围中有 {{ visionCount }} 页低文字量页面；视觉模式每次最多处理 2 页，请缩小范围。</div>
             <p class="library-ai-note">
-              <template v-if="chosenProvider==='mimo'">当前选用 MiMo：仅在点击“开始提取”时提交选定的页面文字，请确认资料允许发送给第三方。</template>
+              <template v-if="chosenProvider==='mimo'">当前选用 MiMo：仅在点击“开始提取”时提交选定的页面文字，请确认资料允许发送给第三方；PDF 视觉提取需切换至本地 Ollama。</template>
               <template v-else>当前使用本地 Ollama。请先确保模型服务运行，并已安装对应文本模型。</template>
               <span v-if="selectedAI"> 检测到模型：{{ selectedAI.model }}。</span>
             </p>
