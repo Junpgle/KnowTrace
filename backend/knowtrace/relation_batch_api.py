@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .db import transaction
@@ -148,6 +148,43 @@ def register_relation_batch_routes(
                                     name="knowtrace-relations-"+id[:8])
             workers[id]=worker
             worker.start()
+
+    @app.get("/api/courses/{course_id}/relation-batches/bridge-preview")
+    def bridge_preview(course_id: str,
+                       limit: int = Query(default=30,ge=2,le=2000),
+                       group_size: int = Query(default=12,ge=2,le=16)):
+        with transaction(db_path) as db:
+            if not db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'",
+                              (course_id,)).fetchone():
+                raise HTTPException(404,"Course not found")
+            counts=db.execute("""SELECT
+               COUNT(DISTINCT p.id) AS eligible,
+               COUNT(DISTINCT p.chapter_id) AS chapter_count,
+               COUNT(DISTINCT CASE WHEN p.chapter_id IS NULL THEN p.id END)
+                   AS unassigned_points,
+               COUNT(DISTINCT d.id) AS source_documents
+               FROM knowledge_points p
+               JOIN knowledge_point_sources s ON s.knowledge_point_id=p.id
+               JOIN document_chunks c ON c.id=s.chunk_id
+               JOIN documents d ON d.id=c.document_id
+               WHERE p.course_id=? AND p.review_status='approved'
+                 AND p.archived_at IS NULL AND d.course_id=p.course_id
+                 AND d.status='ready'""",(course_id,)).fetchone()
+            previous=completed_bridge_pairs(db,course_id)
+        candidates=bridge_groups(db_path,course_id,previous,limit,group_size)
+        return {
+            "eligible":counts["eligible"],
+            "actual_chapters":counts["chapter_count"],
+            "unassigned_points":counts["unassigned_points"],
+            "source_documents":counts["source_documents"],
+            "already_compared_pairs":len(previous),
+            "candidate_groups":len(candidates),
+            "participating_points":sum(map(len,candidates)),
+            "note":("没有足够的跨章节或跨原始文件候选。请先补全知识点的真实章节归属；"
+                    "如果所有未分章知识点来自同一份资料，系统不会虚构章节。"
+                    if not candidates else
+                    "这里只计算有文本或共同来源线索的候选，不代表 AI 会为每组生成关系。"),
+        }
 
     @app.post("/api/courses/{course_id}/relation-batches",status_code=201)
     def start(course_id: str, payload: StartRelations):
