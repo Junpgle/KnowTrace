@@ -16,6 +16,7 @@ const busy=ref(false)
 const error=ref('')
 const info=ref('')
 const accepted=ref(false)
+const cloudConsent=ref(false)
 const selectedCandidates=ref<string[]>([])
 const batch=computed(()=>jobs.value.find(x=>x.id===selectedBatch.value)??jobs.value[0]??null)
 const active=computed(()=>batch.value?.status==='running'||batch.value?.status==='stopping')
@@ -55,12 +56,13 @@ function updateTimer(){
 watch(active,updateTimer)
 watch(()=>props.courseId,()=>{
   ++seq;reviews.value=[];jobs.value=[];selectedBatch.value=''
-  selectedCandidates.value=[];accepted.value=false;info.value='';error.value=''
+  selectedCandidates.value=[];accepted.value=false;cloudConsent.value=false;info.value='';error.value=''
   void load()
 },{immediate:true})
 onBeforeUnmount(()=>{if(poll)clearInterval(poll);++seq})
 async function runOne(){
-  if(!props.selectedId||busy.value)return
+  if(!props.selectedId||busy.value||active.value)return
+  if(provider.value!=='ollama'&&!cloudConsent.value){error.value='请先确认可能使用云端模型并产生 API 费用。';return}
   busy.value=true;error.value='';info.value=''
   try{
     const result=await api.reviewKnowledgeWithAI(props.selectedId,provider.value)
@@ -71,6 +73,7 @@ async function runOne(){
 }
 async function startBatch(){
   if(busy.value)return
+  if(provider.value!=='ollama'&&!cloudConsent.value){error.value='请先确认云端模型的数据分享与调用费用。';return}
   busy.value=true;error.value='';info.value='';accepted.value=false
   try{
     const created=await api.startKnowledgeAIReviewBatch(props.courseId,provider.value,200)
@@ -117,6 +120,7 @@ async function acceptSelected(){
   }catch(e){error.value=e instanceof Error?e.message:'批量采纳失败'}
   finally{busy.value=false}
 }
+watch(provider,()=>{cloudConsent.value=false})
 function pointName(kid:string){return props.points.find(p=>p.id===kid)?.canonical_name??kid}
 </script>
 <template>
@@ -138,13 +142,17 @@ function pointName(kid:string){return props.points.find(p=>p.id===kid)?.canonica
           <option value="ollama">本地 Ollama</option>
         </select>
       </label>
-      <button type="button" class="button button-outline" :disabled="busy||!selectedId" @click="runOne">
+      <button type="button" class="button button-outline" :disabled="busy||active||!selectedId" @click="runOne">
         <LoaderCircle v-if="busy" class="spinning" :size="15"/><Sparkles v-else :size="15"/>审核当前知识点
       </button>
       <button type="button" class="button button-primary" :disabled="busy||active||pendingCount===0" @click="startBatch">
         <Play :size="16"/>批量 AI 预审（{{pendingCount}} 待审核）
       </button>
     </div>
+    <label v-if="provider!=='ollama'" class="ai-confirm">
+      <input v-model="cloudConsent" type="checkbox"/>
+      我确认默认模型可能是 MiMo：云端审核会发送知识点及最多两个课件片段，可能产生 API 费用。
+    </label>
     <div v-if="batch" class="ai-progress">
       <div class="ai-progress-top"><strong>{{batchLabel(batch.status)}}</strong>
         <span>{{batch.completed}} / {{batch.total}} 项 · {{batch.progress}}%</span></div>
