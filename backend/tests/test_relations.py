@@ -156,6 +156,9 @@ def test_cycle_is_rejected_and_manual_requires_real_quote(client):
     assert accepted.status_code==200,accepted.text
     with connect(path) as db:
         assert db.execute("SELECT COUNT(*) FROM knowledge_relation_events").fetchone()[0]==3
+        assert db.execute("""SELECT COUNT(*) FROM knowledge_relations r
+                             JOIN processing_jobs j ON j.id=r.created_job_id
+                             WHERE j.job_type='relation_extract'""").fetchone()[0]==4
 
 
 def test_local_model_generation_and_path_fallback(client):
