@@ -78,6 +78,29 @@ CREATE TABLE IF NOT EXISTS processing_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_course ON processing_jobs(course_id, job_type, created_at);
 
+-- Whole-document knowledge extraction (separate from per-request processing_jobs).
+-- A checkpoint advances only after a complete 1–4-page chunk commits.
+CREATE TABLE IF NOT EXISTS batch_extractions (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE RESTRICT,
+    provider TEXT NOT NULL CHECK (provider IN ('default','ollama','mimo')),
+    pages_per_batch INTEGER NOT NULL CHECK (pages_per_batch BETWEEN 1 AND 4),
+    include_visual INTEGER NOT NULL DEFAULT 0 CHECK (include_visual IN (0,1)),
+    next_page INTEGER NOT NULL DEFAULT 1 CHECK (next_page >= 1),
+    total_pages INTEGER NOT NULL CHECK (total_pages >= 1),
+    completed_pages INTEGER NOT NULL DEFAULT 0,
+    created_points INTEGER NOT NULL DEFAULT 0,
+    reused_points INTEGER NOT NULL DEFAULT 0,
+    skipped_pages INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'running'
+       CHECK (status IN ('running','stopping','stopped','succeeded','failed','interrupted')),
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_batch_extractions_document ON batch_extractions(document_id,created_at);
+
 CREATE TABLE IF NOT EXISTS knowledge_points (
     id TEXT PRIMARY KEY,
     course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
