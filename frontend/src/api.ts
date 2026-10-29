@@ -156,6 +156,41 @@ export interface KnowledgeGraph {
   notice: string
 }
 
+export interface PDFSourceChapterDocument {
+  document_id: string
+  filename: string
+  suggested_title: string
+  matching_chapter_id: string | null
+  linked_unclassified: number
+  single_source_points: number
+}
+
+export interface PDFSourceChapterPreview {
+  unclassified_points: number
+  pdf_documents: number
+  documents: PDFSourceChapterDocument[]
+  no_source_points: number
+  multi_document_points: number
+  points_with_other_documents: number
+  single_pdf_points: number
+  note: string
+}
+
+export interface PDFSourceChapterMapping {
+  document_id: string
+  chapter_id?: string
+  chapter_title?: string
+}
+
+export interface PDFSourceChapterResult {
+  assigned_points: number
+  created_chapters: { id: string; title: string }[]
+  skipped_ambiguous: number
+  skipped_unmapped_or_no_source: number
+  remaining_unclassified: number
+  preserved_review_status: boolean
+}
+
 export interface Course {
   id: string
   title: string
@@ -691,6 +726,14 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ decision }) }),
   studyPath: (courseId: string, limit = 12) =>
     request<StudyPath>('/api/courses/' + encodeURIComponent(courseId) + '/study-path?limit=' + limit),
+  previewSourceChapters: (courseId: string) =>
+    request<PDFSourceChapterPreview>('/api/courses/' + encodeURIComponent(courseId)
+      + '/source-chapters/preview'),
+  applySourceChapters: (courseId: string, mappings: PDFSourceChapterMapping[]) =>
+    request<PDFSourceChapterResult>('/api/courses/' + encodeURIComponent(courseId)
+      + '/source-chapters/apply', {
+        method: 'POST', body: JSON.stringify({ confirmed: true, mappings }),
+      }),
   knowledgeGraph: (courseId: string, options: { limit?: number, include_pending?: boolean } = {}) => {
     const params = new URLSearchParams()
     params.set('limit', String(options.limit ?? 300))
