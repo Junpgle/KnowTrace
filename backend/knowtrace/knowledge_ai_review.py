@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 from uuid import uuid4
@@ -18,7 +19,6 @@ from pydantic import BaseModel, Field
 
 from .ai import AIConfigError, AIServiceError, compact, OllamaProvider
 from .db import transaction
-from .manual_transfer import parse_reply
 from .mimo import MimoProvider
 
 
@@ -76,8 +76,15 @@ def material(db, kp_id: str) -> dict:
 
 
 def response_to_verdict(raw: str) -> dict:
+    if not isinstance(raw,str):
+        raise AIServiceError("AI review returned no JSON text")
+    snippet = raw.strip()
+    fence_pattern = r"^```(?:json)?\s*(.*?)\s*```$"
+    fenced = re.fullmatch(fence_pattern, snippet, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        snippet = fenced.group(1)
     try:
-        answer = json.loads(parse_reply(raw))
+        answer = json.loads(snippet)
     except (ValueError,TypeError) as exc:
         raise AIServiceError("AI review did not return valid JSON") from exc
     if not isinstance(answer,dict):
