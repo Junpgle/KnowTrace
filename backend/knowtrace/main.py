@@ -580,8 +580,10 @@ def create_app(*, db_path: str | Path | None = None,
                 raise HTTPException(404, "Knowledge point not found")
             if kp["review_status"] != "approved":
                 raise HTTPException(409, "Approve the knowledge point before generating questions")
-            source_rows = _rows(db.execute("""SELECT c.id,c.page_start,c.content_kind,c.content_text,
-                        d.original_filename
+            source_cols = ("c.id,c.page_start,c.content_kind,d.original_filename"
+                           if isinstance(provider, MimoProvider)
+                           else "c.id,c.page_start,c.content_kind,c.content_text,d.original_filename")
+            source_rows = _rows(db.execute("""SELECT """ + source_cols + """
                         FROM knowledge_point_sources s
                         JOIN document_chunks c ON c.id=s.chunk_id
                         JOIN documents d ON d.id=c.document_id
