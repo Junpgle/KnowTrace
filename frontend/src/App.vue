@@ -5,17 +5,18 @@ import {
   CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList, ClipboardCheck,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
-  TrendingUp, X, XCircle, Orbit, FolderOpen, Plus, Upload,
+  TrendingUp, X, XCircle, Orbit, FolderOpen, Plus, Upload, Settings,
 } from '@lucide/vue'
 import QuestionBank from './components/QuestionBank.vue'
 // Load the WebGL and Three.js bundle only when the user opens the graph.
 const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
 const DocumentLibrary = defineAsyncComponent(() => import('./components/DocumentLibrary.vue'))
+const AISettings = defineAsyncComponent(() => import('./components/AISettings.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession, type KnowledgePoint } from './api'
 
-type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy' | 'library'
+type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy' | 'library' | 'settings'
 type Choice = string | boolean | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
@@ -73,7 +74,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理', galaxy: '知识星系', library: '资料库' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理', galaxy: '知识星系', library: '资料库', settings: '模型设置' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -338,6 +339,7 @@ onMounted(() => { void initialize() })
         <ChevronDown :size="16" class="course-chevron" />
       </div>
       <button type="button" class="sidebar-add-course" @click="showCourseForm = true"><Plus :size="15" /> 新建课程</button>
+      <button type="button" class="sidebar-add-course" @click="navigate('settings')"><Settings :size="15"/> AI 模型设置</button>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-motto"><Sparkles :size="18" /><p>不只是答对题目，<br />更要看见每一次进步。</p></div>
       <div class="sidebar-footer"><div class="avatar">学</div><div><strong>个人学习空间</strong><span>本地 · 单用户模式</span></div><span class="online-mini"></span></div>
@@ -492,6 +494,7 @@ onMounted(() => { void initialize() })
 
           <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" :initial-tab="bankEntryTab"
             :initial-document-id="bankDocumentId" @updated="refresh" />
+          <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
           <DocumentLibrary v-else-if="view === 'library'" :course-id="courseId" :course-name="currentCourse?.title || '课程'"
             @updated="refresh" @open-review="openBankTab('knowledge')" @open-external="openDocumentExternal" />
           <KnowledgeGalaxy v-else-if="view === 'galaxy'" :course-id="courseId"
@@ -522,7 +525,7 @@ onMounted(() => { void initialize() })
           </div>
         </template>
       </main>
-      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v1.0.0</span></footer>
+      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v1.1.0</span></footer>
     </div>
   </div>
 </template>
