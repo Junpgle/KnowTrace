@@ -27,6 +27,16 @@ export interface RelationBatch {
   created_at: string
   updated_at: string
 }
+export interface BridgePreview {
+  eligible: number
+  actual_chapters: number
+  unassigned_points: number
+  source_documents: number
+  already_compared_pairs: number
+  candidate_groups: number
+  participating_points: number
+  note: string
+}
 export interface RelationBulkPreview {
   types: { relation_type: RelationType; total: number; missing_evidence: number; visual: number }[]
   total: number
@@ -610,6 +620,9 @@ export const api = {
   assignKnowledgeChapter: (id: string, chapterId: string | null) =>
     request<KnowledgePointDetail>('/api/knowledge-points/' + encodeURIComponent(id),
       { method: 'PATCH', body: JSON.stringify({ chapter_id: chapterId }) }),
+  bridgePreview: (courseId: string, limit = 30, groupSize = 12) =>
+    request<BridgePreview>('/api/courses/'+encodeURIComponent(courseId)
+      +'/relation-batches/bridge-preview?limit='+limit+'&group_size='+groupSize),
   relationBatches: (courseId: string) =>
     request<RelationBatch[]>('/api/courses/'+encodeURIComponent(courseId)+'/relation-batches'),
   startRelationBatch: (courseId: string, options: {
