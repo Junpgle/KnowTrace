@@ -237,7 +237,7 @@ function rebuild() {
 // Automatic selection should move the camera to the chosen node, NOT dive
 // into its surface. Keep the user's current zoom within a comfortable range,
 // so switching between nearby knowledge points doesn't bounce in and out.
-export function selectionDistance(kind: GraphNode['kind'], current: number): number {
+function selectionDistance(kind: GraphNode['kind'], current: number): number {
   const [minimum, maximum] = kind === 'course' ? [105, 145]
     : kind === 'chapter' ? [78, 112] : [58, 94]
   return THREE.MathUtils.clamp(current, minimum, maximum)
