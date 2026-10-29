@@ -121,6 +121,7 @@ def test_invalid_cross_course_fake_quotes_and_pending_endpoints(client):
         candidate(target="foreign"),candidate(target="pending"),
         candidate(chunk="not-a-chunk"),candidate(quote="这是一段纯粹编造且不存在的课件内容证据。"),
         candidate(source="a",target="a"),
+        candidate(relation_type=["related"]),
     ]:
         result=import_relations(http,item)
         assert result.status_code==200,result.text
