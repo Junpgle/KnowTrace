@@ -132,9 +132,12 @@ async function approve(){
       </select></label>
     </div>
     <p class="rb-hint">只分析已审核、有关联课件证据的知识点。每个重点最多比较 11 个候选点，优先共享课件片段与同章节内容。找不到可靠证据时允许不生成连线。</p>
+    <p v-if="approvedCount<2" class="rb-alert error">
+      当前可用的已审核知识点不足 2 个。请先到「题库管理 → 知识点审核 → 直接批量通过」批准有课件来源的知识点。
+    </p>
     <label v-if="focusLimit>30" class="rb-check">
       <input v-model="confirmCost" type="checkbox"/>
-      我确认本轮最多 {{focusLimit}} 次模型调用（MiMo 可能收费），并同意必要的课件内容按选定提供商处理。
+      我确认本轮最多处理 {{focusLimit}} 个知识点；MiMo 每个知识点可能触发多次模型请求及工具调用并产生费用，且会按需读取课件内容。
     </label>
     <button type="button" class="button button-primary" :disabled="active||busy||approvedCount<2||(focusLimit>30&&!confirmCost)" @click="start">
       <LoaderCircle v-if="busy" class="spinning" :size="16"/><Play v-else :size="16"/>
