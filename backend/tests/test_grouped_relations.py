@@ -229,5 +229,5 @@ def test_live_visible_group_stream_while_model_is_still_responding(tmp_path):
         final=http.get(f"/api/relation-batches/{job}/live").json()
         assert final["phase"]=="validated"
         assert final["received_chars"]>info["received_chars"]
-        assert json.loads(final["text"])=={"items":[]}
+        assert final["text"]=='{"items":[]}', repr(final)
         assert http.get("/api/relation-batches/not-a-real-task/live").status_code==404
