@@ -29,6 +29,16 @@ const busy = ref(false)
 const confirm = ref<Record<string, boolean>>({})
 const approved = computed(() => props.knowledge.filter(n=>n.kind==='knowledge' && n.review_status==='approved'))
 const pending = computed(() => relations.value.filter(r=>r.review_status==='pending'))
+const showIndividualReview = ref(false)
+const reviewPage = ref(1)
+const reviewPageSize = 8
+const pageCount = computed(() => Math.max(1,Math.ceil(pending.value.length / reviewPageSize)))
+const visiblePending = computed(() => pending.value.slice(
+  (reviewPage.value-1)*reviewPageSize, reviewPage.value*reviewPageSize,
+))
+watch(pending, () => {
+  if (reviewPage.value > pageCount.value) reviewPage.value = pageCount.value
+})
 const reviewed = computed(() => relations.value.filter(r=>r.review_status!=='pending'))
 const canSuggest = computed(() => focus.value && (target.value === '' || target.value !== focus.value) && approved.value.length >= 2)
 const relationNames: Record<string,string> = {
@@ -194,9 +204,15 @@ function percent(value:number|null) {return value===null?'未测评':Math.round(
       </div>
     </div>
     <div v-else-if="mode==='review'" class="rs-pane">
-      <p class="rs-hint">先核对关系方向、解释、课件原页和逐字引文；批准的必要前置关系还会检查有无循环依赖。</p>
+      <div class="rs-review-overview">
+        <p class="rs-hint">当前有 <strong>{{pending.length}}</strong> 条待审核候选关系。推荐使用上方「集中审核已生成关系」按类型批量批准；仅有争议的关系需要展开逐条核对。</p>
+        <button v-if="pending.length" type="button" class="button button-outline button-small"
+          @click="showIndividualReview=!showIndividualReview">
+          {{showIndividualReview ? '收起逐条审核' : '展开逐条审核（每页 8 条）'}}
+        </button>
+      </div>
       <div v-if="!pending.length" class="rs-empty"><CheckCircle2 :size="23" /> 暂无待审核关系。可以前往 AI 提取关系。</div>
-      <article v-for="row in pending" :key="row.id" class="rs-card">
+      <article v-for="row in (showIndividualReview ? visiblePending : [])" :key="row.id" class="rs-card">
         <div class="rs-card-title">
           <span class="rs-type">{{ relationNames[row.relation_type] || row.relation_type }}</span>
           <span class="rs-flow">{{ row.source_name }} <ArrowRight :size="16" /> {{ row.target_name }}</span>
@@ -221,7 +237,12 @@ function percent(value:number|null) {return value===null?'未测评':Math.round(
           </button>
         </div>
       </article>
-      <div v-if="reviewed.length" class="rs-reviewed">
+      <div v-if="showIndividualReview && pageCount>1" class="rs-pagination">
+        <button type="button" :disabled="reviewPage===1" @click="reviewPage--">上一页</button>
+        <span>第 {{reviewPage}} / {{pageCount}} 页 · 共 {{pending.length}} 条</span>
+        <button type="button" :disabled="reviewPage===pageCount" @click="reviewPage++">下一页</button>
+      </div>
+      <div v-if="reviewed.length && showIndividualReview" class="rs-reviewed">
         <strong>已处理关系 · {{ reviewed.length }} 条</strong>
         <div v-for="row in reviewed" :key="row.id">
           <span :class="row.review_status">{{ row.review_status==='approved'?'已通过':'已驳回' }}</span>
@@ -255,6 +276,11 @@ function percent(value:number|null) {return value===null?'未测评':Math.round(
 .rs-tabs button.active{border-color:#1ca995;color:#178e81}
 .rs-tabs b{background:#ffeadb;color:#ad7041;padding:3px 7px;border-radius:13px}
 .rs-pane{display:grid;gap:13px}
+.rs-review-overview{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;background:#f3faf8;border:1px solid #d8ebe7;border-radius:10px}
+.rs-review-overview .rs-hint{flex:1;min-width:230px}
+.rs-pagination{display:flex;justify-content:center;align-items:center;gap:15px;color:#60838d;font-size:11px}
+.rs-pagination button{padding:8px 13px;border:1px solid #dae8e9;border-radius:8px;background:#fff;color:#208b80;cursor:pointer}
+.rs-pagination button:disabled{opacity:.4;cursor:default}
 .rs-hint{font-size:11px;line-height:1.8;color:#839ba7;margin:0}
 .rs-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .rs-form label,.rs-prompt label{display:grid;gap:7px;color:#567783;font-size:11px;font-weight:750}
