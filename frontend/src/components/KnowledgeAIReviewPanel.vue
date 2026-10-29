@@ -104,8 +104,8 @@ async function resumeBatch(){
   finally{busy.value=false}
 }
 function selectAllEligible(){
-  if(selectedCandidates.value.length===suggestions.value.length)selectedCandidates.value=[]
-  else selectedCandidates.value=suggestions.value.map(r=>r.id)
+  if(selectedCandidates.value.length===Math.min(200,suggestions.value.length))selectedCandidates.value=[]
+  else selectedCandidates.value=suggestions.value.slice(0,200).map(r=>r.id)
   accepted.value=false
 }
 async function acceptSelected(){
@@ -174,7 +174,7 @@ function pointName(kid:string){return props.points.find(p=>p.id===kid)?.canonica
     </div>
     <div class="ai-verified">
       <div class="ai-result-head"><strong>可批量采纳的建议（{{suggestions.length}}）</strong>
-        <button type="button" class="ai-link" @click="selectAllEligible">{{selectedCandidates.length===suggestions.length?'取消全选':'全选合格建议'}}</button></div>
+        <button type="button" class="ai-link" @click="selectAllEligible">{{selectedCandidates.length===Math.min(200,suggestions.length)?'取消全选':'全选合格建议'}}</button></div>
       <p class="ai-caption">仅列出 AI 建议通过、信心高、无问题、文字课件逐字引文已校验、且知识点未被修改的结果。图像描述和存疑知识点始终需要人工审核。</p>
       <div v-if="!suggestions.length" class="ai-none">暂无符合条件的建议。运行批量预审后，其他结果可在知识点列表中逐条查看。</div>
       <div v-else class="ai-candidates">
