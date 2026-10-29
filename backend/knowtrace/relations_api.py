@@ -523,4 +523,5 @@ def register_relation_routes(app: FastAPI, db_path: Path, resolve_provider):
                 focus_id=focus_id, count=count, provider=provider,
             ),
         ),
+        resolve_provider,
     )
