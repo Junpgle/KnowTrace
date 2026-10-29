@@ -186,3 +186,48 @@ def test_1308_points_are_batched_into_about_110_model_requests(tmp_path):
         all_ids=[item for group in groups for item in group]
         assert len(all_ids)==len(set(all_ids))
         assert all(len({id.split("-")[1] for id in group})==1 for group in groups)
+
+
+def test_live_visible_group_stream_while_model_is_still_responding(tmp_path):
+    class IncrementalAI(GroupStub):
+        def __init__(self):
+            super().__init__()
+            self.release.clear()
+            self.first_tokens=threading.Event()
+        def generate_relation_group_stream(self,system,context,on_delta):
+            data=json.loads(context)
+            self.calls.append(data)
+            on_delta('{"items":[')
+            self.first_tokens.set()
+            assert self.release.wait(8)
+            reply=json.dumps({"items":[]})
+            on_delta(reply[len('{"items":['):])
+            return reply
+
+    db=tmp_path/"live.sqlite3"
+    provider=IncrementalAI()
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"upload",ai_provider=provider)) as http:
+        cid=create_data(http,db,2)
+        start=http.post(f"/api/courses/{cid}/relation-batches",json={
+            "mode":"grouped","group_size":4,"max_focus_points":4,
+            "provider":"default","per_focus":2})
+        assert start.status_code==201,start.text
+        job=start.json()["id"]
+        assert provider.first_tokens.wait(4)
+        live=http.get(f"/api/relation-batches/{job}/live")
+        assert live.status_code==200,live.text
+        info=live.json()
+        assert info["phase"]=="streaming"
+        assert info["stream_supported"] is True
+        assert info["text"]=='{"items":['
+        assert info["received_chars"]==len('{"items":[')
+        assert info["group_size"]==2
+        assert http.get(f"/api/courses/{cid}/knowledge-relations").json()==[]
+        provider.release.set()
+        done=until(http,cid,{"succeeded"})
+        assert done["completed"]==2
+        final=http.get(f"/api/relation-batches/{job}/live").json()
+        assert final["phase"]=="validated"
+        assert final["received_chars"]>info["received_chars"]
+        assert json.loads(final["text"])=={"items":[]}
+        assert http.get("/api/relation-batches/not-a-real-task/live").status_code==404
