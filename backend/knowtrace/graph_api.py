@@ -80,6 +80,7 @@ def register_graph_routes(app: FastAPI, database: Path) -> None:
                    JOIN knowledge_points dst ON dst.id=r.target_kp_id
                    WHERE src.course_id=? AND dst.course_id=?
                      AND src.archived_at IS NULL AND dst.archived_at IS NULL
+                     AND src.review_status='approved' AND dst.review_status='approved'
                      AND r.review_status='approved'
                    ORDER BY r.created_at,r.id""",
                 (course_id, course_id),
