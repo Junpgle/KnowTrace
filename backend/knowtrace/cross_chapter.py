@@ -111,7 +111,7 @@ def completed_bridge_pairs(db, course_id: str) -> set[frozenset[str]]:
     """Only completed bridge groups are recorded, including zero-edge groups."""
     import json
     groups=db.execute("""SELECT focus_ids_json,next_index FROM relation_batch_runs
-                WHERE course_id=? AND mode='bridge'""",(course_id,)).fetchall()
+                WHERE course_id=? AND bridge_strategy=1""",(course_id,)).fetchall()
     compared=set()
     for row in groups:
         for group in json.loads(row["focus_ids_json"])[:row["next_index"]]:
