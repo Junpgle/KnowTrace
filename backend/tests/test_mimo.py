@@ -57,8 +57,8 @@ def test_mimo_does_not_send_full_document_until_tools_requested(tmp_path):
     with connect(db) as cx:
         cx.execute("INSERT INTO users(id,username) VALUES ('local','local')")
         cx.execute("INSERT INTO courses(id,owner_user_id,title) VALUES ('course1','local','Networks')")
-        cx.execute("""INSERT INTO documents(id,course_id,original_filename,media_type,storage_key,
-                    sha256,total_pages,status) VALUES('doc1','course1','lecture.pdf',
+        cx.execute("""INSERT INTO documents(id,course_id,uploaded_by,original_filename,media_type,storage_key,
+                    sha256,total_pages,status) VALUES('doc1','course1','local','lecture.pdf',
                     'application/pdf','file.pdf','abc',2,'ready')""")
         content = "The source sends a digital bit stream to a modem for transmission."
         cx.execute("""INSERT INTO document_chunks(id,document_id,chunk_index,page_start,page_end,
@@ -109,8 +109,8 @@ def test_fake_mimo_no_retrieval_cannot_fake_source(tmp_path):
     with connect(db) as cx:
         cx.execute("INSERT INTO users(id,username) VALUES ('local','local')")
         cx.execute("INSERT INTO courses(id,owner_user_id,title) VALUES ('course1','local','Networks')")
-        cx.execute("""INSERT INTO documents(id,course_id,original_filename,media_type,storage_key,
-                    sha256,total_pages,status) VALUES('doc1','course1','lecture.pdf',
+        cx.execute("""INSERT INTO documents(id,course_id,uploaded_by,original_filename,media_type,storage_key,
+                    sha256,total_pages,status) VALUES('doc1','course1','local','lecture.pdf',
                     'application/pdf','file.pdf','abc',1,'ready')""")
         cx.execute("""INSERT INTO document_chunks(id,document_id,chunk_index,page_start,page_end,
                     content_kind,content_text,content_sha256)
