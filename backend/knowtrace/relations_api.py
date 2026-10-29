@@ -115,6 +115,8 @@ def catalog(db_path: Path, course_id: str, focus_id: str, target_id: str | None,
         else:
             raw["knowledge_point_ids"] = [kp]
             source_map[cid] = raw
+    if not source_map:
+        raise HTTPException(422, "No linked ready course sources; attach evidence before extracting relations")
     return points, source_map
 
 
