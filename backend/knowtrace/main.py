@@ -26,6 +26,8 @@ from .quiz_api import register_quiz_routes
 from .manual_transfer import register_manual_routes
 from .graph_api import register_graph_routes
 from .relations_api import register_relation_routes
+from .settings_api import providers as configured_providers, public_status, register_settings_routes
+from .batch_api import register_batch_routes
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 LOW_TEXT_THRESHOLD = 80  # heuristic: flag for review, not proof of missing content
@@ -116,43 +118,37 @@ def create_app(*, db_path: str | Path | None = None,
     data_root = Path(os.environ.get("KNOWTRACE_DATA_DIR", "./data")).resolve()
     database = Path(db_path).resolve() if db_path else data_root / "knowtrace.sqlite3"
     storage = Path(storage_dir).resolve() if storage_dir else data_root / "uploads"
+    settings_path = database.with_name('ai_settings.json')
+    recover_batches = lambda: None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         initialize(database)
         storage.mkdir(parents=True, exist_ok=True)
+        recover_batches()
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.9.0", lifespan=lifespan)
-    configured_provider = os.getenv("KNOWTRACE_AI_PROVIDER", "ollama").strip().lower()
-    if configured_provider not in ("ollama", "mimo"):
-        raise AIConfigError("KNOWTRACE_AI_PROVIDER must be ollama or mimo")
-    app.state.ai_provider = ai_provider if ai_provider is not None else (
-        MimoProvider.from_env() if configured_provider == "mimo" else OllamaProvider.from_env())
+    app = FastAPI(title="KnowTrace API", version="1.1.0", lifespan=lifespan)
+    if ai_provider is not None:
+        app.state.ai_provider = ai_provider
 
     def resolve_provider(selected: str):
+        default, local, mimo = configured_providers(settings_path)
         if selected == "default":
-            return app.state.ai_provider
+            if ai_provider is not None:
+                return ai_provider  # preserve explicit test/injected providers
+            selected = default
         if selected == "mimo":
-            return MimoProvider.from_env()
+            return mimo
         if selected == "ollama":
-            return OllamaProvider.from_env()
+            return local
         raise HTTPException(422, "Unsupported AI provider")
 
     @app.get("/api/ai/providers")
     def ai_provider_status():
-        local = OllamaProvider.from_env()
-        mimo = MimoProvider.from_env()
-        return {"default": configured_provider,
-                "providers": [
-                  {"id": "ollama", "label": "本地 Ollama", "model": local.text_model,
-                   "available": bool(local.text_model), "vision_model": local.vision_model,
-                   "function_calling": False},
-                  {"id": "mimo", "label": "小米 MiMo API", "model": mimo.text_model,
-                   "available": bool(mimo.api_key) and not mimo.api_key.startswith(("tp-", "ttp-")), "vision_model": local.vision_model,
-                   "function_calling": True}
-                ],
-                "security": "API keys are configured on the backend only and never returned."}
+        return public_status(settings_path)
+
+    register_settings_routes(app, settings_path)
 
     def ensure_course(db: sqlite3.Connection, course_id: str) -> None:
         if not db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'", (course_id,)).fetchone():
@@ -160,7 +156,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.9.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "1.1.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -769,6 +765,12 @@ def create_app(*, db_path: str | Path | None = None,
             return {"id":version_id,"review_status":payload.decision}
 
     register_quiz_routes(app, database)
+    def extract_batch_pages(document_id: str, start: int, end: int,
+                            visual: bool, provider: str):
+        return extract_document_knowledge(document_id, ExtractKnowledgeRequest(
+            page_start=start, page_end=end, include_visual=visual, provider=provider))
+
+    recover_batches = register_batch_routes(app, database, extract_batch_pages)
     register_manual_routes(app, database)
     register_graph_routes(app, database)
     register_relation_routes(app, database, resolve_provider)
