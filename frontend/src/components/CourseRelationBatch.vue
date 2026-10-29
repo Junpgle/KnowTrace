@@ -12,6 +12,7 @@ const focusLimit=ref(30)
 const perFocus=ref(2)
 const confirmCost=ref(false)
 const confirmApproval=ref(false)
+const allowVisual=ref(false)
 const chosenTypes=ref<RelationType[]>(['related','prerequisite_recommended'])
 const jobs=ref<RelationBatch[]>([])
 const reviewSummary=ref<RelationBulkPreview|null>(null)
@@ -97,7 +98,7 @@ async function approve(){
   if(!confirmApproval.value||!chosenTypes.value.length||busy.value)return
   busy.value=true;error.value=''
   try{
-    const result=await api.approveRelationTypes(props.courseId,chosenTypes.value)
+    const result=await api.approveRelationTypes(props.courseId,chosenTypes.value,allowVisual.value)
     message.value='已批准 '+result.approved+' 条关系，跳过 '+result.skipped+' 条（其中 '+result.cycles+' 条存在必要前置环，'+result.visual+' 条需要核对原图）。'
     confirmApproval.value=false
     await reload()
@@ -155,7 +156,7 @@ async function approve(){
     <div class="rb-review">
       <div class="rb-subtitle"><ShieldCheck :size="18"/><strong>集中审核已生成关系</strong>
         <small>待审核 {{reviewSummary?.total??0}} 条</small></div>
-      <p class="rb-hint">你可以按关系类型批量确认，不需要一条条点。必要前置关系会检查循环；来自 AI 图片描述的证据不允许直接批量通过。</p>
+      <p class="rb-hint">可以按关系类型批量确认，不需要一条条点。必要前置会检查循环；AI 图像描述不是原始文档的人工核验证据，默认跳过。</p>
       <div v-if="reviewSummary?.types.length" class="rb-types">
         <label v-for="row in reviewSummary.types" :key="row.relation_type">
           <input v-model="chosenTypes" type="checkbox" :value="row.relation_type" />
@@ -164,6 +165,10 @@ async function approve(){
         </label>
       </div>
       <p v-else class="rb-hint">还没有待审核关系，请先运行一轮 AI 发现。</p>
+      <label v-if="chosenCount>0" class="rb-check">
+        <input v-model="allowVisual" type="checkbox" @change="confirmApproval=false"/>
+        我明确接受 AI 图像描述可能存在识别错误，允许批量采纳这类关系（默认关闭）。
+      </label>
       <label v-if="chosenCount>0" class="rb-check">
         <input v-model="confirmApproval" type="checkbox"/>
         我确认按选中的关系类型批量批准最多 {{chosenCount}} 条候选关联，并接受尚可能存在 AI 推断误差。
