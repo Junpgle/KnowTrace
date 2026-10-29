@@ -7,6 +7,7 @@ import { api, type AIProviderId, type BatchExtraction, type CourseDocument } fro
 const props=defineProps<{document:CourseDocument}>()
 const emit=defineEmits<{updated:[];openReview:[]}>()
 const jobs=ref<BatchExtraction[]>([])
+const selectedJobId=ref('')
 const busy=ref(false)
 const loading=ref(false)
 const problem=ref('')
@@ -15,7 +16,7 @@ const selectedProvider=ref<AIProviderId>('ollama')
 const batchSize=ref(2)
 const visual=ref(false)
 const consent=ref(false)
-const job=computed(()=>jobs.value[0]??null)
+const job=computed(()=>jobs.value.find(j=>j.id===selectedJobId.value)??jobs.value[0]??null)
 const active=computed(()=>job.value?.status==='running'||job.value?.status==='stopping')
 let timer:ReturnType<typeof setInterval>|null=null
 let requestId=0
@@ -31,7 +32,10 @@ async function load(){
   loading.value=true
   try{
     const rows=await api.batchExtractions(props.document.id)
-    if(id===requestId)jobs.value=rows
+    if(id===requestId) {
+      jobs.value=rows
+      if (!rows.some(r=>r.id===selectedJobId.value)) selectedJobId.value=rows[0]?.id??''
+    }
   }catch(e){if(id===requestId)err(e)}
   finally{if(id===requestId)loading.value=false}
 }
@@ -40,7 +44,7 @@ function updateTimer(){
   stopTimer()
   if(active.value) timer=setInterval(()=>{void load()},2200)
 }
-watch(()=>props.document.id,()=>{stopTimer();jobs.value=[];problem.value='';message.value='';void load()},{immediate:true})
+watch(()=>props.document.id,()=>{stopTimer();jobs.value=[];selectedJobId.value='';problem.value='';message.value='';void load()},{immediate:true})
 watch(active,updateTimer)
 onBeforeUnmount(()=>{stopTimer();++requestId})
 async function start(){
@@ -50,11 +54,12 @@ async function start(){
   }
   busy.value=true;problem.value='';message.value=''
   try{
-    await api.startBatchExtraction(props.document.id,{
+    const created=await api.startBatchExtraction(props.document.id,{
       provider:selectedProvider.value,
       pages_per_batch:batchSize.value,
       include_visual:visual.value,
     })
+    selectedJobId.value=created.id
     message.value='已启动整份资料处理任务。可随时离开页面，之后回来查看进度。'
     await load()
   }catch(e){err(e)}
@@ -96,6 +101,13 @@ watch(batchSize,()=>{if(visual.value&&batchSize.value>2)visual.value=false})
     </div>
     <p v-if="problem" class="batch-feedback bad" role="alert"><AlertCircle :size="17"/>{{ problem }}</p>
     <p v-if="message" class="batch-feedback good" role="status"><CheckCircle2 :size="17"/>{{ message }}</p>
+    <label v-if="jobs.length>1" class="batch-history">任务历史
+      <select v-model="selectedJobId">
+        <option v-for="item in jobs" :key="item.id" :value="item.id">
+          {{item.created_at}} · {{statusText(item.status)}} · {{item.completed_pages}}/{{item.total_pages}} 页
+        </option>
+      </select>
+    </label>
     <div v-if="job" class="batch-progress">
       <div class="batch-line"><strong>{{statusText(job.status)}}</strong>
         <span>{{ job.completed_pages }}/{{ job.total_pages }} 页 · {{ job.progress }}%</span></div>
@@ -152,6 +164,8 @@ watch(batchSize,()=>{if(visual.value&&batchSize.value>2)visual.value=false})
 .batch-heading p{font-size:11px;color:#89a0a9;line-height:1.8;margin:0}
 .batch-icon{background:#e3f5f0;color:#209e88;display:grid;place-items:center;width:43px;height:43px;flex:0 0 43px;border-radius:13px}
 .batch-refresh{background:none;border:0;color:#7194a0;padding:7px}
+.batch-history{display:grid;gap:7px;font-size:11px;color:#6c8892}
+.batch-history select{border:1px solid #d7e5e8;border-radius:9px;padding:9px;background:#fff;color:#355d6b;max-width:100%}
 .batch-progress{display:grid;gap:11px;padding:15px;border:1px solid #c8e8e1;background:#f1fbf8;border-radius:12px}
 .batch-line{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#276b60;font-size:12px}
 .batch-line span{font-size:11px;color:#518f82}
