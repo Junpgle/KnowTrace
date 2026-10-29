@@ -151,36 +151,64 @@ function rebuild() {
   scene.add(g)
   const coords = layout(props.nodes, props.edges)
   coords.forEach((v, id) => positions.set(id, v))
-  const sphere = new THREE.SphereGeometry(1, 18, 14)
-  props.nodes.forEach(node => {
-    const coord = positions.get(node.id)
-    if (!coord) return
+  // One InstancedMesh for all knowledge points: thousands of planets require
+  // one draw call, not a separate draw call/material per planet.
+  const sphere = new THREE.SphereGeometry(1, 12, 10)
+  const knowledge = props.nodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
+  if (knowledge.length) {
+    const material = new THREE.MeshPhongMaterial({
+      color: 0xffffff, shininess: 70, specular: 0x526b80,
+      emissive: 0x243743, emissiveIntensity: 0.18,
+    })
+    const cluster = new THREE.InstancedMesh(sphere, material, knowledge.length)
+    const matrix = new THREE.Matrix4()
+    const size = new THREE.Vector3()
+    const rotation = new THREE.Quaternion()
+    const ids: string[] = []
+    knowledge.forEach((node, index) => {
+      const position = positions.get(node.id)!
+      const radius = node.id === props.selectedId ? 1.6 : 1
+      size.setScalar(radius)
+      matrix.compose(position, rotation, size)
+      cluster.setMatrixAt(index, matrix)
+      cluster.setColorAt(index, new THREE.Color(statusColor(node)))
+      ids.push(node.id)
+      if (node.id === props.selectedId) {
+        const label = makeLabel(node.name)
+        if (label) {
+          label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
+          g.add(label)
+        }
+      }
+    })
+    cluster.instanceMatrix.needsUpdate = true
+    if (cluster.instanceColor) cluster.instanceColor.needsUpdate = true
+    cluster.userData.instanceNodeIds = ids
+    cluster.computeBoundingSphere()
+    g.add(cluster)
+    meshes.push(cluster)
+  }
+  for (const node of props.nodes.filter(n => n.kind !== 'knowledge')) {
+    const position = positions.get(node.id)
+    if (!position) continue
     const color = statusColor(node)
     const material = new THREE.MeshPhongMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: node.id === props.selectedId ? 0.65 : 0.23,
-      shininess: 86,
-      specular: 0x6b8fae,
-      transparent: node.review_status === 'rejected',
-      opacity: node.review_status === 'rejected' ? 0.6 : 1,
+      color, emissive: color, emissiveIntensity: 0.28,
+      shininess: 86, specular: 0x6b8fae,
     })
+    const radius = node.kind === 'course' ? 3.8 : 2.15
     const mesh = new THREE.Mesh(sphere, material)
-    const radius = node.kind === 'course' ? 3.8 : node.kind === 'chapter' ? 2.15 :
-      node.id === props.selectedId ? 1.5 : 1.0
     mesh.scale.setScalar(radius)
-    mesh.position.copy(coord)
+    mesh.position.copy(position)
     mesh.userData.nodeId = node.id
     g.add(mesh)
     meshes.push(mesh)
-    if (node.kind !== 'knowledge' || node.id === props.selectedId) {
-      const label = makeLabel(node.name)
-      if (label) {
-        label.position.copy(coord).add(new THREE.Vector3(0, radius + 2.35, 0))
-        g.add(label)
-      }
+    const label = makeLabel(node.name)
+    if (label) {
+      label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
+      g.add(label)
     }
-  })
+  }
   const activeEdges = props.edges.filter(edge => edge.structural || props.showRelations)
   const positionsStructural: number[] = []
   const positionsSemantic: number[] = []
@@ -259,7 +287,11 @@ function pointerUp(event: PointerEvent) {
               -((event.clientY - rect.top) / rect.height) * 2 + 1)
   raycaster.setFromCamera(pointer, camera)
   const hits = raycaster.intersectObjects(meshes)
-  const id = hits[0]?.object.userData.nodeId as string | undefined
+  const hit = hits[0]
+  const instanceIds = hit?.object.userData.instanceNodeIds as string[] | undefined
+  const id = (instanceIds && hit.instanceId !== undefined
+    ? instanceIds[hit.instanceId]
+    : hit?.object.userData.nodeId) as string | undefined
   if (id) emit('select', id)
 }
 function initialize() {
