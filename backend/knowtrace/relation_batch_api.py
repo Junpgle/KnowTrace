@@ -135,7 +135,14 @@ def register_relation_batch_routes(
             if exists:raise HTTPException(409,"This course already has a running relation discovery job")
             # Include approved points with at least one *ready* source only.
             # This avoids thousands of pointless requests on source-less items.
-            ids=[r["id"] for r in db.execute("""SELECT kp.id FROM knowledge_points kp
+            # Checkpoints from earlier runs are excluded on future starts,
+            # avoiding a paid repeat of the first 30 when a user scales up.
+            done=set()
+            for row in db.execute("""SELECT focus_ids_json,next_index
+                FROM relation_batch_runs WHERE course_id=?""",(course_id,)).fetchall():
+                done.update(json.loads(row["focus_ids_json"])[:row["next_index"]])
+            ids=[]
+            for row in db.execute("""SELECT kp.id FROM knowledge_points kp
                 WHERE kp.course_id=? AND kp.review_status='approved'
                   AND kp.archived_at IS NULL
                   AND EXISTS (SELECT 1 FROM knowledge_point_sources s
@@ -143,8 +150,10 @@ def register_relation_batch_routes(
                     JOIN documents d ON d.id=c.document_id
                     WHERE s.knowledge_point_id=kp.id
                       AND d.course_id=kp.course_id AND d.status='ready')
-                ORDER BY kp.created_at,kp.id LIMIT ?""",
-                (course_id,payload.max_focus_points)).fetchall()]
+                ORDER BY kp.created_at,kp.id""",(course_id,)).fetchall():
+                if row["id"] not in done:
+                    ids.append(row["id"])
+                if len(ids)>=payload.max_focus_points:break
             if len(ids)<2:
                 raise HTTPException(409,"Need at least two approved source-linked knowledge points")
             id=str(uuid4())
