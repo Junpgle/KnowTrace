@@ -35,6 +35,8 @@ uvicorn knowtrace.main:app --reload
 
 若需要更强推理模型，改为 KNOWTRACE_MIMO_MODEL=mimo-v2.6-pro 并重启后端。
 
+**密钥类型特别注意**：本项目是自定义教学应用后端，应使用小米按量付费的 `sk-` API Key。官方明确规定 Token Plan 的 `tp-`、`ttp-` 密钥只用于约定的编程工具套餐场景，不可用于此类自定义应用后端。KnowTrace 将拒绝用这些套餐密钥发送请求，并不会将任何密钥返回给浏览器。
+
 **注意**：一旦选择 MiMo，模型实际检索并读取的课程片段会发送给小米的云端 API。处理保密、个人敏感或无上传权限的课件时，应选择本地 Ollama。
 
 ## Vue 中使用
@@ -88,11 +90,11 @@ POST /api/documents/{id}/extract-knowledge 也可通过 provider=mimo 选择 MiM
 
 ## 排查
 
-- 503：缺少 MIMO_API_KEY、模型未配置或参数不受支持。
+- 503：缺少 MIMO_API_KEY、误用了 Token Plan 密钥、模型未配置或参数不受支持。
 - 502：网络问题、API Key 无效、额度不足、模型 API 返回错误、响应不符合协议。后端不会回传可能含敏感信息的 API 错误正文。
 - created=0：模型没有调用工具读取正文、引用与真实片段不符或题目结构不符合校验规则；可看 warnings。
 - 函数调用太多：每次限制最多 6 次，不允许无限循环；失败不会插入未经验证的题目。
-- API 模型只支持官方 https://api.xiaomimimo.com/v1；该限制可避免误将 API Key 发到任意恶意地址。
+- API 模型只支持按量付费对应的官方 https://api.xiaomimimo.com/v1；该限制可避免误将 API Key 发到任意恶意地址。
 
 ## 安全与测试边界
 
