@@ -104,12 +104,15 @@ def generate_group_relations(db_path: Path, course_id: str,
     with transaction(db_path) as db:
         points=[dict(r) for r in db.execute("""SELECT p.id,p.canonical_name,
                   p.summary,p.chapter_id,
+                  ch.title AS chapter_title,
                   (SELECT MIN(d.id) FROM knowledge_point_sources s
                     JOIN document_chunks c ON c.id=s.chunk_id
                     JOIN documents d ON d.id=c.document_id
                     WHERE s.knowledge_point_id=p.id
                       AND d.course_id=p.course_id AND d.status='ready') AS document_id
-                FROM knowledge_points p WHERE p.course_id=? AND p.review_status='approved'
+                FROM knowledge_points p
+                LEFT JOIN chapters ch ON ch.id=p.chapter_id AND ch.course_id=p.course_id
+                WHERE p.course_id=? AND p.review_status='approved'
                 AND p.archived_at IS NULL AND p.id IN ("""+placeholders+")",
                 (course_id,*ids)).fetchall()]
         if len(points)!=len(ids):
@@ -150,7 +153,10 @@ def generate_group_relations(db_path: Path, course_id: str,
     output_limit=min(18,len(effective)*per_point)
     context={"knowledge_points":[{
         "id":p["id"],"name":p["canonical_name"],
-        "summary":(p["summary"] or "")[:200]} for p in effective],
+        "summary":(p["summary"] or "")[:200],
+        "chapter_id":p["chapter_id"],
+        "chapter_title":p["chapter_title"] or "(未归属章节)",
+        "source_document_id":p["document_id"]} for p in effective],
         "sources":[{
             "chunk_id":id,"knowledge_point_ids":src["knowledge_point_ids"],
             "page":src["page_start"],"filename":src["original_filename"],
@@ -174,6 +180,14 @@ def generate_group_relations(db_path: Path, course_id: str,
         '"relation_type":"related","rationale":"具体关系理由",'
         '"source_chunk_id":"真实片段ID","quote":"连续逐字原文"}]}。'
     )
+    if cross_chapter_only:
+        instructions += (
+            "本轮专门用于跨章节桥接！请首先比较属于不同chapter_id的概念；"
+            "未分章时不同原始文件source_document_id也可作为跨材料候选。"
+            "同章节或同原始材料内部的关系本轮一律不输出。"
+            "请只输出两个不同实际章节/来源桶间、存在有效材料支持的关系。"
+            "不能因为术语相似就判定有先修关系。"
+        )
     serialized=json.dumps(context,ensure_ascii=False)
     try:
         if hasattr(provider,"generate_relation_group"):
