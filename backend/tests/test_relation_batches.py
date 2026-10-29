@@ -185,3 +185,26 @@ def test_required_relation_cycles_are_skipped_in_bulk_approval(tmp_path):
         assert result.json()["cycles"]==1
         assert result.json()["skipped"]==1
         assert http.get(f"/api/courses/{course}/study-path").status_code==200
+
+
+def test_image_described_relation_requires_explicit_opt_in(tmp_path):
+    db=tmp_path/"vision.sqlite3"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"uploads")) as http:
+        course=seed(http,db,count=2)
+        with connect(db) as conn:
+            conn.execute("UPDATE document_chunks SET content_kind='figure_description' WHERE id='chunk'")
+            conn.execute("""INSERT INTO knowledge_relations
+                (id,source_kp_id,target_kp_id,relation_type,rationale,review_status)
+                VALUES('visual_relation','kp0000','kp0001','related','Chart based','pending')""")
+            conn.execute("""INSERT INTO knowledge_relation_sources
+                (relation_id,chunk_id,evidence_note)
+                VALUES('visual_relation','chunk','AI vision description')""")
+        first=http.post(f"/api/courses/{course}/relations/bulk-approve",json={
+            "confirmed":True,"types":["related"]})
+        assert first.status_code==200
+        assert first.json()["approved"]==0 and first.json()["visual"]==1
+        manual=http.post(f"/api/courses/{course}/relations/bulk-approve",json={
+            "confirmed":True,"types":["related"],"include_visual_sources":True})
+        assert manual.status_code==200,manual.text
+        assert manual.json()["approved"]==1
+        assert http.get(f"/api/courses/{course}/knowledge-graph").json()["stats"]["approved_semantic_edges"]==1
