@@ -104,6 +104,24 @@ def test_mimo_does_not_send_full_document_until_tools_requested(tmp_path):
     valid, warnings = validate_generated_questions(result["raw"], result["sources"],
                                         count=1,permitted_types={"single_choice"})
     assert len(valid) == 1 and warnings == []
+    # A second run first discovers a short search hit, then reads the source.
+    steps = [
+        mock_response(tool_calls=[tool_call("search_source_chunks", {"query": "digital", "limit": 2}, "search1")]),
+        mock_response(tool_calls=[tool_call("read_source_chunk", {"chunk_id": "chunk1", "offset": 0}, "read1")]),
+        mock_response(content=json.dumps(question)),
+    ]
+    messages_before = []
+    def search_then_read(messages, tools=None):
+        messages_before.append(json.loads(json.dumps(messages)))
+        return steps.pop(0)
+    p._post = search_then_read
+    second = p.generate_questions_lazy(db_path=db, knowledge_point_id="kp1",
+              knowledge_name="Data system", knowledge_summary="A summary.", count=1,
+              question_types=["single_choice"])
+    assert second["tool_calls"] == 2 and second["retrieved_chunks"] == 1
+    assert "The source sends a digital bit stream" not in json.dumps(messages_before[0])
+    assert "suggested_offset" in messages_before[1][-1]["content"]
+    assert "The source sends a digital bit stream" in messages_before[2][-1]["content"]
 
 
 def test_fake_mimo_no_retrieval_cannot_fake_source(tmp_path):
