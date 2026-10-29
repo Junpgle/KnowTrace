@@ -3,6 +3,18 @@
 export type RelationType = 'prerequisite_required' | 'prerequisite_recommended'
   | 'related' | 'uses' | 'compares'
 
+export interface RelationLive {
+  job_id: string
+  status: string
+  phase: 'awaiting_first_token' | 'streaming' | 'validated' | 'failed' | 'not_streaming'
+  group_index: number
+  total_groups: number
+  group_size: number
+  text: string
+  received_chars: number
+  truncated: boolean
+  stream_supported: boolean
+}
 export interface RelationBatch {
   id: string
   course_id: string
@@ -623,6 +635,8 @@ export const api = {
   bridgePreview: (courseId: string, limit = 30, groupSize = 12) =>
     request<BridgePreview>('/api/courses/'+encodeURIComponent(courseId)
       +'/relation-batches/bridge-preview?limit='+limit+'&group_size='+groupSize),
+  relationLive: (jobId: string) =>
+    request<RelationLive>('/api/relation-batches/'+encodeURIComponent(jobId)+'/live'),
   relationBatches: (courseId: string) =>
     request<RelationBatch[]>('/api/courses/'+encodeURIComponent(courseId)+'/relation-batches'),
   startRelationBatch: (courseId: string, options: {
