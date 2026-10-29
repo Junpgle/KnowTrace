@@ -51,11 +51,12 @@ def register_relation_batch_routes(
 
     def public(row: dict) -> dict:
         result={k:v for k,v in row.items() if k!="focus_ids_json"}
-        result["progress"]=round(row["completed"]*100/max(1,row["total"]),1)
         result["total_points"]=row["total_points"] or row["total"]
         result["completed_points"]=(
             row["completed_points"] if row["mode"]=="grouped" else row["completed"]
         )
+        result["progress"]=round(
+            result["completed_points"]*100/max(1,result["total_points"]),1)
         result["remaining_requests"]=max(0,row["total"]-row["completed"])
         result["estimated_request_count"]=row["total"]
         return result
@@ -97,7 +98,9 @@ def register_relation_batch_routes(
                 except HTTPException as error:
                     # Stale knowledge, no evidence, or too few remaining points
                     # are skips, not fatal model/provider errors.
-                    if error.status_code in (404,409,422):
+                    if error.status_code in (404,409) or (
+                        error.status_code==422 and
+                        "No linked ready course sources" in str(error.detail)):
                         created,warning_count,skipped=0,1,1
                     else:
                         with transaction(db_path) as db:
