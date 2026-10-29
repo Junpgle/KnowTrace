@@ -44,6 +44,35 @@ def register_relation_batch_routes(
 ):
     lock=threading.RLock()
     workers: dict[str,threading.Thread]={}
+    live_lock=threading.RLock()
+    live_text: dict[str,dict]={}
+
+    def begin_live(batch_id: str, index: int, total: int, group_size: int):
+        with live_lock:
+            if len(live_text)>80:
+                for old in list(live_text)[:25]:
+                    live_text.pop(old,None)
+            live_text[batch_id]={
+                "group_index":index+1,"total_groups":total,
+                "group_size":group_size,"phase":"awaiting_first_token",
+                "text":"","received_chars":0,"truncated":False,
+            }
+
+    def append_live(batch_id: str, delta: str):
+        # Display only visible response text; never expose model reasoning.
+        with live_lock:
+            data=live_text.get(batch_id)
+            if not data:return
+            data["received_chars"]+=len(delta)
+            data["text"]=(data["text"]+delta)[-16000:]
+            data["truncated"]=data["received_chars"]>16000
+            data["phase"]="streaming"
+
+    def finish_live(batch_id: str, phase: str):
+        with live_lock:
+            if batch_id in live_text:
+                live_text[batch_id]["phase"]=phase
+
 
     def get(db, id: str):
         row=db.execute("SELECT * FROM relation_batch_runs WHERE id=?",(id,)).fetchone()
@@ -84,6 +113,8 @@ def register_relation_batch_routes(
                         return
                     focus=focus_ids[i]
                     focus_id=focus[0] if isinstance(focus,list) else focus
+                    begin_live(batch_id,i,job["total"],
+                               len(focus) if isinstance(focus,list) else 1)
                     db.execute("""UPDATE relation_batch_runs
                                   SET current_focus=?,updated_at=CURRENT_TIMESTAMP
                                   WHERE id=?""",(focus_id,batch_id))
@@ -92,14 +123,17 @@ def register_relation_batch_routes(
                         result=generate_group_relations(
                             db_path,job["course_id"],focus,job["provider"],
                             job["per_focus"],resolve_provider,
-                            cross_chapter_only=bool(job["bridge_strategy"]))
+                            cross_chapter_only=bool(job["bridge_strategy"]),
+                            on_delta=lambda delta: append_live(batch_id,delta))
                     else:
                         result=generate_for_focus(job["course_id"],focus_id,
                                                   job["provider"],job["per_focus"])
+                    finish_live(batch_id,"validated")
                     created=int(result.get("created",0))
                     warning_count=len(result.get("warnings",[]))
                     skipped=0
                 except HTTPException as error:
+                    finish_live(batch_id,"failed")
                     # Stale knowledge, no evidence, or too few remaining points
                     # are skips, not fatal model/provider errors.
                     if error.status_code in (404,409) or (
@@ -114,6 +148,7 @@ def register_relation_batch_routes(
                                        (f"Failed at item {i+1}: {str(error.detail)[:220]}",batch_id))
                         return
                 except Exception as error:
+                    finish_live(batch_id,"failed")
                     # Do not leak raw model responses, keys or course material.
                     with transaction(db_path) as db:
                         db.execute("""UPDATE relation_batch_runs SET status='stopped',
@@ -148,6 +183,27 @@ def register_relation_batch_routes(
                                     name="knowtrace-relations-"+id[:8])
             workers[id]=worker
             worker.start()
+
+    @app.get("/api/relation-batches/{id}/live")
+    def read_visible_stream(id: str):
+        # Ephemeral: source text and model output are not written to SQLite.
+        # Jobs themselves remain persisted for normal stop/resume.
+        with transaction(db_path) as db:
+            row=get(db,id)
+        with live_lock:
+            display=dict(live_text.get(id) or {})
+        return {
+            "job_id":id,
+            "status":row["status"],
+            "phase":display.get("phase","not_streaming"),
+            "group_index":display.get("group_index",row["completed"]),
+            "total_groups":display.get("total_groups",row["total"]),
+            "group_size":display.get("group_size",0),
+            "text":display.get("text",""),
+            "received_chars":display.get("received_chars",0),
+            "truncated":display.get("truncated",False),
+            "stream_supported":row["mode"]=="grouped",
+        }
 
     @app.get("/api/courses/{course_id}/relation-batches/bridge-preview")
     def bridge_preview(course_id: str,
