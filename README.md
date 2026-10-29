@@ -8,7 +8,7 @@
 
 面向多学科学习场景，连接 **知识组织 → 智能测评 → 掌握度分析 → 个性化复习 → 学习反馈**。
 
-![Status](https://img.shields.io/badge/status-v1.3.0%20task%20center%20and%20bulk%20approval-blue)
+![Status](https://img.shields.io/badge/status-v1.6.0%20cross--chapter%20knowledge%20bridges-blue)
 ![Project](https://img.shields.io/badge/project-AI%20Learning-orange)
 ![Course](https://img.shields.io/badge/course-2026-informational)
 
@@ -253,6 +253,12 @@ npm run dev
 **1307个知识点建议分两轮：先按真实章节及相似点分组生成章节内关系，再选择「第二轮 · 跨章节桥接关系」**。跨章桥接通过知识点术语、摘要、来源交集的倒排索引筛出有限的跨章节候选，每组一次AI分析，不对所有85万对知识点穷举。AI给出的候选必须同时通过课程证据引用、知识点ID及跨章节边界校验，才进入待审核关系池。每组保存进度，支持停止/继续，已分析的跨章节组合自动跳过；旧的章节内任务不会阻止跨章比较。
 
 完整操作见：[知识图谱构建说明](docs/LARGE-COURSE-GRAPH.md)。
+
+## 🔗 跨章节候选预览（v1.6.0）
+
+在知识星系关系工作台选择「第二轮 · 跨章节桥接关系」，系统首先免费预估真实章节、未归类点、课件文件及跨章节候选组数量。只有实际候选可检索时才允许启动收费 AI 分析；同一个跨章节候选组合分析过后不会重复提交，任务可以暂停/续跑。**无真实章节且全部知识点来自一份文件时，不会伪造跨章节关联。**
+
+详情：[章节内聚类与跨章节桥接指南](docs/LARGE-COURSE-GRAPH.md)。
 
 ## 🚀 后端启动与开发
 
