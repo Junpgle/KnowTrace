@@ -50,7 +50,7 @@ onBeforeUnmount(()=>{stopTimer();++requestId})
 async function start(){
   if(busy.value)return
   if(selectedProvider.value==='mimo'&&!consent.value){
-    problem.value='云端批量处理会将每批课件文字发送给小米 MiMo，请先确认。';return
+    problem.value='MiMo 批量处理会向云端发送文字及所选页面图片，请先勾选确认。';return
   }
   busy.value=true;problem.value='';message.value=''
   try{
@@ -85,7 +85,7 @@ async function resume(){
   }catch(e){err(e)}
   finally{busy.value=false}
 }
-watch(selectedProvider,()=>{if(selectedProvider.value==='mimo')visual.value=false;consent.value=false})
+watch(selectedProvider,()=>{consent.value=false})
 watch(batchSize,()=>{if(visual.value&&batchSize.value>2)visual.value=false})
 </script>
 
@@ -139,12 +139,12 @@ watch(batchSize,()=>{if(visual.value&&batchSize.value>2)visual.value=false})
           <option :value="4">4 页</option>
         </select></label>
       </div>
-      <label v-if="isPdf&&selectedProvider==='ollama'&&batchSize<=2" class="batch-check">
+      <label v-if="isPdf&&batchSize<=2" class="batch-check">
         <input v-model="visual" type="checkbox" />
-        低文字量 PDF 页启用本地视觉模型（每批最多两页）</label>
+        对图片/扫描页启用多模态识别（Ollama 本地 / MiMo 云端，最多每批两页）</label>
       <label v-if="selectedProvider==='mimo'||selectedProvider==='default'" class="batch-check">
         <input v-model="consent" type="checkbox" />
-        我理解使用云端模型时，所选页面文字会分批传给提供商，可能产生 API 费用</label>
+        我确认：云端模型会接收每批课件文字；开启多模态识别后，低文字量页面还会以 PNG 图片发送，可能产生 API 费用</label>
       <div class="batch-buttons">
         <button type="button" class="button button-primary" :disabled="busy||active||!document.total_pages" @click="start">
           <LoaderCircle v-if="busy" class="spinning" :size="17"/><Play v-else :size="17"/>
