@@ -25,6 +25,7 @@ from .questions import validate_generated_questions, validate_question_fields
 from .quiz_api import register_quiz_routes
 from .manual_transfer import register_manual_routes
 from .graph_api import register_graph_routes
+from .relations_api import register_relation_routes
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 LOW_TEXT_THRESHOLD = 80  # heuristic: flag for review, not proof of missing content
@@ -122,7 +123,7 @@ def create_app(*, db_path: str | Path | None = None,
         storage.mkdir(parents=True, exist_ok=True)
         yield
 
-    app = FastAPI(title="KnowTrace API", version="0.8.0", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="0.9.0", lifespan=lifespan)
     configured_provider = os.getenv("KNOWTRACE_AI_PROVIDER", "ollama").strip().lower()
     if configured_provider not in ("ollama", "mimo"):
         raise AIConfigError("KNOWTRACE_AI_PROVIDER must be ollama or mimo")
@@ -159,7 +160,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "0.8.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "0.9.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -770,6 +771,7 @@ def create_app(*, db_path: str | Path | None = None,
     register_quiz_routes(app, database)
     register_manual_routes(app, database)
     register_graph_routes(app, database)
+    register_relation_routes(app, database, resolve_provider)
     return app
 
 
