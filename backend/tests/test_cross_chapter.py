@@ -31,8 +31,14 @@ class BridgeStub:
         ids=[p["id"] for p in data["knowledge_points"]]
         if len(ids)<2:return '{"items":[]}'
         a,b=ids[0],ids[1]
-        if self.within_only and len(ids)>2:
-            a,b=ids[1],ids[2]
+        if self.within_only:
+            # The provider is explicitly adversarial: offer an intra-chapter
+            # edge in a cross-chapter run. It must never be stored.
+            pairs=[(p,q) for i,p in enumerate(data["knowledge_points"])
+                   for q in data["knowledge_points"][i+1:]
+                   if p["chapter_id"]==q["chapter_id"]]
+            if not pairs:return '{"items":[]}'
+            a,b=pairs[0][0]["id"],pairs[0][1]["id"]
         return json.dumps({"items":[{
           "source_kp_id":a,"target_kp_id":b,"relation_type":"related",
           "rationale":"课件明确展示互斥与死锁之间存在共享资源管理方面的联系。",
@@ -153,6 +159,8 @@ def test_bridge_rejects_model_generated_same_chapter_edge(tmp_path):
             "mode":"bridge","group_size":3,"max_focus_points":6,"provider":"default"})
         assert started.status_code==201,started.text
         assert wait_done(http,cid)["status"]=="succeeded"
+        assert all(any(point["chapter_id"] for point in call["knowledge_points"])
+                   for call in ai.calls)
         with connect(db) as conn:
             rows=conn.execute("""SELECT r.id,a.chapter_id,b.chapter_id
                 FROM knowledge_relations r JOIN knowledge_points a ON a.id=r.source_kp_id
