@@ -198,3 +198,94 @@ def test_provider_status_does_not_expose_api_key(monkeypatch, tmp_path):
     with TestClient(create_app(db_path=tmp_path/"app2.sqlite3",
                                storage_dir=tmp_path/"uploads2")) as client:
         assert client.get("/api/ai/providers").json()["providers"][1]["available"] is False
+
+
+def test_mimo_vision_sends_native_png_data_url_without_local_ollama():
+    """The PDF image must go to MiMo's own multimodal Chat Completions API."""
+    import base64
+    provider = MimoProvider(api_key="sk-demo-only", text_model="mimo-v2.6-flash")
+    page_png = b"\x89PNG\r\n\x1a\n" + b"small test page"
+    encoded = base64.b64encode(page_png).decode("ascii")
+    context = MagicMock()
+    context.__enter__.return_value.read.return_value = json.dumps(
+        mock_response("Diagram: a source system sends digital data via a communication channel to a destination.")
+    ).encode("utf-8")
+    with patch("knowtrace.mimo.urlopen", return_value=context) as opener, \
+         patch("knowtrace.mimo.OllamaProvider.from_env", side_effect=AssertionError("Must not call Ollama")):
+        description = provider.describe_visual(encoded)
+    assert "source system" in description
+    request = opener.call_args.args[0]
+    assert request.full_url == "https://api.xiaomimimo.com/v1/chat/completions"
+    payload = json.loads(request.data)
+    assert payload["model"] == "mimo-v2.6-flash"
+    user_content = payload["messages"][1]["content"]
+    assert user_content[0]["type"] == "image_url"
+    assert user_content[0]["image_url"]["url"] == "data:image/png;base64," + encoded
+    assert user_content[1]["type"] == "text"
+    assert request.get_header("Api-key") == "sk-demo-only"
+    assert "sk-demo-only" not in request.data.decode("utf-8")
+    assert provider.vision_model == "mimo-v2.6-flash"
+
+
+def test_mimo_vision_rejects_missing_invalid_or_unreadable_image_reply():
+    provider = MimoProvider(api_key="sk-demo-only")
+    with pytest.raises(AIServiceError, match="empty"):
+        provider.describe_visual("")
+    with pytest.raises(AIServiceError, match="too large"):
+        provider.describe_visual("A"*12_000_001)
+    provider._post = lambda messages, tools=None: mock_response(None)
+    with pytest.raises(AIServiceError, match="no readable"):
+        provider.describe_visual("YWJj")
+
+
+def test_mimo_api_extracts_from_sparse_pdf_image(tmp_path, monkeypatch):
+    """PDF scan -> MiMo image description -> extracted pending knowledge."""
+    import fitz
+    from knowtrace.db import connect
+    provider = MimoProvider(api_key="sk-test", text_model="mimo-v2.6-pro")
+    image_summary = ("图中展示数据通信模型，源系统通过传输系统向目的系统发送信号；"
+                     "源设备、发送设备和接收设备之间有明确箭头。")
+    requests = []
+    def fake_post(messages, tools=None):
+        requests.append(messages)
+        content = messages[-1]["content"]
+        if isinstance(content, list):
+            assert content[0]["type"] == "image_url"
+            assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+            return mock_response(image_summary)
+        assert image_summary in content
+        return mock_response(json.dumps({"items": [{
+            "name": "数据通信模型的组成",
+            "summary": "通过源系统、传输系统及目的系统描述信号传递的基本组成关系。",
+            "page": 1, "quote": "源系统通过传输系统向目的系统发送信号",
+            "difficulty": 2,
+        }]},ensure_ascii=False))
+    provider._post = fake_post
+    monkeypatch.setattr(MimoProvider, "from_env", staticmethod(lambda: provider))
+    app = create_app(db_path=tmp_path/"vision.sqlite3", storage_dir=tmp_path/"uploads")
+    with TestClient(app) as http:
+        course = http.post("/api/courses", json={"title":"Computer Networks"}).json()["id"]
+        pdf=fitz.open()
+        p=pdf.new_page()
+        p.draw_rect(fitz.Rect(25, 50, 515, 470), fill=(0.7,0.8,0.9))
+        upload=http.post(f"/api/courses/{course}/documents",
+            files={"file":("scan.pdf",pdf.tobytes(),"application/pdf")})
+        assert upload.status_code==201,upload.text
+        did=upload.json()["id"]
+        missing_text=http.post(f"/api/documents/{did}/extract-knowledge",
+            json={"provider":"mimo","include_visual":False})
+        assert missing_text.status_code==422
+        result=http.post(f"/api/documents/{did}/extract-knowledge",
+            json={"provider":"mimo","include_visual":True})
+        assert result.status_code==200,result.text
+        assert result.json()["vision_pages"] == [1]
+        assert result.json()["created"]==1
+        points=http.get(f"/api/documents/{did}/knowledge-points").json()
+        assert points[0]["review_status"]=="pending"
+        assert points[0]["source_kind"]=="figure_description"
+        assert "unverified" in points[0]["evidence_note"]
+        assert len(requests)==2  # visual call then grounded extraction call
+        with connect(tmp_path/"vision.sqlite3") as db:
+            stored=db.execute("SELECT content_kind FROM document_chunks WHERE document_id=? "
+                "AND content_kind='figure_description'",(did,)).fetchall()
+            assert len(stored)==1
