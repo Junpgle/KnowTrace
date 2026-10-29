@@ -132,7 +132,7 @@ async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    const response = await api.knowledgeGraph(props.courseId, { limit: 300, include_pending: true })
+    const response = await api.knowledgeGraph(props.courseId, { limit: 2000, include_pending: true })
     if (token !== requestToken) return
     graph.value = response
     if (selectedId.value && !response.nodes.some(n => n.id === selectedId.value))
