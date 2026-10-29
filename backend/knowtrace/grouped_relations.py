@@ -67,7 +67,7 @@ def plan_groups(db_path: Path, course_id: str, done: set[str],
             # Greedy best related candidate, with shared evidence outweighing
             # superficial lexical similarity. Chunk overlap is a heuristic
             # only; no relation is created without explicit AI + proof.
-            while len(selected)<group_size and remaining:
+            while len(selected)<min(group_size,limit-sum(map(len,groups))) and remaining:
                 def similarity(candidate):
                     shared=max((len(candidate["chunks"] & n["chunks"]) for n in selected),default=0)
                     common=max((len(candidate["tokens"] & n["tokens"]) for n in selected),default=0)
