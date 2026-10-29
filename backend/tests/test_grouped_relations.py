@@ -200,7 +200,7 @@ def test_live_visible_group_stream_while_model_is_still_responding(tmp_path):
             on_delta('{"items":[')
             self.first_tokens.set()
             assert self.release.wait(8)
-            reply=json.dumps({"items":[]})
+            reply=json.dumps({"items":[]},separators=(",",":"))
             on_delta(reply[len('{"items":['):])
             return reply
 
