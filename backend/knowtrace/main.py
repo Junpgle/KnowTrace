@@ -28,6 +28,7 @@ from .graph_api import register_graph_routes
 from .relations_api import register_relation_routes
 from .settings_api import providers as configured_providers, public_status, register_settings_routes
 from .batch_api import register_batch_routes
+from .knowledge_ai_review import register_ai_knowledge_review_routes
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 LOW_TEXT_THRESHOLD = 80  # heuristic: flag for review, not proof of missing content
@@ -120,15 +121,17 @@ def create_app(*, db_path: str | Path | None = None,
     storage = Path(storage_dir).resolve() if storage_dir else data_root / "uploads"
     settings_path = database.with_name('ai_settings.json')
     recover_batches = lambda: None
+    recover_ai_reviews = lambda: None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         initialize(database)
         storage.mkdir(parents=True, exist_ok=True)
         recover_batches()
+        recover_ai_reviews()
         yield
 
-    app = FastAPI(title="KnowTrace API", version="1.1.0", lifespan=lifespan)
+    app = FastAPI(title="KnowTrace API", version="1.2.0", lifespan=lifespan)
     if ai_provider is not None:
         app.state.ai_provider = ai_provider
 
@@ -156,7 +159,7 @@ def create_app(*, db_path: str | Path | None = None,
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "knowtrace-api", "version": "1.1.0"}
+        return {"status": "ok", "service": "knowtrace-api", "version": "1.2.0"}
 
     @app.get("/api/courses")
     def list_courses():
@@ -774,6 +777,7 @@ def create_app(*, db_path: str | Path | None = None,
     register_manual_routes(app, database)
     register_graph_routes(app, database)
     register_relation_routes(app, database, resolve_provider)
+    recover_ai_reviews = register_ai_knowledge_review_routes(app, database, resolve_provider)
     return app
 
 
