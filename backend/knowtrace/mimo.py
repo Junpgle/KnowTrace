@@ -126,13 +126,13 @@ class MimoProvider:
             raise AIServiceError("MiMo returned an invalid completion")
         return result
 
-    def _tool_loop(self, messages: list[dict], handle) -> tuple[str, dict]:
+    def _tool_loop(self, messages: list[dict], handle, *, tools: list[dict] | None = None) -> tuple[str, dict]:
         """Execute allowlisted tools with quotas, retaining thinking-context metadata."""
         tool_calls = 0
         seen: set[tuple[str, str]] = set()
         total_usage: dict[str, int] = {}
         for turn in range(self.max_tool_calls + 2):
-            response = self._post(messages, tools=TOOLS if tool_calls < self.max_tool_calls else None)
+            response = self._post(messages, tools=(tools if tools is not None else TOOLS) if tool_calls < self.max_tool_calls else None)
             for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 value = (response.get("usage") or {}).get(key)
                 if type(value) is int:
