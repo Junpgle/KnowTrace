@@ -71,9 +71,10 @@ def validate_generated_questions(response: str, sources: dict[str, dict],
             warnings.append(f"candidate {index}: {err}")
             continue
         chunk_id, quote = item.get("source_chunk_id"), item.get("quote")
-        if (not isinstance(chunk_id, str) or chunk_id not in sources
-                or not isinstance(quote, str) or len(compact(quote)) < 10
-                or compact(quote) not in compact(sources[chunk_id]["content_text"])):
+        source = sources.get(chunk_id) if isinstance(chunk_id, str) else None
+        evidence_windows = (source.get("evidence_segments") or [source.get("content_text", "")]) if source else []
+        if (not isinstance(quote, str) or len(compact(quote)) < 10
+                or not any(compact(quote) in compact(window) for window in evidence_windows)):
             warnings.append(f"candidate {index}: exact source quotation not found")
             continue
         stem_key = compact(item["stem"])
