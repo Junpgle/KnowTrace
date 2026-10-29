@@ -74,6 +74,8 @@ class MimoProvider:
     def _post(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         if not self.api_key:
             raise AIConfigError("MiMo API Key is not configured; set MIMO_API_KEY on the backend")
+        if self.api_key.startswith(("tp-", "ttp-")):
+            raise AIConfigError("MiMo Token Plan is not licensed for app backends; use an sk- pay-as-you-go API key")
         parsed = urlparse(self.base_url)
         if (parsed.scheme != "https" or parsed.hostname != "api.xiaomimimo.com"
                 or parsed.username or parsed.password or parsed.port not in (None, 443)
