@@ -1,4 +1,4 @@
-# KnowTrace v0.7.0：Vue 3 学习与题库管理工作台
+# KnowTrace v0.8.0：Vue 3 学习与题库管理工作台
 
 这是 KnowTrace 的 Vue 3 **本地学习与题库管理前端**，提供课程总览、知识点编辑与审核、Qwen 本地 AI 出题、题目修改与人工审核、普通练习、自动判分与 BKT 学习报告。
 
@@ -56,6 +56,12 @@ Vite 在开发时自动把 /api 和 /health 转发到 http://127.0.0.1:8000，�
 
 生成结果展示 MiMo 工具调用次数、读取资料片段数及 API 返回的 Token 用量，便于对比本地模型。详见 [小米 MiMo 接入指南](MIMO-API.md)。
 
+## v0.8.0：3D 知识星系
+
+左侧新增 **知识星系 · 3D**。数据来自 KnowTrace 的课程、章节、知识点、已审核的语义关系，以及 BKT 学习记录；默认用 Three.js 显示 3D 星球，支持鼠标旋转缩放、节点点击聚焦、章节筛选、全文搜索、掌握度/未测评状态过滤和右侧课件来源。可切换“列表模式”在不支持 WebGL 的环境使用。无须运行外部图库服务，不自动调用 AI；图谱不存在的知识关系不会被伪造。
+
+本版本升级依赖后需要在 `frontend` 目录重新运行 `npm install`，再用 `npm run dev` 打开 http://127.0.0.1:5173。具体说明：[3D 星系知识图谱](KNOWLEDGE-GALAXY.md)。
+
 ## v0.7.0：无需 API 的外部 AI 手动接力
 
 左侧“题库管理”新增第三个标签 **外部 AI 接力**。
@@ -107,6 +113,8 @@ export KNOWTRACE_VISION_MODEL=gemma4:12b
 - src/App.vue — 课程首页、页面导航、答题与学习报告
 - src/components/QuestionBank.vue — 知识点审核、AI 出题、题目修订与审核
 - src/components/ExternalTransfer.vue — 外部 AI 提示词复制、JSON 解析与导入
+- src/components/KnowledgeGalaxy.vue — 3D 知识图谱工作台及筛选/来源详情
+- src/components/Graph3DCanvas.vue — Three.js WebGL 星球、相机和选中交互
 - src/api.ts — FastAPI 类型与客户端
 - src/style.css — 样式与响应式布局
 - vite.config.ts — 本地 API 开发代理
