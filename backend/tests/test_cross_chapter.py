@@ -99,6 +99,14 @@ def test_cross_chapter_bridge_is_separate_from_completed_intra_chapter_pass(tmp_
         assert wait_done(http,cid)["status"]=="succeeded"
         start_calls=len(stub.calls)
         assert start_calls==3
+        preview=http.get(f"/api/courses/{cid}/relation-batches/bridge-preview?limit=6&group_size=2")
+        assert preview.status_code==200,preview.text
+        estimate=preview.json()
+        assert estimate["eligible"]==6
+        assert estimate["actual_chapters"]==3
+        assert estimate["unassigned_points"]==0
+        assert estimate["source_documents"]==3
+        assert estimate["candidate_groups"]>0
         bridge=http.post(f"/api/courses/{cid}/relation-batches",json={
             "mode":"bridge","group_size":2,"max_focus_points":6,"provider":"default"})
         assert bridge.status_code==201,bridge.text
@@ -192,3 +200,27 @@ def test_bridge_stop_and_resume_after_committed_group(tmp_path):
         assert final["status"]=="succeeded"
         assert final["completed_points"]==final["total_points"]
         assert len(ai.calls)==final["total"]
+
+
+def test_bridge_preview_explains_missing_chapters_in_single_source_file(tmp_path):
+    db=tmp_path/"without-chapters.sqlite3"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"uploads")) as http:
+        course=setup(http,db)
+        with connect(db) as conn:
+            # Move all six points under one original source, and remove their
+            # chapter assignments. There is no honest cross-chapter evidence
+            # until the user provides chapter metadata.
+            conn.execute("""UPDATE knowledge_point_sources
+                SET chunk_id='synchronizationchunk'""")
+            conn.execute("UPDATE knowledge_points SET chapter_id=NULL WHERE course_id=?",(course,))
+        r=http.get(f"/api/courses/{course}/relation-batches/bridge-preview")
+        assert r.status_code==200,r.text
+        body=r.json()
+        assert body["actual_chapters"]==0
+        assert body["source_documents"]==1
+        assert body["unassigned_points"]==6
+        assert body["candidate_groups"]==0
+        assert "章节" in body["note"]
+        impossible=http.post(f"/api/courses/{course}/relation-batches",
+                             json={"mode":"bridge","max_focus_points":30})
+        assert impossible.status_code==409
