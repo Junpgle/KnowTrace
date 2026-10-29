@@ -111,7 +111,7 @@ def public_status(path: Path) -> dict:
              "function_calling": False},
             {"id": "mimo", "label": "小米 MiMo API", "model": mimo.text_model,
              "available": bool(mimo.api_key) and not mimo.api_key.startswith(("tp-", "ttp-")),
-             "vision_model": local.vision_model, "function_calling": True},
+             "vision_model": mimo.vision_model, "function_calling": True},
         ],
         "mimo_key_configured": bool(mimo.api_key) and not mimo.api_key.startswith(("tp-", "ttp-")),
         "mimo_key_source": ("local_settings" if read_settings(path).get("mimo_api_key")
