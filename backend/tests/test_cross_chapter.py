@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import threading
 
 from fastapi.testclient import TestClient
 
@@ -19,9 +20,14 @@ class BridgeStub:
     def __init__(self,within_only=False):
         self.calls=[]
         self.within_only=within_only
+        self.entered=threading.Event()
+        self.release=threading.Event()
+        self.release.set()
     def generate_relation_group(self,system,context):
         data=json.loads(context)
         self.calls.append(data)
+        self.entered.set()
+        assert self.release.wait(8), "Mock bridge response stalled"
         ids=[p["id"] for p in data["knowledge_points"]]
         if len(ids)<2:return '{"items":[]}'
         a,b=ids[0],ids[1]
@@ -152,3 +158,29 @@ def test_bridge_rejects_model_generated_same_chapter_edge(tmp_path):
                 FROM knowledge_relations r JOIN knowledge_points a ON a.id=r.source_kp_id
                 JOIN knowledge_points b ON b.id=r.target_kp_id""").fetchall()
             assert all(r[1]!=r[2] for r in rows)
+
+
+def test_bridge_stop_and_resume_after_committed_group(tmp_path):
+    db=tmp_path/"stop-bridge.sqlite3"
+    ai=BridgeStub()
+    ai.release.clear()
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"uploads",ai_provider=ai)) as http:
+        cid=setup(http,db)
+        created=http.post(f"/api/courses/{cid}/relation-batches",json={
+            "mode":"bridge","group_size":2,"max_focus_points":6,"provider":"default"})
+        assert created.status_code==201,created.text
+        assert ai.entered.wait(3)
+        stopping=http.post(f"/api/relation-batches/{created.json()['id']}/stop")
+        assert stopping.status_code==200,stopping.text
+        ai.release.set()
+        paused=wait_done(http,cid)
+        assert paused["status"]=="stopped"
+        assert paused["completed"]==1
+        assert paused["completed_points"]==2
+        assert len(ai.calls)==1
+        recovered=http.post(f"/api/relation-batches/{created.json()['id']}/resume")
+        assert recovered.status_code==200,recovered.text
+        final=wait_done(http,cid)
+        assert final["status"]=="succeeded"
+        assert final["completed_points"]==final["total_points"]
+        assert len(ai.calls)==final["total"]
