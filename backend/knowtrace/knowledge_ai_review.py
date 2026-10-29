@@ -247,6 +247,9 @@ def register_ai_knowledge_review_routes(app: FastAPI, db_path: Path, resolve_pro
                     or item["source_kind"]!="text" or item["issues"]):
                     skipped.append({"id":rid,"reason":"Not eligible for verified bulk approval"});continue
                 kp=item["knowledge_point_id"]
+                if material(db,kp)["duplicates"]:
+                    skipped.append({"id":rid,"reason":"New duplicate detected since AI review"})
+                    continue
                 db.execute("""UPDATE knowledge_points SET review_status='approved',
                      updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",(kp,))
                 db.execute("""INSERT INTO knowledge_point_events
