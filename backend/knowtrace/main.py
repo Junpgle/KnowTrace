@@ -621,6 +621,8 @@ def create_app(*, db_path: str | Path | None = None,
             valid, warnings = validate_generated_questions(raw, sources,
                 permitted_types=set(payload.question_types),count=payload.count,
                 existing_stems=existing_stems)
+            if isinstance(provider, MimoProvider) and not sources:
+                warnings.append("MiMo did not read any source chunks via tools; no grounded questions can be approved")
             new_versions = []
             with transaction(database) as db:
                 # Recheck the approval state after inference (which can be slow).
