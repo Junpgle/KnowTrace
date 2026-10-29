@@ -120,6 +120,9 @@ export interface GraphNode {
   source_count: number
   question_count: number
   virtual: boolean
+  suggested_chapter_id?: string | null
+  suggestion_support?: number
+  suggestion_total?: number
 }
 
 export interface GraphEdge {
@@ -145,6 +148,8 @@ export interface KnowledgeGraph {
     pending_points: number
     mastery_estimated_points: number
     approved_semantic_edges: number
+    unclassified_points: number
+    suggested_chapter_points: number
     truncated: boolean
     limit: number
   }
