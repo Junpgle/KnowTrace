@@ -148,3 +148,29 @@ def test_settings_save_without_exposing_key_and_reload(tmp_path,monkeypatch):
         assert cleared.status_code==200
         assert not cleared.json()["mimo_key_configured"]
         assert "mimo_api_key" not in json.loads(file.read_text())
+
+
+def test_batch_skips_image_only_pages_and_keeps_extracted_points(tmp_path):
+    db=tmp_path/"db.sqlite3"
+    stub=SlowStub()
+    stub.release.set()
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"uploads",ai_provider=stub)) as http:
+        prepare(http,db,n=4)
+        with connect(db) as connection:
+            connection.execute("DELETE FROM document_chunks WHERE id='chunk2'")
+        started=http.post("/api/documents/doc1/batch-extractions",
+                          json={"provider":"default","pages_per_batch":1})
+        assert started.status_code==201,started.text
+        done=poll(http,started.json()["id"],{"succeeded"})
+        assert done["completed_pages"]==4
+        assert done["created_points"]==3
+        assert done["skipped_pages"]==1
+        assert [list(page) for page in stub.calls]==[[1],[3],[4]]
+
+
+def test_settings_are_local_only(tmp_path):
+    db=tmp_path/"db.sqlite3"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"uploads")) as http:
+        # Starlette TestClient defaults to a synthetic remote hostname.
+        assert http.patch("/api/settings/ai",json={"mimo_api_key":"sk-do-not-save-this"}).status_code==403
+        assert not db.with_name("ai_settings.json").exists()
