@@ -275,7 +275,7 @@ function initialize() {
     el.appendChild(renderer.domElement)
   } catch (e) {
     supported.value = false
-    error.value = '浏览器无法创建 WebGL 场景。你仍可使用右侧知识点列表查看内容。'
+    error.value = '浏览器无法创建 WebGL 场景。你仍可使用左侧知识点列表或切换上方的列表模式查看内容。'
     return
   }
   scene = new THREE.Scene()
