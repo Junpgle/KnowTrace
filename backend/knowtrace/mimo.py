@@ -18,7 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .ai import AIConfigError, AIServiceError, OllamaProvider
+from .ai import AIConfigError, AIServiceError
 from .db import connect
 
 TOOLS = [
