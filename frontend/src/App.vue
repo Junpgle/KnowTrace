@@ -8,6 +8,7 @@ import {
   TrendingUp, X, XCircle, Orbit, FolderOpen, Plus, Upload, Settings,
 } from '@lucide/vue'
 import QuestionBank from './components/QuestionBank.vue'
+import AITaskCenter from './components/AITaskCenter.vue'
 // Load the WebGL and Three.js bundle only when the user opens the graph.
 const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
 const DocumentLibrary = defineAsyncComponent(() => import('./components/DocumentLibrary.vue'))
@@ -353,6 +354,7 @@ onMounted(() => { void initialize() })
         </div>
         <div class="topbar-right">
           <span class="connection-status" :class="{ offline: !connected }"><span class="status-dot"></span>{{ connected ? '本地服务已连接' : '等待连接' }}</span>
+          <AITaskCenter />
           <button class="icon-button refresh-button" aria-label="刷新数据" title="刷新数据" :disabled="refreshing || !courseId" @click="refresh"><RefreshCw :size="18" :class="{ spinning: refreshing }" /></button>
           <div class="topbar-avatar">学</div>
         </div>
