@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, CirclePause, GitBranch, LoaderCircle,
   Play, RefreshCw, RotateCcw, ShieldCheck, Sparkles } from '@lucide/vue'
 import { api, type AIProviderId, type RelationBatch, type RelationBulkPreview,
-  type RelationType, type BridgePreview } from '../api'
+  type RelationType, type BridgePreview, type RelationLive } from '../api'
 
 const props=defineProps<{courseId:string; approvedCount:number}>()
 const emit=defineEmits<{updated:[]}>()
@@ -26,6 +26,32 @@ const busy=ref(false)
 const message=ref('')
 const error=ref('')
 let polling:ReturnType<typeof setInterval>|null=null
+let livePolling:ReturnType<typeof setInterval>|null=null
+const live=ref<RelationLive|null>(null)
+const showLive=ref(true)
+const followLive=ref(true)
+const liveViewer=ref<HTMLPreElement|null>(null)
+let livePending=false
+let liveToken=0
+async function readLive(){
+  if(livePending||!current.value)return
+  livePending=true
+  const batchId=current.value.id
+  const id=++liveToken
+  try{
+    const value=await api.relationLive(batchId)
+    if(id===liveToken&&current.value?.id===batchId){
+      live.value=value
+      if(followLive.value){
+        await nextTick()
+        if(liveViewer.value)liveViewer.value.scrollTop=liveViewer.value.scrollHeight
+      }
+    }
+  }catch{
+    // The persisted progress display stays available if live output drops out.
+  }finally{livePending=false}
+}
+
 let token=0
 let loading=false
 const current=computed(()=>jobs.value[0]??null)
@@ -64,6 +90,19 @@ function schedule(){
   if(active.value)polling=setInterval(()=>{void reload()},2300)
 }
 watch(active,schedule)
+watch(()=>current.value?.id,()=>{
+  ++liveToken;live.value=null
+  if(current.value)void readLive()
+})
+watch([active,showLive],()=>{
+  if(livePolling){clearInterval(livePolling);livePolling=null}
+  if(active.value&&showLive.value){
+    void readLive()
+    livePolling=setInterval(()=>{void readLive()},650)
+  }else if(current.value&&showLive.value){
+    void readLive()
+  }
+})
 watch(()=>props.courseId,()=>{
   ++token;jobs.value=[];reviewSummary.value=null
   focusLimit.value=30;confirmCost.value=false;confirmApproval.value=false
@@ -86,7 +125,7 @@ watch([mode,focusLimit,groupSize,()=>props.courseId],()=>{
   void loadBridgePreview()
 },{immediate:true})
 watch(chosenTypes,()=>{confirmApproval.value=false},{deep:true})
-onBeforeUnmount(()=>{if(polling)clearInterval(polling);++token;++bridgeToken})
+onBeforeUnmount(()=>{if(polling)clearInterval(polling);if(livePolling)clearInterval(livePolling);++liveToken;++token;++bridgeToken})
 async function start(){
   if(busy.value||active.value)return
   if(focusLimit.value>30&&!confirmCost.value){
@@ -221,6 +260,30 @@ async function approve(){
       <p>已生成 <strong>{{current.created_relations}}</strong> 条待审核关系；跳过 {{current.skipped}} 组/点；校验提醒 {{current.warning_count}} 条。</p>
       <p v-if="current.current_focus">当前正在分析{{current.mode==='single'?'知识点':'知识点分组'}}，代表 ID：{{current.current_focus}}</p>
       <p v-if="current.last_error" class="rb-alert error"><AlertTriangle :size="15"/>{{current.last_error}}</p>
+      <div class="rb-live">
+        <div class="rb-live-header">
+          <strong><Sparkles :size="16"/> 模型实时回复</strong>
+          <span v-if="live">{{live.group_index}} / {{live.total_groups}} 组 · 已收到 {{live.received_chars}} 字符</span>
+          <button type="button" @click="showLive=!showLive">{{showLive?'收起':'展开'}}</button>
+        </div>
+        <template v-if="showLive">
+          <p v-if="!live?.stream_supported" class="rb-hint">当前为旧逐点模式，暂不支持逐字流式输出；可切换章节分组或跨章节桥接模式。</p>
+          <template v-else>
+            <p class="rb-live-state">
+              <LoaderCircle v-if="live.phase==='streaming'||live.phase==='awaiting_first_token'" class="spinning" :size="14"/>
+              {{live.phase==='streaming'?'正在逐字接收模型可见答案…':
+                live.phase==='awaiting_first_token'?'已发送模型请求，等待首个字…':
+                live.phase==='validated'?'当前组完整回复已收到并完成证据验证':
+                live.phase==='failed'?'当前组处理失败，输出仅供排查，不会作为已审核关系':
+                '暂无当前进程的流式文字记录'}}
+            </p>
+            <pre ref="liveViewer" class="rb-live-output">{{live.text||'模型开始返回文字后会显示在这里；等待期间可查看上方任务进度。'}}</pre>
+            <label class="rb-live-follow"><input v-model="followLive" type="checkbox"/>自动跟随最新输出</label>
+            <p v-if="live.truncated" class="rb-hint">为避免界面占用过多内存，只保留最近 16,000 个字符；完整结果仍由后端进行校验。</p>
+            <p class="rb-hint">仅显示模型的可见回答，不显示内部推理。未完成的 JSON 不会被写入正式知识图谱；页面刷新后可重新查看当前进程正在生成的文本。</p>
+          </template>
+        </template>
+      </div>
       <div class="rb-actions">
         <button v-if="current.status==='running'" type="button" class="button button-outline button-small" :disabled="busy" @click="action('stop')"><CirclePause :size="16"/>当前项完成后停止</button>
         <button v-if="current.status==='stopped'||current.status==='interrupted'" type="button" class="button button-outline button-small" :disabled="busy" @click="action('resume')"><RotateCcw :size="16"/>从检查点继续</button>
@@ -254,6 +317,16 @@ async function approve(){
   </section>
 </template>
 <style scoped>
+.rb-live{display:grid;gap:9px;padding:12px 13px;border:1px solid #c6e2df;border-radius:11px;background:#fff}
+.rb-live-header{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.rb-live-header strong{display:flex;align-items:center;gap:6px;color:#256f64;font-size:12px}
+.rb-live-header span{font-size:10px;color:#7d9993}
+.rb-live-header button{margin-left:auto;background:none;border:0;color:#208e7e;font-size:11px;cursor:pointer}
+.rb-live-state{display:flex;align-items:center;gap:6px;color:#4c9282;font-size:10px;line-height:1.7;margin:0}
+.rb-live-output{max-height:240px;min-height:95px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#122a31;color:#d7eee8;border-radius:8px;padding:13px;font-size:11px;line-height:1.75;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;margin:0}
+.rb-live-follow{display:flex;align-items:center;gap:7px;color:#77958d;font-size:10px}
+.rb-live-follow input{accent-color:#1a9b8a}
+
 .rb-bridge-preview{padding:13px;background:#fff;border:1px solid #d5e8e2;border-radius:10px;display:grid;gap:10px;color:#4b8076;font-size:11px}
 .rb-bridge-preview p{font-size:11px;line-height:1.75;color:#79948e;margin:0}
 .rb-bridge-stats{display:flex;flex-wrap:wrap;gap:7px}
