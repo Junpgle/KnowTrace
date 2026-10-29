@@ -351,9 +351,12 @@ export interface QuestionRevision {
   difficulty?: number
 }
 
+export function documentPagePreviewUrl(documentId: string, page: number): string {
+  return base + '/api/documents/' + encodeURIComponent(documentId) +
+    '/pages/' + encodeURIComponent(String(page)) + '/preview'
+}
 export function sourcePreviewUrl(source: SourceEvidence): string {
-  return base + '/api/documents/' + encodeURIComponent(source.document_id)
-    + '/pages/' + source.page_start + '/preview'
+  return documentPagePreviewUrl(source.document_id, source.page_start)
 }
 
 const base = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
