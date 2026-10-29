@@ -27,6 +27,14 @@ const includePending = ref(true)
 const showRelations = ref(true)
 const display = ref<'3d' | 'list'>('3d')
 const showStudio = ref(false)
+const studioAnchor = ref<HTMLDivElement | null>(null)
+async function toggleStudio() {
+  showStudio.value = !showStudio.value
+  if (showStudio.value) {
+    await nextTick()
+    studioAnchor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
 const newChapter = ref('')
 const chapterChoice = ref('')
 const chapterBusy = ref(false)
@@ -211,7 +219,7 @@ watch(() => props.courseId, () => {
         <p class="section-description">以真实知识为星球，以经过审核的关联为星际航路。</p>
       </div>
       <div class="kg-top-actions">
-        <button type="button" class="button button-primary button-small" @click="showStudio=!showStudio"><Network :size="16" /> {{ showStudio ? "收起关系工作台" : "提取 / 审核关系" }}</button>
+        <button type="button" class="button button-primary button-small" @click="toggleStudio"><Network :size="16" /> {{ showStudio ? "收起关系工作台" : "提取 / 审核关系" }}</button>
         <button type="button" class="button button-outline button-small" :disabled="loading" @click="refresh"><RefreshCw :size="16" /> 刷新</button>
         <button type="button" class="button button-outline button-small" @click="resetView"><RotateCcw :size="16" /> 返回总览</button>
       </div>
@@ -229,8 +237,6 @@ watch(() => props.courseId, () => {
         本次仅加载 {{ graph.stats.shown_knowledge_points }} / {{ graph.stats.total_knowledge_points }} 个知识点；
         后续将增加分页和分章节按需加载，不应把未加载知识点视为不存在。
       </p>
-      <RelationStudio v-if="showStudio" :course-id="courseId" :knowledge="allKnowledge"
-        :focus-id="selectedId" @updated="refresh" @select="select" />
       <div class="kg-layout">
         <aside class="kg-filter panel">
           <h2><Search :size="17" /> 星系导航</h2>
@@ -355,6 +361,10 @@ watch(() => props.courseId, () => {
           </template>
         </aside>
       </div>
+      <div v-if="showStudio" ref="studioAnchor" class="kg-studio-anchor">
+        <RelationStudio :course-id="courseId" :knowledge="allKnowledge"
+          :focus-id="selectedId" @updated="refresh" @select="select" />
+      </div>
       <div class="kg-legend">
         <span><i class="kg-dot mastered"></i>已掌握 ≥80%</span>
         <span><i class="kg-dot growing"></i>学习中 50–79%</span>
@@ -371,6 +381,7 @@ watch(() => props.courseId, () => {
 
 <style scoped>
 .kg-page{display:grid;gap:20px;min-width:0}
+.kg-studio-anchor{scroll-margin-top:22px;min-width:0}
 .kg-heading{display:flex;justify-content:space-between;align-items:center;gap:17px;flex-wrap:wrap}
 .kg-heading h1{font-size:30px;margin:5px 0}
 .kg-top-actions{display:flex;gap:8px;flex-wrap:wrap}
