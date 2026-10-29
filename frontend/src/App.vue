@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import {
   Activity, AlertCircle, ArrowRight, Award, BookOpen, Check,
   CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList, ClipboardCheck,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
-  TrendingUp, X, XCircle,
+  TrendingUp, X, XCircle, Orbit,
 } from '@lucide/vue'
 import QuestionBank from './components/QuestionBank.vue'
+// Load the WebGL and Three.js bundle only when the user opens the graph.
+const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession, type KnowledgePoint } from './api'
 
-type View = 'overview' | 'practice' | 'report' | 'bank'
+type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy'
 type Choice = string | boolean | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
@@ -64,7 +66,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理', galaxy: '知识星系' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -271,6 +273,7 @@ onMounted(() => { void initialize() })
         <button type="button" :class="{ active: view === 'overview' }" @click="navigate('overview')"><LayoutDashboard :size="19" /><span>学习总览</span></button>
         <button type="button" :class="{ active: view === 'practice' }" @click="navigate('practice')"><BookOpen :size="19" /><span>开始练习</span><span v-if="quiz?.status === 'active'" class="nav-dot"></span></button>
         <button type="button" :class="{ active: view === 'bank' }" @click="navigate('bank')"><ClipboardCheck :size="19" /><span>题库管理</span><span v-if="pendingCount" class="nav-dot"></span></button>
+        <button type="button" :class="{ active: view === 'galaxy' }" @click="navigate('galaxy')"><Orbit :size="19" /><span>知识星系 · 3D</span></button>
         <button type="button" :class="{ active: view === 'report' }" @click="navigate('report')"><TrendingUp :size="19" /><span>学习报告</span></button>
       </nav>
       <div class="sidebar-group-label course-label">正在学习</div>
@@ -437,6 +440,9 @@ onMounted(() => { void initialize() })
           </div>
 
           <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" @updated="refresh" />
+          <KnowledgeGalaxy v-else-if="view === 'galaxy'" :course-id="courseId"
+            :course-name="currentCourse?.title || '课程'"
+            @open-bank="navigate('bank')" @open-practice="navigate('practice')" />
           <div v-else class="view-stack">
             <div class="section-heading"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>学习报告<span class="heading-dot">.</span></h1><p class="section-description">发现学习中的进步，也正视尚未掌握的部分。</p></div>
               <button class="button button-outline button-small" @click="refresh"><RefreshCw :size="17" :class="{ spinning: refreshing }" /> 更新报告</button></div>
@@ -462,7 +468,7 @@ onMounted(() => { void initialize() })
           </div>
         </template>
       </main>
-      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v0.7.0</span></footer>
+      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v0.8.0</span></footer>
     </div>
   </div>
 </template>
