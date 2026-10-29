@@ -13,12 +13,12 @@ import {
   type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
-const props = defineProps<{ courseId: string }>()
+const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external' }>()
 const emit = defineEmits<{ updated: [] }>()
 
 type Tab = 'knowledge' | 'questions' | 'external'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
-const tab = ref<Tab>('questions')
+const tab = ref<Tab>(props.initialTab ?? 'questions')
 const filter = ref<Filter>('pending')
 const filters: Filter[] = ['pending', 'all', 'approved', 'rejected']
 const busy = ref(false)
@@ -113,6 +113,12 @@ watch(() => props.courseId, () => {
   void reload('', '')
 }, { immediate: true })
 
+watch(() => props.initialTab, value => {
+  if (value && tab.value !== value) {
+    tab.value = value
+    resetFeedback()
+  }
+})
 function switchTab(value: Tab) {
   tab.value = value
   resetFeedback()
