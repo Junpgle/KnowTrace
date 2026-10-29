@@ -196,6 +196,30 @@ CREATE TABLE IF NOT EXISTS ai_knowledge_review_batches (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_review_batches_course ON ai_knowledge_review_batches(course_id,created_at);
 
+-- AI course-level relation discovery operates on a stable point ID snapshot.
+-- Each successful focus call checkpoints independently so stop/resume is safe.
+CREATE TABLE IF NOT EXISTS relation_batch_runs (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    provider TEXT NOT NULL CHECK(provider IN ('default','ollama','mimo')),
+    focus_ids_json TEXT NOT NULL,
+    per_focus INTEGER NOT NULL CHECK(per_focus BETWEEN 1 AND 5),
+    total INTEGER NOT NULL CHECK(total > 0),
+    next_index INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    created_relations INTEGER NOT NULL DEFAULT 0,
+    warning_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN
+      ('running','stopping','stopped','interrupted','succeeded')),
+    last_error TEXT,
+    current_focus TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_relation_batch_course
+    ON relation_batch_runs(course_id,created_at);
+
 CREATE TABLE IF NOT EXISTS knowledge_relations (
     id TEXT PRIMARY KEY,
     source_kp_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE RESTRICT,
