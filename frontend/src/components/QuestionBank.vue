@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import ExternalTransfer from './ExternalTransfer.vue'
+import KnowledgeAIReviewPanel from './KnowledgeAIReviewPanel.vue'
 import {
   AlertCircle, ArrowRight, BookOpen, CheckCircle2, ChevronRight,
   ClipboardCheck, FileQuestion, FileText, Image, LoaderCircle,
@@ -374,7 +375,10 @@ function previewAvailable(source: SourceEvidence): boolean {
       :knowledge-points="knowledge" :preferred-knowledge-point-id="selectedKpId"
       :preferred-document-id="props.initialDocumentId" @imported="importedExternal" />
 
-    <div v-else-if="tab === 'knowledge'" class="qb-columns">
+    <div v-else-if="tab === 'knowledge'" class="qb-knowledge-layout">
+      <KnowledgeAIReviewPanel :course-id="props.courseId" :points="knowledge"
+        :selected-id="selectedKpId" @updated="reload();emit('updated')" @select="selectKnowledge" />
+      <div class="qb-columns">
       <aside class="qb-list panel">
         <div class="qb-list-head"><strong>课程知识点</strong><span>{{ knowledge.length }} 项</span></div>
         <div v-if="!knowledge.length" class="qb-empty-small">暂无知识点。请先导入课程资料并提取知识点。</div>
@@ -452,6 +456,7 @@ function previewAvailable(source: SourceEvidence): boolean {
           </div>
         </template>
       </section>
+      </div>
     </div>
 
     <div v-else class="qb-columns">
@@ -643,4 +648,5 @@ function previewAvailable(source: SourceEvidence): boolean {
   .qb-detail { padding:19px }
   .qb-tabs button { font-size:11px;padding:11px 9px;gap:6px }
 }
+.qb-knowledge-layout{display:grid;gap:17px;min-width:0}
 </style>
