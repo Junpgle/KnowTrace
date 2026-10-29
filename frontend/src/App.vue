@@ -527,7 +527,7 @@ onMounted(() => { void initialize() })
           </div>
         </template>
       </main>
-      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v1.3.0</span></footer>
+      <footer class="page-footer"><span>© 2026 知迹 KnowTrace</span><span>让每一次学习，都有迹可循。</span><span>本地学习原型 · v1.4.0</span></footer>
     </div>
   </div>
 </template>
