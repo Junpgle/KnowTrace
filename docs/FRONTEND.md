@@ -1,4 +1,4 @@
-# KnowTrace v0.6.0：Vue 3 学习与题库管理工作台
+# KnowTrace v0.7.0：Vue 3 学习与题库管理工作台
 
 这是 KnowTrace 的 Vue 3 **本地学习与题库管理前端**，提供课程总览、知识点编辑与审核、Qwen 本地 AI 出题、题目修改与人工审核、普通练习、自动判分与 BKT 学习报告。
 
@@ -56,6 +56,16 @@ Vite 在开发时自动把 /api 和 /health 转发到 http://127.0.0.1:8000，�
 
 生成结果展示 MiMo 工具调用次数、读取资料片段数及 API 返回的 Token 用量，便于对比本地模型。详见 [小米 MiMo 接入指南](MIMO-API.md)。
 
+## v0.7.0：无需 API 的外部 AI 手动接力
+
+左侧“题库管理”新增第三个标签 **外部 AI 接力**。
+
+- **生成练习题**：选择已审核知识点、题量和题型，复制系统准备的结构化提示词，发给任意 AI，然后将完整 JSON 回复贴回来。KnowTrace 逐条验证题干、正确答案格式、原文证据和重复题目后，将有效候选放入待审核区。
+- **提取知识点**：选择已导入课件和 1–4 页，复制提示词发给外部 AI，粘贴回复后识别知识点与逐字引文；新知识点始终待审核。
+- 无需 MIMO_API_KEY，也不需要本地 Ollama 推理。注意复制提示词本身可能向第三方提供课件内容，发送前请核对隐私和版权限制。
+
+完整步骤与 JSON 示例：[外部 AI 接力指南](EXTERNAL-AI-HANDOFF.md)。
+
 ## 新增：网页内生成、审核题目
 
 打开左侧 **题库管理**，无需再用 Swagger 管理题目。
@@ -96,6 +106,7 @@ export KNOWTRACE_VISION_MODEL=gemma4:12b
 
 - src/App.vue — 课程首页、页面导航、答题与学习报告
 - src/components/QuestionBank.vue — 知识点审核、AI 出题、题目修订与审核
+- src/components/ExternalTransfer.vue — 外部 AI 提示词复制、JSON 解析与导入
 - src/api.ts — FastAPI 类型与客户端
 - src/style.css — 样式与响应式布局
 - vite.config.ts — 本地 API 开发代理
