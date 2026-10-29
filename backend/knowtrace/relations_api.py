@@ -76,13 +76,25 @@ def catalog(db_path: Path, course_id: str, focus_id: str, target_id: str | None,
                AND review_status='approved' AND archived_at IS NULL""",
             (target_id, course_id)).fetchone()):
             raise HTTPException(422, "Target must be a different approved knowledge point")
-        # Same-chapter neighbors first; explicit target takes priority.
-        rows = db.execute("""SELECT id,chapter_id,canonical_name,summary
-            FROM knowledge_points WHERE course_id=? AND review_status='approved'
-              AND archived_at IS NULL AND id<>?
-            ORDER BY (id=?) DESC, (chapter_id IS NOT NULL AND chapter_id=?) DESC,
-                     canonical_name,id LIMIT 11""",
-            (course_id, focus_id, target_id or "", focus["chapter_id"])).fetchall()
+        # Grounded candidate retrieval for large courses:
+        # prioritize knowledge points sharing original source chunks, then
+        # actual chapter membership. Avoid alphabetically adjacent guesses.
+        rows = db.execute("""SELECT p.id,p.chapter_id,p.canonical_name,p.summary
+            FROM knowledge_points p
+            LEFT JOIN (
+              SELECT s.knowledge_point_id, COUNT(DISTINCT s.chunk_id) AS shared
+              FROM knowledge_point_sources s
+              WHERE s.chunk_id IN (
+                 SELECT chunk_id FROM knowledge_point_sources WHERE knowledge_point_id=?
+              )
+              GROUP BY s.knowledge_point_id
+            ) overlap ON overlap.knowledge_point_id=p.id
+            WHERE p.course_id=? AND p.review_status='approved'
+              AND p.archived_at IS NULL AND p.id<>?
+            ORDER BY (p.id=?) DESC, COALESCE(overlap.shared,0) DESC,
+                     (p.chapter_id IS NOT NULL AND p.chapter_id=?) DESC,
+                     p.canonical_name,p.id LIMIT 11""",
+            (focus_id,course_id,focus_id,target_id or "",focus["chapter_id"])).fetchall()
         points = [dict(focus)] + [dict(r) for r in rows]
         if target_id and target_id not in {r["id"] for r in points}:
             raise HTTPException(422, "Target does not belong to selected relation scope")
@@ -500,3 +512,15 @@ def register_relation_routes(app: FastAPI, db_path: Path, resolve_provider):
                 "notice":("没有已审核的必要前置关系；当前是未测评/低掌握度优先清单，而非严格的先修路径。"
                           if not prereqs else
                           "只使用已审核的必要前置关系保证先后顺序；BKT 用于同层候选排序，非正式能力测量。")}
+
+    # Use the existing evidence-checked single-point implementation for
+    # course-scale discovery, rather than implementing a second LLM pipeline.
+    from .relation_batch_api import register_relation_batch_routes
+    return register_relation_batch_routes(
+        app, db_path,
+        lambda course_id, focus_id, provider, count: generate_relations(
+            course_id, RelationGenerate(
+                focus_id=focus_id, count=count, provider=provider,
+            ),
+        ),
+    )
