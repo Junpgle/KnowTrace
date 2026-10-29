@@ -171,7 +171,7 @@ def verify_candidates(raw: str, points: list[dict], chunks: dict[str,dict], *, c
             "source_kp_id","target_kp_id","relation_type","source_chunk_id"))
         rationale,quote = item.get("rationale"),item.get("quote")
         if (not isinstance(a,str) or not isinstance(b,str) or a==b or a not in allowed
-            or b not in allowed or t not in RELATION_TYPES or
+            or b not in allowed or not isinstance(t,str) or t not in RELATION_TYPES or
             not isinstance(cid,str) or cid not in chunks
             or not isinstance(rationale,str) or len(rationale.strip())<8
             or len(rationale)>1000 or not isinstance(quote,str) or len(compact(quote))<10):
