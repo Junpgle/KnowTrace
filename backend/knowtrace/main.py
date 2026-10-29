@@ -146,7 +146,7 @@ def create_app(*, db_path: str | Path | None = None,
                    "available": bool(local.text_model), "vision_model": local.vision_model,
                    "function_calling": False},
                   {"id": "mimo", "label": "小米 MiMo API", "model": mimo.text_model,
-                   "available": bool(mimo.api_key), "vision_model": local.vision_model,
+                   "available": bool(mimo.api_key) and not mimo.api_key.startswith(("tp-", "ttp-")), "vision_model": local.vision_model,
                    "function_calling": True}
                 ],
                 "security": "API keys are configured on the backend only and never returned."}
