@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import ExternalTransfer from './ExternalTransfer.vue'
 import KnowledgeAIReviewPanel from './KnowledgeAIReviewPanel.vue'
+import DirectBulkApproval from './DirectBulkApproval.vue'
 import {
   AlertCircle, ArrowRight, BookOpen, CheckCircle2, ChevronRight,
   ClipboardCheck, FileQuestion, FileText, Image, LoaderCircle,
@@ -376,6 +377,7 @@ function previewAvailable(source: SourceEvidence): boolean {
       :preferred-document-id="props.initialDocumentId" @imported="importedExternal" />
 
     <div v-else-if="tab === 'knowledge'" class="qb-knowledge-layout">
+      <DirectBulkApproval :course-id="props.courseId" @updated="reload();emit('updated')" />
       <KnowledgeAIReviewPanel :course-id="props.courseId" :points="knowledge"
         :selected-id="selectedKpId" @updated="reload();emit('updated')" @select="selectKnowledge" />
       <div class="qb-columns">
