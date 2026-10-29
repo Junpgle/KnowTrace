@@ -4,6 +4,7 @@ import {
   AlertTriangle, ArrowRight, CheckCircle2, ClipboardCopy, FileText, GitBranch,
   LoaderCircle, RefreshCw, ShieldCheck, Sparkles, XCircle,
 } from '@lucide/vue'
+import CourseRelationBatch from './CourseRelationBatch.vue'
 import { api, sourcePreviewUrl, type AIProviderId, type GraphNode,
   type RelationSummary, type StudyPath, type RelationTaskOptions } from '../api'
 
@@ -146,6 +147,8 @@ function percent(value:number|null) {return value===null?'未测评':Math.round(
         <GitBranch :size="16" /> 学习路线
       </button>
     </div>
+    <CourseRelationBatch :course-id="props.courseId" :approved-count="approved.length"
+      @updated="refresh();emit('updated')" />
     <p v-if="warning" role="alert" class="rs-notice error">{{ warning }}</p>
     <p v-if="success" role="status" class="rs-notice success">{{ success }}</p>
     <div v-if="issues.length" class="rs-notice caution"><strong>校验提醒（{{ issues.length }}）：</strong>
