@@ -727,6 +727,7 @@ function rebuild(animate = false) {
           label.scale.set(isCourse ? 22 : 24, 5.3, 1)
         }
         label.position.copy(position)
+        label.userData.nodeId = node.id
         const canvasWidth = mountPoint.value?.clientWidth ?? 1500
         const widthPx = node.kind === 'group'
           ? Math.min(186, Math.max(135, canvasWidth / 7.6))
@@ -735,7 +736,8 @@ function rebuild(animate = false) {
           sprite: label, center: position,
           distance: radius + (overview ? 10.5 : 4),
           nodeId: node.id,
-          priority: node.kind === 'group' ? count : 100,
+          priority: node.kind === 'group'
+            ? count + (groupOrder >= 0 && groupOrder < 6 ? 7 : 0) : 100,
           declutter: overview && node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 12,
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
@@ -1027,6 +1029,48 @@ function placeLabel(anchor: LabelAnchor) {
   )
 }
 
+// When 30+ browsing groups are shown, 30 large labels cannot all fit in the
+// same viewport. Keep the planets visible, but show only captions that do not
+// overlap; a hovered planet gets first priority and always reveals its name.
+function declutterGroupLabels() {
+  if (!camera || !renderer) return
+  const items = labelAnchors.filter(a => a.declutter && a.screen)
+  if (!items.length) return
+  const width = renderer.domElement.clientWidth
+  const height = renderer.domElement.clientHeight
+  const boxes: { left: number; right: number; top: number; bottom: number }[] = []
+  const sorted = [...items].sort((a,b) =>
+    Number(b.nodeId === hoveredNodeId) - Number(a.nodeId === hoveredNodeId) ||
+    (b.priority ?? 0) - (a.priority ?? 0) ||
+    (a.nodeId ?? '').localeCompare(b.nodeId ?? ''))
+  const cap = Math.min(16, Math.max(8, Math.round(width * height / 78000)))
+  let visibleCount = 0
+  for (const anchor of sorted) {
+    const screen = anchor.sprite.position.clone().project(camera)
+    const px = (screen.x + 1) * width / 2
+    const py = (1 - screen.y) * height / 2
+    const w = anchor.screen!.width
+    const h = anchor.screen!.height
+    const box = {left:px-w/2-7, right:px+w/2+7,
+      top:py-h/2-6, bottom:py+h/2+6}
+    const forced = anchor.nodeId === hoveredNodeId
+    const fits = screen.z > -1 && screen.z < 1 &&
+      box.left >= 10 && box.right <= width - 10 &&
+      box.top >= 100 && box.bottom <= height - 25
+    const overlaps = boxes.some(other =>
+      box.left < other.right && box.right > other.left &&
+      box.top < other.bottom && box.bottom > other.top)
+    // Do not hide the hovered caption just because it overlaps a label
+    // elsewhere; the sort above allows it to displace that label.
+    const show = fits && !overlaps && (visibleCount < cap || forced)
+    anchor.sprite.visible = show
+    if (show) {
+      visibleCount++
+      boxes.push(box)
+    }
+  }
+}
+
 function draw() {
   if (!renderer || !camera || !controls || !scene || disposed || !visible) return
   const now = performance.now()
@@ -1050,6 +1094,7 @@ function draw() {
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
   for (const anchor of labelAnchors) placeLabel(anchor)
   if (outgoing) for (const anchor of outgoing.anchors) placeLabel(anchor)
+  declutterGroupLabels()
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
 }
@@ -1066,6 +1111,29 @@ function resize() {
   camera.updateProjectionMatrix()
   renderer.setSize(width, height, false)
 }
+function pickNode(clientX: number, clientY: number): string | null {
+  if (!renderer || !camera) return null
+  const rect = renderer.domElement.getBoundingClientRect()
+  pointer.set(((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1)
+  raycaster.setFromCamera(pointer, camera)
+  const clickableLabels = labelAnchors
+    .filter(a => a.sprite.visible && !!a.nodeId).map(a => a.sprite)
+  const hits = raycaster.intersectObjects([...meshes, ...clickableLabels])
+  const hit = hits[0]
+  const instanceIds = hit?.object.userData.instanceNodeIds as string[] | undefined
+  return (instanceIds && hit.instanceId !== undefined
+    ? instanceIds[hit.instanceId] : hit?.object.userData.nodeId) ?? null
+}
+function pointerMove(event: PointerEvent) {
+  if (!renderer) return
+  hoveredNodeId = pickNode(event.clientX, event.clientY)
+  renderer.domElement.style.cursor = hoveredNodeId ? 'pointer' : 'grab'
+}
+function pointerLeave() {
+  hoveredNodeId = null
+  if (renderer) renderer.domElement.style.cursor = 'grab'
+}
 function pointerDown(event: PointerEvent) {
   if (event.button !== 0) return
   pressed = { x: event.clientX, y: event.clientY }
@@ -1075,17 +1143,7 @@ function pointerUp(event: PointerEvent) {
   const movement = Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y)
   pressed = null
   if (movement > 6) return
-  const rect = renderer.domElement.getBoundingClientRect()
-  pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1,
-              -((event.clientY - rect.top) / rect.height) * 2 + 1)
-  raycaster.setFromCamera(pointer, camera)
-  const hits = raycaster.intersectObjects(meshes)
-  const hit = hits[0]
-  const instanceIds = hit?.object.userData.instanceNodeIds as string[] | undefined
-  const id = (instanceIds && hit.instanceId !== undefined
-    ? instanceIds[hit.instanceId]
-    : hit?.object.userData.nodeId) as string | undefined
-  emit('select', id ?? null)
+  emit('select', pickNode(event.clientX, event.clientY))
 }
 function initialize() {
   const el = mountPoint.value
@@ -1147,6 +1205,8 @@ function initialize() {
   observer.observe(el)
   renderer.domElement.addEventListener('pointerdown', pointerDown)
   renderer.domElement.addEventListener('pointerup', pointerUp)
+  renderer.domElement.addEventListener('pointermove', pointerMove)
+  renderer.domElement.addEventListener('pointerleave', pointerLeave)
   document.addEventListener('visibilitychange', visibilityChanged)
   focus(null, true)
   draw()
@@ -1183,6 +1243,8 @@ onBeforeUnmount(() => {
   if (renderer) {
     renderer.domElement.removeEventListener('pointerdown', pointerDown)
     renderer.domElement.removeEventListener('pointerup', pointerUp)
+    renderer.domElement.removeEventListener('pointermove', pointerMove)
+    renderer.domElement.removeEventListener('pointerleave', pointerLeave)
   }
   clearGraph()
   finishFade()
