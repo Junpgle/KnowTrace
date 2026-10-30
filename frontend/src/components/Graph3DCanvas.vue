@@ -66,8 +66,10 @@ type FadeGroup = { group: THREE.Group; parts: FadePart[]; anchors: LabelAnchor[]
 let outgoing: FadeGroup | null = null
 let incoming: FadeGroup | null = null
 let layerTransitionStart = 0
-const LAYER_DURATION = 520
-const CAMERA_DURATION = 850
+const incomingStartOffset = new THREE.Vector3()
+let pendingTransitionOrigin: THREE.Vector3 | null = null
+const LAYER_DURATION = 680
+const CAMERA_DURATION = 920
 function reducedMotion() {
   return typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -828,7 +830,21 @@ function rebuild(animate = false) {
   }
   if (outgoing) {
     incoming = fadeGroup(g, [...labelAnchors])
+    // Grow the next level out of the clicked planet (or previous camera
+    // target for breadcrumb navigation) instead of teleporting a fully
+    // populated star field into the scene at unrelated world coordinates.
+    const anchors = [...positions.values()]
+    const nextCenter = anchors.length
+      ? new THREE.Box3().setFromPoints(anchors).getCenter(new THREE.Vector3())
+      : new THREE.Vector3()
+    const origin = pendingTransitionOrigin ?? controls?.target ?? new THREE.Vector3()
+    incomingStartOffset.copy(origin).addScaledVector(nextCenter, -.76)
+    incomingStartOffset.clampLength(0, 90)
+    incoming.group.position.copy(incomingStartOffset)
+    incoming.group.scale.setScalar(.76)
     setFade(incoming, 0)
+  }
+  pendingTransitionOrigin = null
   }
 }
 
@@ -1129,6 +1145,8 @@ function draw() {
     const eased = raw * raw * (3 - 2 * raw)
     setFade(outgoing, 1 - eased)
     setFade(incoming, eased)
+    incoming.group.scale.setScalar(.76 + .24 * eased)
+    incoming.group.position.copy(incomingStartOffset).multiplyScalar(1 - eased)
     if (raw >= 1) finishFade()
   }
   controls.update()
@@ -1186,7 +1204,10 @@ function pointerUp(event: PointerEvent) {
   const movement = Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y)
   pressed = null
   if (movement > 6) return
-  emit('select', pickNode(event.clientX, event.clientY))
+  const id = pickNode(event.clientX, event.clientY)
+  // Remember the exact clicked position for the next hierarchy transition.
+  pendingTransitionOrigin = id ? positions.get(id)?.clone() ?? null : null
+  emit('select', id)
 }
 function initialize() {
   const el = mountPoint.value
@@ -1260,6 +1281,11 @@ onMounted(initialize)
 // Batch all reactive scene inputs into one render pass. Separate watchers for
 // nodes, edges and selection used to overwrite the outgoing animation within
 // the same Vue flush, making level switches appear instantaneous.
+// Use actual node identity rather than the array object reference.
+// Computed arrays can be recreated by selection/filter changes, previously
+// restarting a layer fade and camera fit even when the scene was unchanged.
+const sceneSignature = (nodes: GraphNode[]) =>
+  nodes.map(n => n.kind + ':' + n.id).sort().join('|')
 watch(() => ({
   nodes: props.nodes,
   edges: props.edges,
@@ -1270,9 +1296,10 @@ watch(() => ({
   showRelations: props.showRelations,
   showStructure: props.showStructure,
 }), (next, previous) => {
-  const layerChanged = next.nodes !== previous.nodes ||
-    next.layoutNodes !== previous.layoutNodes ||
-    next.layoutEdges !== previous.layoutEdges
+  const layerChanged = sceneSignature(next.nodes) !== sceneSignature(previous.nodes)
+    || next.layoutNodes !== previous.layoutNodes
+    || next.layoutEdges !== previous.layoutEdges
+  if (!layerChanged) pendingTransitionOrigin = null
   rebuild(layerChanged)
   if (layerChanged || next.selectedId !== previous.selectedId)
     focus(next.selectedId, layerChanged)
