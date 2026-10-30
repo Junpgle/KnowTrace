@@ -237,29 +237,56 @@ function organicOffsets(count: number, seed: string): THREE.Vector3[] {
 function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   const pos = new Map<string, THREE.Vector3>()
   const groupNodes=nodes.filter(n=>n.kind==='group')
-  if(groupNodes.length){
-    const chapter=nodes.find(n=>n.kind==='chapter')
-    if(chapter)pos.set(chapter.id,groupNodes.length===1?
-      new THREE.Vector3(-27,-5,-7):new THREE.Vector3())
-    groupNodes.forEach((g,i)=>{
-      const angle=2*Math.PI*i/groupNodes.length-Math.PI/2
-      const center=groupNodes.length===1?new THREE.Vector3():
-       new THREE.Vector3(Math.cos(angle)*(32+Math.sqrt(groupNodes.length)*4),
-         Math.sin(i*2.4)*5,Math.sin(angle)*(32+Math.sqrt(groupNodes.length)*4))
-      pos.set(g.id,center)
-      const points=nodes.filter(n=>n.kind==='knowledge'&&
-        edges.some(e=>e.structural&&e.source===g.id&&e.target===n.id))
-        .sort((a,b)=>a.id.localeCompare(b.id))
-      points.forEach((p,j)=>{
-        const theta=j*Math.PI*(3-Math.sqrt(5))
-        const y=1-2*(j+.5)/points.length
-        const radial=Math.sqrt(Math.max(0,1-y*y))
-        // Small relationship neighborhoods must occupy a tight, readable
-        // field rather than distributing 3 points over a 60-unit diameter.
-        const radius = 11 + Math.min(8, Math.sqrt(points.length)*2.4)
-        pos.set(p.id,center.clone().add(new THREE.Vector3(
-          Math.cos(theta)*radial*radius,y*radius*.63,Math.sin(theta)*radial*radius)))
+  if (groupNodes.length) {
+    const chapter = nodes.find(n => n.kind === 'chapter')
+    const detailed = groupNodes.length === 1 &&
+      nodes.some(n => n.kind === 'knowledge')
+    // In a leaf neighborhood, use the entire available screen plane.
+    // A true 3D ball around the hub projected many labels onto each other.
+    // Use concentric, staggered constellations and leave space for captions.
+    if (detailed) {
+      const group = groupNodes[0]
+      pos.set(group.id, new THREE.Vector3())
+      const points = nodes.filter(n => n.kind === 'knowledge')
+        .sort((a, b) => a.id.localeCompare(b.id))
+      const count = points.length
+      const innerCount = count <= 8 ? count : Math.min(6, Math.round(count * .42))
+      const outerCount = count - innerCount
+      const ring1 = count <= 3 ? 48 : count <= 8 ? 56 : 53
+      const ring2 = 112
+      // XY lies parallel to the preferred detail camera plane. Keeping the
+      // Z depth small avoids accidental label overlaps on entry.
+      points.forEach((node, i) => {
+        const outer = i >= innerCount
+        const j = outer ? i - innerCount : i
+        const n = outer ? outerCount : innerCount
+        const theta = -Math.PI / 2 + 2 * Math.PI * j / Math.max(1, n)
+          + (outer ? Math.PI / Math.max(1, outerCount) : .12)
+        const radius = outer ? ring2 : ring1
+        const wobble = (ordinalHash(node.id + ':leaf') - .5) * 7
+        pos.set(node.id, new THREE.Vector3(
+          Math.cos(theta) * (radius + wobble),
+          Math.sin(theta) * (radius + wobble) * .80,
+          (ordinalHash(node.id + ':depth') - .5) * 3,
+        ))
       })
+      // The actual parent chapter is a breadcrumb in the UI, not another
+      // selectable planet fighting for the center of this local diagram.
+      if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
+      return pos
+    }
+    // Chapter grouping overview retains its own orbital arrangement.
+    if (chapter) pos.set(chapter.id, new THREE.Vector3())
+    groupNodes.forEach((group, i) => {
+      const theta = 2 * Math.PI * i / Math.max(1, groupNodes.length) - Math.PI / 2
+      const radius = 36 + Math.sqrt(groupNodes.length) * 6
+      const center = groupNodes.length === 1 ? new THREE.Vector3() :
+        new THREE.Vector3(
+          Math.cos(theta) * radius,
+          Math.sin(i * 2.4) * 6,
+          Math.sin(theta) * radius,
+        )
+      pos.set(group.id, center)
     })
     return pos
   }
@@ -488,9 +515,9 @@ function rebuild(animate = false) {
         if (neighbor) neighborLabels += 1
         const label = makeLabel(node.name, smallGroup ? 480 : 320)
         if (label) {
-          if (smallGroup) label.scale.set(19, 4, 1)
+          if (smallGroup) label.scale.set(34, 6.1, 1)
           label.position.copy(position)
-          labelAnchors.push({ sprite: label, center: position, distance: radius + (smallGroup ? 4.3 : 4.5) })
+          labelAnchors.push({ sprite: label, center: position, distance: radius + (smallGroup ? 6.5 : 4.5) })
           g.add(label)
         }
       }
@@ -708,9 +735,10 @@ function focus(id: string | null) {
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect)
     const halfAngle = Math.min(vFov, hFov) / 2
     if (localGroup && visibleKnowledge.length && visibleKnowledge.length <= 18) {
-      // Node radius and labels are also enlarged in this detail mode.
+      // Fit the FULL radial graph plus labels, not an arbitrary 94-unit cap.
+      // With 14 nodes that cap made every label overlap on screen.
       distance = THREE.MathUtils.clamp(
-        (extent + 8) / Math.sin(halfAngle) * 1.06, 46, 94)
+        (extent + 18) / Math.sin(halfAngle) * 1.04, 78, 360)
     } else {
       distance = Math.max(localGroup ? 58 : overview ? 72 : 85,
         (extent + (overview ? 15 : 9)) / Math.sin(halfAngle)
@@ -722,13 +750,19 @@ function focus(id: string | null) {
   } else {
     const selected = props.nodes.find(n => n.id === id)
     if (localGroup && visibleKnowledge.length <= 18)
-      distance = selected?.kind === 'knowledge' ? 46 : 59
+      distance = selected?.kind === 'knowledge' ? 92 : 112
     else distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
   }
   if (scene?.fog instanceof THREE.FogExp2)
     scene.fog.density = Math.min(0.0015, .35 / Math.max(72,distance))
   const direction = camera.position.clone().sub(controls.target)
-  if (direction.lengthSq() < 0.01) direction.set(.4,.8,1)
+  if (localGroup && visibleKnowledge.length > 0 && visibleKnowledge.length <= 18 && !id) {
+    // Frame the radial layout face-on. Subsequent user OrbitControls rotation
+    // remains available; selecting a concept does not reset the camera angle.
+    direction.set(0, .14, 1)
+  } else if (direction.lengthSq() < 0.01) {
+    direction.set(.4, .8, 1)
+  }
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
   if (reducedMotion()) {
     camera.position.copy(desiredPosition)
