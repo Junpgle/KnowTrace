@@ -7,7 +7,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, CircleHelp, Eye, EyeOff, FileText,
-  Maximize2, RotateCcw, Search, X,
+  Maximize2, Menu, RotateCcw, Search, X,
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
 import { api, sourcePreviewUrl, type GraphNode,
@@ -26,10 +26,14 @@ const detail = ref<KnowledgePointDetail | null>(null)
 const loadingDetail = ref(false)
 const error = ref('')
 const explorerList = ref(true)
+const navOpen = ref(false)
 
 const root = computed(() => props.graph.nodes.find(n => n.kind === 'course'))
 const chapters = computed(() => props.graph.nodes.filter(n => n.kind === 'chapter'))
 const knowledge = computed(() => props.graph.nodes.filter(n => n.kind === 'knowledge'))
+const chapterCounts = computed(() => new Map(chapters.value.map(chapter =>
+  [chapter.id, knowledge.value.filter(n => underChapter(n, chapter.id)).length],
+)))
 const selected = computed(() => props.graph.nodes.find(n => n.id === selectedId.value))
 const byId = computed(() => new Map(props.graph.nodes.map(n => [n.id, n])))
 const parent = computed(() => new Map(props.graph.edges.filter(e => e.structural)
@@ -141,6 +145,10 @@ function focusRelated(id: string) {
   }
   selectedId.value = id
 }
+function selectChapter(id: string) {
+  chapterChoice.value = id
+  selectedId.value = null
+}
 function chooseChapter(chapter: GraphNode) {
   chapterChoice.value = chapter.id
   selectedId.value = null
@@ -167,8 +175,17 @@ onBeforeUnmount(() => {
   <div class="gx-page" role="dialog" aria-modal="true" aria-label="3D 知识星系全屏探索">
     <header class="gx-toolbar">
       <div class="gx-brand">
+        <button type="button" class="gx-nav-trigger" :aria-expanded="navOpen"
+          aria-label="打开或收起知识图谱筛选面板" @click="navOpen=!navOpen">
+          <X v-if="navOpen" :size="19" /><Menu v-else :size="19" />
+        </button>
         <span class="gx-brand-mark"><Maximize2 :size="18" /></span>
-        <div><strong>知识星系 · 全屏探索</strong><small>{{ graph.course_name }} · {{ matching.length }} 个匹配知识点</small></div>
+        <div><strong>知识星系</strong><small>{{ graph.course_name }} · 章节星团探索</small></div>
+      </div>
+      <div class="gx-toolbar-info">
+        <span>{{ chapters.length }} 个章节</span>
+        <span>{{ knowledge.length }} 个知识点</span>
+        <span>{{ graph.stats.approved_semantic_edges }} 条已审核关系</span>
       </div>
       <div class="gx-toolbar-actions">
         <button type="button" title="回到全部章节和初始视角" @click="reset"><RotateCcw :size="16" /> <span>重置视角</span></button>
@@ -176,8 +193,12 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div class="gx-body">
-      <aside class="gx-panel gx-nav" aria-label="知识图谱筛选">
+    <div class="gx-body" :class="{ 'gx-nav-open': navOpen, 'gx-has-detail': !!selected }">
+      <aside v-if="navOpen" class="gx-panel gx-nav" aria-label="知识图谱筛选">
+        <div class="gx-panel-title">
+          <strong>探索设置</strong>
+          <button type="button" aria-label="收起探索设置" @click="navOpen=false"><X :size="17" /></button>
+        </div>
         <label class="gx-field"><span><Search :size="14" /> 搜索知识点</span>
           <input v-model="term" type="search" placeholder="输入知识点名称或摘要" />
         </label>
@@ -221,19 +242,29 @@ onBeforeUnmount(() => {
 
       <main class="gx-main">
         <Graph3DCanvas ref="canvas" :nodes="nodes" :edges="edges" :selected-id="selectedId"
-           :show-relations="relationView!=='none'" :show-structure="showStructure"
-          :relation-edges="graph.edges"
+          :show-relations="relationView!=='none'" :show-structure="showStructure"
+          :relation-edges="graph.edges" :layout-nodes="graph.nodes" :layout-edges="graph.edges"
           @select="selectedId=$event" />
+        <div class="gx-chapter-strip" role="group" aria-label="快速切换章节">
+          <button type="button" :class="{active:chapterChoice==='all'}"
+            @click="selectChapter('all')">全部星团</button>
+          <button v-for="chapter in chapters" :key="chapter.id" type="button"
+            :class="{active:chapterChoice===chapter.id}" :title="chapter.name"
+            @click="selectChapter(chapter.id)">
+            <span class="gx-tab-dot"></span><span class="gx-tab-name">{{ chapter.name }}</span>
+            <small>{{ chapterCounts.get(chapter.id) ?? 0 }}</small>
+          </button>
+        </div>
         <div class="gx-counter">
           <span><i class="gx-symbol"></i> {{ nodes.filter(n=>n.kind==='knowledge').length }} 知识点</span>
           <span>{{ semanticEdges.length }} 条可见关系</span>
           <span v-if="selected?.kind==='knowledge'">聚焦 {{ selectedRelations.length }} 条一阶关联</span>
         </div>
-        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击星球高亮一阶关联 · 点击空白或 Esc 取消聚焦</p>
+        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击节点查看关联 · Esc 取消聚焦</p>
       </main>
 
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
-        <div class="gx-detail-head"><span>{{ selected.kind === 'knowledge' ? '知识点详情' : '星系结构' }}</span>
+        <div class="gx-detail-head"><span>{{ selected.kind === 'knowledge' ? '节点详情 · 直接关联' : '章节 / 课程概览' }}</span>
           <button type="button" aria-label="关闭知识点详情" @click="selectedId=null"><X :size="18" /></button>
         </div>
         <h2>{{ selected.name }}</h2>
@@ -323,4 +354,42 @@ onBeforeUnmount(() => {
 .gx-footer span:first-child{display:flex;align-items:center;gap:6px}
 @media(max-width:900px){.gx-panel{width:214px}.gx-detail{width:252px}.gx-toolbar{padding:10px 14px}.gx-hint{display:none}}
 @media(max-width:660px){.gx-toolbar{height:62px}.gx-toolbar-actions button span{display:none}.gx-toolbar-actions button{padding:9px}.gx-brand strong{font-size:13px}.gx-nav{position:absolute;left:8px;top:9px;width:min(240px,56vw);max-height:58%;border:1px solid #30576b;border-radius:12px;background:#092439e9}.gx-detail{position:absolute;right:7px;bottom:10px;width:min(290px,70vw);max-height:58%;border:1px solid #30576b;border-radius:12px;background:#092439ef}.gx-main{width:100%}.gx-counter{top:10px;right:8px;left:auto;justify-content:flex-end}.gx-footer span:last-child{display:none}}
+/* Immersive, canvas-first exploration. Panels float above the scene rather
+   than shrinking its WebGL viewport whenever a knowledge point is selected. */
+.gx-toolbar{height:66px;padding:10px 20px;background:#092237;border-bottom:1px solid #264b5a;box-shadow:0 8px 30px #04101b42;z-index:10}
+.gx-nav-trigger{width:40px;height:40px;padding:0!important;border-radius:12px!important;background:#143b4a!important;color:#b9f3e8!important;border-color:#28626b!important}
+.gx-brand-mark{width:34px;height:34px;border-radius:11px}
+.gx-toolbar-info{display:flex;align-items:center;gap:9px;margin-left:auto;margin-right:12px}
+.gx-toolbar-info span{white-space:nowrap;font-size:11px;color:#a7c8d6;background:#123449;padding:8px 12px;border:1px solid #254d60;border-radius:99px}
+.gx-brand small{color:#80a4b8}
+.gx-body{display:block;position:relative;isolation:isolate}
+.gx-main{position:absolute;inset:0;width:100%;height:100%;z-index:0}
+.gx-panel{position:absolute;top:14px;bottom:14px;width:280px;max-height:calc(100% - 28px);z-index:4;background:#0c273bea;border:1px solid #36566b;border-radius:16px;box-shadow:0 20px 60px #0009;backdrop-filter:blur(18px);scrollbar-width:thin;scrollbar-color:#375d71 transparent}
+.gx-nav{left:16px;border:1px solid #36566b;width:282px}
+.gx-detail{right:16px;border:1px solid #36566b;width:332px}
+.gx-panel-title{display:flex;justify-content:space-between;align-items:center;margin:-4px 0 17px;padding-bottom:13px;border-bottom:1px solid #28475a}
+.gx-panel-title strong{font-size:13px;letter-spacing:.3px;color:#d6f3f0}
+.gx-panel-title button{display:grid;place-items:center;width:27px;height:27px;border:1px solid #315569;border-radius:7px;color:#a0c7d2;background:#173b4e}
+.gx-chapter-strip{position:absolute;z-index:2;left:20px;right:20px;top:16px;display:flex;gap:7px;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#376475 transparent;padding:3px 2px 10px;white-space:nowrap;transition:left .15s,right .15s}
+.gx-chapter-strip button{flex:none;display:flex;align-items:center;gap:7px;max-width:190px;border:1px solid #315268;border-radius:99px;padding:9px 13px;background:#09243bdf;color:#9cbacb;font-size:11px;box-shadow:0 6px 16px #0004}
+.gx-chapter-strip button:hover{border-color:#4e9997;color:#dcf8f3}
+.gx-chapter-strip button.active{background:#145e61;color:#e4fffa;border-color:#42b9a8}
+.gx-tab-dot{flex:none;width:6px;height:6px;border-radius:50%;background:#6799bd}
+.gx-chapter-strip button.active .gx-tab-dot{background:#65ead4}
+.gx-tab-name{overflow:hidden;text-overflow:ellipsis}
+.gx-chapter-strip button small{font-size:10px;opacity:.6}
+.gx-body.gx-nav-open .gx-chapter-strip{left:314px}
+.gx-body.gx-has-detail .gx-chapter-strip{right:365px}
+.gx-counter{top:auto;bottom:28px;left:20px;right:auto}
+.gx-counter span{background:#092439dc;border-color:#2d5368;box-shadow:0 6px 20px #0004}
+.gx-body.gx-nav-open .gx-counter{left:314px}
+.gx-hint{bottom:5px;left:auto;right:22px;font-size:10px;text-align:right;max-width:70%;white-space:nowrap}
+.gx-body.gx-has-detail .gx-hint{right:365px}
+.gx-detail h2{font-size:19px;letter-spacing:-.2px}
+.gx-related{transition:background .16s,border-color .16s}
+.gx-related:hover{background:#1b4557;border-color:#57a99f}
+.gx-footer{height:28px;background:#071c2c;border-top-color:#1c3c4d}
+.gx-page button:focus-visible,.gx-page a:focus-visible,.gx-page input:focus-visible,.gx-page select:focus-visible{outline:2px solid #74e8ce;outline-offset:2px}
+@media(max-width:1060px){.gx-toolbar-info span:last-child{display:none}.gx-panel{width:264px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-chapter-strip{left:288px}.gx-body.gx-has-detail .gx-chapter-strip{right:288px}.gx-body.gx-nav-open .gx-counter{left:288px}.gx-body.gx-has-detail .gx-hint{right:288px}}
+@media(max-width:760px){.gx-toolbar-info{display:none}.gx-toolbar{padding:8px 12px}.gx-brand>div strong{font-size:14px}.gx-brand-mark{display:none}.gx-panel{top:10px;bottom:10px}.gx-nav{width:min(285px,calc(100vw - 24px));left:10px}.gx-detail{width:min(330px,calc(100vw - 24px));right:10px;top:auto;max-height:58%;bottom:10px}.gx-chapter-strip,.gx-body.gx-nav-open .gx-chapter-strip,.gx-body.gx-has-detail .gx-chapter-strip{left:12px;right:12px;top:8px}.gx-counter,.gx-body.gx-nav-open .gx-counter{bottom:14px;left:12px}.gx-counter span{font-size:10px;padding:7px 9px}.gx-hint{display:none}}
 </style>
