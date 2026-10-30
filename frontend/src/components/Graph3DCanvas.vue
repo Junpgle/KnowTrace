@@ -127,6 +127,30 @@ function makeLabel(text: string, width = 320, subtitle?: string) {
   return label
 }
 
+// Deterministic, quasi-uniform spherical samples. Unlike a cubic lattice,
+// these have no parallel rows or visible square silhouettes at any camera angle.
+function organicOffsets(count: number, seed: string): THREE.Vector3[] {
+  const points: THREE.Vector3[] = []
+  if (!count) return points
+  const angle = Math.PI * (3 - Math.sqrt(5))
+  const twist = ordinalHash(seed + ':twist') * Math.PI * 2
+  // Volume, rather than just the surface: sample by cubed radius.
+  for (let i = 0; i < count; i++) {
+    const u = (i + .5) / count
+    const jitter = (ordinalHash(seed + ':j:' + i) - .5) * .22
+    const y = 1 - 2 * ((i * .6180339887498949 + .5) % 1)
+    const radial = Math.sqrt(Math.max(0, 1 - y * y))
+    const theta = i * angle + twist + jitter
+    const radius = 5 + 2.3 * Math.cbrt(count) * Math.cbrt(.1 + .9 * u)
+    points.push(new THREE.Vector3(
+      Math.cos(theta) * radial * radius,
+      y * radius * .82,
+      Math.sin(theta) * radial * radius,
+    ))
+  }
+  return points
+}
+
 function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   const pos = new Map<string, THREE.Vector3>()
   const root = nodes.find(n => n.kind === 'course')
@@ -134,113 +158,66 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   pos.set(root.id, new THREE.Vector3())
 
   const chapters = nodes.filter(n => n.kind === 'chapter')
-  const chapterIds = new Set(chapters.map(n => n.id))
+  const chapterIds = new Set(chapters.map(ch => ch.id))
   const parent = new Map<string, string>()
-  for (const e of edges) {
-    if (e.structural && e.type === 'contains') parent.set(e.target, e.source)
-  }
   const byChapter = new Map<string, GraphNode[]>()
+  for (const edge of edges) {
+    if (edge.structural && edge.type === 'contains') parent.set(edge.target, edge.source)
+  }
   for (const node of nodes) {
     if (node.kind !== 'knowledge') continue
-    const id = parent.get(node.id) ?? root.id
-    if (!byChapter.has(id)) byChapter.set(id, [])
-    byChapter.get(id)!.push(node)
+    const owner = parent.get(node.id) ?? root.id
+    if (!byChapter.has(owner)) byChapter.set(owner, [])
+    byChapter.get(owner)!.push(node)
   }
 
-  // A 3D lattice produces compact, evenly spaced point clouds instead of
-  // the previous flattened spiral. Rotation and small deterministic jitter
-  // remove its grid appearance without creating node collisions.
-  const offsets = (count: number, key: string) => {
-    if (!count) return [] as THREE.Vector3[]
-    let shell = 1
-    while ((2 * shell + 1) ** 3 - 1 < count) shell++
-    const cells: { x: number, y: number, z: number, d: number, tie: number }[] = []
-    for (let x = -shell; x <= shell; x++) {
-      for (let y = -shell; y <= shell; y++) {
-        for (let z = -shell; z <= shell; z++) {
-          if (x === 0 && y === 0 && z === 0) continue
-          const d = x * x + y * y + z * z
-          cells.push({ x, y, z, d, tie: ordinalHash(key + ':' + x + ':' + y + ':' + z) })
-        }
-      }
+  // Use a balanced course-centered orbit, not sequential collision packing.
+  // Ordering and placement are stable across selection and filtering.
+  const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
+  const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
+  top.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
+  const total = top.length
+  const sizes = top.map(c => byChapter.get(c.id)?.length ?? 0)
+  const large = Math.max(1, ...sizes)
+  const orbit = Math.max(52, 34 + total * 4.8 + Math.cbrt(large) * 3.2)
+  top.forEach((ch, i) => {
+    const a = Math.PI * 2 * (i / Math.max(1, total)) - Math.PI / 2
+    const tilt = 0.95 + .08 * Math.sin(i * 3.1)
+    pos.set(ch.id, new THREE.Vector3(
+      Math.cos(a) * orbit * tilt,
+      Math.sin(i * 2.399) * 11,
+      Math.sin(a) * orbit * tilt,
+    ))
+  })
+  // Nested chapters stay near their real parent but get their own system.
+  const pending = new Map(nested.map(c => [c.id, c]))
+  for (let pass = 0; pending.size && pass <= nested.length; pass++) {
+    for (const [id, ch] of pending) {
+      const p = pos.get(parent.get(id) ?? '')
+      if (!p) continue
+      const siblings = chapters.filter(c => parent.get(c.id) === parent.get(id))
+        .sort((a, b) => a.id.localeCompare(b.id))
+      const index = siblings.findIndex(c => c.id === id)
+      const a = index * G + ordinalHash(parent.get(id) ?? '') * Math.PI * 2
+      const dist = 24 + Math.sqrt(siblings.length) * 7
+      pos.set(id, p.clone().add(new THREE.Vector3(
+        Math.cos(a) * dist, ((index % 3) - 1) * 9, Math.sin(a) * dist,
+      )))
+      pending.delete(id)
     }
-    cells.sort((a, b) => a.d - b.d || a.tie - b.tie)
-    const rotation = new THREE.Euler(
-      .16 + ordinalHash(key + ':x') * .35,
-      ordinalHash(key + ':y') * Math.PI * 2,
-      .12 + ordinalHash(key + ':z') * .25,
-    )
-    return cells.slice(0, count).map(({ x, y, z }, i) => {
-      const jitter = (axis: string) => (ordinalHash(key + ':' + i + ':' + axis) - .5) * .42
-      return new THREE.Vector3(
-        (x + jitter('x')) * 4.65,
-        (y + jitter('y')) * 4.65,
-        (z + jitter('z')) * 4.65,
-      ).applyEuler(rotation)
-    })
+  }
+  for (const [id, ch] of pending) {
+    pos.set(id, new THREE.Vector3(
+      (ordinalHash(ch.id + 'x') - .5) * orbit,
+      18, (ordinalHash(ch.id + 'z') - .5) * orbit,
+    ))
   }
 
-  // Pack the chapter systems without overlap. A real nested chapter starts
-  // near its parent, whereas top-level chapters orbit the course core.
-  // Only real membership edges determine parentage; no learned relation
-  // is used to assign a chapter or determine an apparent dependency.
-  const footprint = new Map<string, number>()
-  for (const chapter of chapters) {
-    const size = byChapter.get(chapter.id)?.length ?? 0
-    footprint.set(chapter.id, size ? Math.max(9, 5 + 3.2 * Math.cbrt(size)) : 7)
-  }
-  const placed: { x: number, z: number, radius: number }[] = [
-    { x: 0, z: 0, radius: 11 },
-  ]
-  const remaining = new Map(chapters.map(c => [c.id, c]))
-  const ordered: GraphNode[] = []
-  // Parent-first walk, even if source chapter records were not ordered.
-  while (remaining.size) {
-    let advanced = false
-    for (const [id, chapter] of remaining) {
-      const pid = parent.get(id)
-      if (!pid || !chapterIds.has(pid) || !remaining.has(pid)) {
-        ordered.push(chapter)
-        remaining.delete(id)
-        advanced = true
-      }
-    }
-    if (!advanced) { // malformed cycles should not hang the renderer
-      ordered.push(...remaining.values())
-      break
-    }
-  }
-  for (const chapter of ordered) {
-    const pid = parent.get(chapter.id)
-    const anchor = (pid ? pos.get(pid) : undefined) ?? pos.get(root.id)!
-    const parentRadius = (pid ? footprint.get(pid) : undefined) ?? 11
-    const radius = footprint.get(chapter.id) ?? 7
-    const initial = parentRadius + radius + 8
-    const seed = ordinalHash(chapter.id) * Math.PI * 2
-    let center: THREE.Vector3 | null = null
-    for (let attempt = 0; attempt < 10000; attempt++) {
-      const angle = seed + attempt * G
-      const distance = initial + Math.sqrt(attempt) * 5.8
-      const x = anchor.x + Math.cos(angle) * distance
-      const z = anchor.z + Math.sin(angle) * distance
-      if (placed.every(p => Math.hypot(p.x - x, p.z - z) >= p.radius + radius + 6)) {
-        center = new THREE.Vector3(x, (ordinalHash(chapter.id + ':h') - .5) * 6, z)
-        break
-      }
-    }
-    // This fallback is deterministic and still separates the cluster.
-    if (!center) {
-      const far = placed.reduce((m, p) => Math.max(m, Math.hypot(p.x, p.z) + p.radius), 0)
-      center = new THREE.Vector3(far + radius + 16, 0, 0)
-    }
-    pos.set(chapter.id, center)
-    placed.push({ x: center.x, z: center.z, radius })
-  }
-  for (const [id, points] of byChapter) {
-    const center = pos.get(id) ?? new THREE.Vector3()
+  for (const [owner, points] of byChapter) {
+    const center = pos.get(owner) ?? new THREE.Vector3()
     points.sort((a, b) => a.id.localeCompare(b.id))
-    const positions = offsets(points.length, id)
-    points.forEach((point, i) => pos.set(point.id, center.clone().add(positions[i])))
+    const offsets = organicOffsets(points.length, owner)
+    points.forEach((p, i) => pos.set(p.id, center.clone().add(offsets[i])))
   }
   return pos
 }
