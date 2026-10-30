@@ -345,8 +345,9 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       const radialUnit = (i * goldenRatioFraction + .37) % 1
       const theta = i * G + rotation +
         (ordinalHash(node.id + ':theta') - .5) * .17
-      const radius = innerRadius + (outerRadius - innerRadius)
-        * Math.sqrt(.08 + radialUnit * .92)
+      const radius = count === 1 ? 0
+        : innerRadius + (outerRadius - innerRadius)
+          * Math.sqrt(.08 + radialUnit * .92)
       const x = Math.cos(theta) * radius * spreadX
       const y = Math.sin(theta) * radius
       const z = ((ordinalHash(node.id + ':depth') - .5) * 36)
