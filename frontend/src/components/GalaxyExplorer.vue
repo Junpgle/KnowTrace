@@ -6,11 +6,11 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  ArrowRight, BookOpen, Check, CircleHelp, Eye, EyeOff, FileText,
+  ArrowRight, BookOpen, CircleHelp, Eye, EyeOff, FileText,
   Maximize2, RotateCcw, Search, X,
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
-import { api, sourcePreviewUrl, type GraphEdge, type GraphNode,
+import { api, sourcePreviewUrl, type GraphNode,
   type KnowledgeGraph, type KnowledgePointDetail } from '../api'
 
 const props = defineProps<{ graph: KnowledgeGraph }>()
@@ -122,6 +122,15 @@ function reset() {
   term.value = ''
   void nextTick(() => canvas.value?.resetCamera())
 }
+function focusRelated(id: string) {
+  // Cross-chapter edges may point outside the current filter.
+  // Make the target visible before selecting it.
+  if (!visibleIds.value.has(id)) {
+    chapterChoice.value = 'all'
+    term.value = ''
+  }
+  selectedId.value = id
+}
 function chooseChapter(chapter: GraphNode) {
   chapterChoice.value = chapter.id
   selectedId.value = null
@@ -227,7 +236,7 @@ onBeforeUnmount(() => {
           <h3><BookOpen :size="15" /> 已审核关系</h3>
           <p v-if="!selectedRelations.length" class="gx-note">暂无已审核的直接关联。</p>
           <button v-for="item in selectedRelations.slice(0,35)" :key="item.edge.id"
-            type="button" class="gx-related" @click="selectedId=item.id">
+            type="button" class="gx-related" @click="focusRelated(item.id)">
             <small>{{ relationLabels[item.edge.type] || item.edge.type }}</small>
             <span>{{ item.name }}</span><ArrowRight :size="14" />
           </button>
