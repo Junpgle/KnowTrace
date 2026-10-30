@@ -96,6 +96,7 @@ const RELATION_COLORS: Record<string, number> = {
   compares: 0xc5adff,
 }
 
+// A label belongs to the celestial object, never a tiny badge drawn over points.
 function makeLabel(text: string, width = 320, subtitle?: string) {
   const canvas = document.createElement('canvas')
   canvas.width = width
@@ -109,11 +110,12 @@ function makeLabel(text: string, width = 320, subtitle?: string) {
   ctx.strokeStyle = 'rgba(144,218,225,.35)'
   ctx.lineWidth = 2
   ctx.stroke()
-  ctx.font = '600 25px system-ui, sans-serif'
+  ctx.font = subtitle ? '600 30px system-ui, sans-serif' : '600 25px system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#eaffff'
-  const shown = text.length > 14 ? text.slice(0, 13) + '…' : text
+  const maxChars = subtitle ? 23 : 14
+  const shown = text.length > maxChars ? text.slice(0, maxChars - 1) + '…' : text
   ctx.fillText(shown, width / 2, subtitle ? 36 : 39, width - 28)
   if (subtitle) {
     ctx.fillStyle = '#79cfc5'
@@ -129,6 +131,31 @@ function makeLabel(text: string, width = 320, subtitle?: string) {
 
 // Deterministic, quasi-uniform spherical samples. Unlike a cubic lattice,
 // these have no parallel rows or visible square silhouettes at any camera angle.
+// Muted chapter accents: an identifier only affects presentation and
+// conveys no scientific relationship or mastery estimate.
+const CHAPTER_COLORS = [
+  0x49c7c0, 0x8c95ee, 0x6bbbe6, 0x79cab1,
+  0x9aa5e8, 0x7fcbde, 0xe0b787, 0x87b5d6,
+]
+function chapterColors(nodes: GraphNode[]) {
+  const chapters = nodes.filter(n => n.kind === 'chapter')
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
+  return new Map(chapters.map((n, i) => [n.id, n.virtual ? 0x91a1b1 : CHAPTER_COLORS[i % CHAPTER_COLORS.length]]))
+}
+function glowTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 128
+  const context = canvas.getContext('2d')!
+  const grad = context.createRadialGradient(64,64,0,64,64,64)
+  grad.addColorStop(0, 'rgba(255,255,255,.72)')
+  grad.addColorStop(.22, 'rgba(255,255,255,.25)')
+  grad.addColorStop(.58, 'rgba(255,255,255,.05)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  context.fillStyle = grad
+  context.fillRect(0,0,128,128)
+  return new THREE.CanvasTexture(canvas)
+}
+
 function organicOffsets(count: number, seed: string): THREE.Vector3[] {
   const points: THREE.Vector3[] = []
   if (!count) return points
@@ -288,6 +315,9 @@ function rebuild() {
   // One InstancedMesh for all knowledge points, including dimmed ones:
   // preserve a single draw call for 1300+ nodes instead of per-node meshes.
   const sphere = new THREE.SphereGeometry(1, 12, 10)
+  const planetSphere = new THREE.SphereGeometry(1, 40, 28)
+  const palette = chapterColors(props.layoutNodes ?? props.nodes)
+  const overview = !props.nodes.some(n => n.kind === 'knowledge')
   const knowledge = props.nodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
   if (knowledge.length) {
     const material = new THREE.MeshPhongMaterial({
@@ -347,30 +377,87 @@ function rebuild() {
   for (const node of props.nodes.filter(n => n.kind !== 'knowledge')) {
     const position = positions.get(node.id)
     if (!position) continue
-    const color = new THREE.Color(statusColor(node))
-    if (focusState.active) color.multiplyScalar(0.42)
-    const material = new THREE.MeshPhongMaterial({
-      color, emissive: color, emissiveIntensity: focusState.active ? 0.08 : 0.28,
-      shininess: 86, specular: 0x6b8fae,
-    })
-    // Chapter bubbles encode the number of knowledge points contained in
-    // their subtree. Counts include currently collapsed nodes.
+    const isCourse = node.kind === 'course'
     const count = cachedChapterTotals.get(node.id) ?? 0
-    const radius = node.kind === 'course' ? 3.8
-      : (2.1 + Math.min(1.65, Math.log2(count + 1) * 0.23))
-        * (node.id === selectedId ? 1.13 : 1)
-    const mesh = new THREE.Mesh(sphere, material)
-    mesh.scale.setScalar(radius)
-    mesh.position.copy(position)
-    mesh.userData.nodeId = node.id
-    g.add(mesh)
-    meshes.push(mesh)
-    // Hide chapter labels in local-focus mode, reducing visual competition.
-    if (!focusState.active || node.id === selectedId) {
-      const label = makeLabel(node.name, 320,
-        node.kind === 'chapter' ? `${count} 个知识点` : undefined)
+    const baseColor = isCourse ? 0x4be6d6 : palette.get(node.id) ?? 0x83a4d9
+    const chapterSelected = node.id === selectedId
+    const radius = isCourse ? 6.0
+      : (3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
+        * (chapterSelected ? 1.12 : 1)
+    const material = new THREE.MeshPhongMaterial({
+      color: baseColor,
+      emissive: baseColor,
+      emissiveIntensity: focusState.active ? .09 : .23,
+      shininess: 100, specular: 0xd9ffff,
+      transparent: true,
+      opacity: focusState.active && !chapterSelected ? .55 : .96,
+    })
+    const planet = new THREE.Mesh(planetSphere, material)
+    planet.scale.setScalar(radius)
+    planet.position.copy(position)
+    planet.userData.nodeId = node.id
+    g.add(planet)
+    meshes.push(planet)
+
+    // Restrained luminous atmosphere: one soft glow and an orbital ring
+    // instead of hundreds of fake chapter dots.
+    const glowMap = glowTexture()
+    const aura = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowMap, color: baseColor,
+      transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      opacity: focusState.active ? .10 : (isCourse ? .65 : .42),
+    }))
+    aura.position.copy(position)
+    aura.scale.setScalar(radius * (isCourse ? 7.4 : 6.7))
+    g.add(aura)
+
+    if (!focusState.active) {
+      const ringR = radius * (isCourse ? 2.2 : 1.9)
+      const curve = new THREE.EllipseCurve(0, 0, ringR, ringR, 0, Math.PI * 2)
+      const ringGeometry = new THREE.BufferGeometry().setFromPoints(
+        curve.getPoints(90).map(p => new THREE.Vector3(p.x, 0, p.y)),
+      )
+      const ring = new THREE.LineLoop(ringGeometry, new THREE.LineBasicMaterial({
+        color: baseColor, transparent: true, opacity: isCourse ? .28 : .20,
+        depthWrite: false,
+      }))
+      ring.rotation.set(.32, ordinalHash(node.id) * Math.PI, .15)
+      ring.position.copy(position)
+      g.add(ring)
+      // Sparse decorative halo is intentionally NOT part of the knowledge
+      // graph: its dots cannot be selected or mistaken for knowledge nodes.
+      if (overview && !isCourse && count > 0) {
+        const particles: number[] = []
+        const dustCount = Math.min(32, Math.max(12, Math.round(8 + Math.sqrt(count))))
+        for (let i = 0; i < dustCount; i++) {
+          const a = i * G + ordinalHash(node.id) * Math.PI * 2
+          const z = 1 - 2 * (i + .5) / dustCount
+          const radial = Math.sqrt(1 - z * z)
+          const rr = radius * (2.15 + ordinalHash(node.id + i) * .8)
+          particles.push(
+            position.x + Math.cos(a) * radial * rr,
+            position.y + z * rr * .58,
+            position.z + Math.sin(a) * radial * rr,
+          )
+        }
+        const dustGeom = new THREE.BufferGeometry()
+        dustGeom.setAttribute('position', new THREE.Float32BufferAttribute(particles, 3))
+        g.add(new THREE.Points(dustGeom, new THREE.PointsMaterial({
+          color: baseColor, size: .65, transparent: true,
+          opacity: .6, depthWrite: false,
+        })))
+      }
+    }
+
+    // A readable chapter name / count is much more useful than a tiny label
+    // submerged in the cloud of points.
+    if (!focusState.active || chapterSelected) {
+      const label = makeLabel(node.name, isCourse ? 430 : 520,
+        isCourse ? '课程中心' : `${count} 个知识点`)
       if (label) {
-        label.position.copy(position).add(new THREE.Vector3(0, radius + 2.85, 0))
+        label.scale.set(isCourse ? 22 : 24, 5.3, 1)
+        label.position.copy(position).add(new THREE.Vector3(0, radius + (overview ? 7 : 4), 0))
         g.add(label)
       }
     }
