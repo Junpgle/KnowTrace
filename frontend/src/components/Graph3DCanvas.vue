@@ -877,16 +877,24 @@ function initialize() {
 onMounted(initialize)
 // Changing line visibility must never zoom the camera. Only a change of
 // selected node should trigger automatic focus.
-watch(() => [props.nodes, props.layoutNodes, props.layoutEdges], () => {
-  rebuild(true)
-  focus(props.selectedId)
-})
-watch(() => [props.edges, props.relationEdges], () => rebuild())
-watch(() => props.showRelations, () => rebuild())
-watch(() => props.showStructure, () => rebuild())
-watch(() => props.selectedId, id => {
-  rebuild()
-  focus(id)
+// Batch all reactive scene inputs into one render pass. Separate watchers for
+// nodes, edges and selection used to overwrite the outgoing animation within
+// the same Vue flush, making level switches appear instantaneous.
+watch(() => ({
+  nodes: props.nodes,
+  edges: props.edges,
+  relations: props.relationEdges,
+  layoutNodes: props.layoutNodes,
+  layoutEdges: props.layoutEdges,
+  selectedId: props.selectedId,
+  showRelations: props.showRelations,
+  showStructure: props.showStructure,
+}), (next, previous) => {
+  const layerChanged = next.nodes !== previous.nodes ||
+    next.layoutNodes !== previous.layoutNodes ||
+    next.layoutEdges !== previous.layoutEdges
+  rebuild(layerChanged)
+  if (layerChanged || next.selectedId !== previous.selectedId) focus(next.selectedId)
 })
 onBeforeUnmount(() => {
   disposed = true
