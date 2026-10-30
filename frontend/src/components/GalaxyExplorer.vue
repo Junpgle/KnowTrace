@@ -426,7 +426,7 @@ onBeforeUnmount(() => {
           <p v-if="selected?.kind === 'knowledge' && selectedRelations.length">
             已点亮 {{ new Set(selectedRelations.map(r => r.id)).size }} 个直接关联知识点 · 点击关联星球继续探索
           </p>
-          <p v-else>{{ currentChapter ? (displayMode==='groups' ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · ${browseGroups.length} 个浏览分组 · 点击进入小规模网络` : activeBrowseGroup ? `${activeBrowseGroup.members.length} 个知识点 · 点击查看真实关联` : `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系`) :
+          <p v-else>{{ currentChapter ? (displayMode==='groups' ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · ${browseGroups.length} 个浏览分组 · 悬停查看名称，点击进入` : activeBrowseGroup ? `${activeBrowseGroup.members.length} 个知识点 · 点击查看真实关联` : `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系`) :
             (displayMode==='clusters' ? '每颗星球代表一个真实章节。选择章节，逐层深入。' : '点击知识点，点亮它的一阶关联。') }}</p>
         </div>
         <div class="gx-view-switch" role="group" aria-label="图谱显示层级">
@@ -450,7 +450,7 @@ onBeforeUnmount(() => {
           <button type="button" title="缩小星系" aria-label="缩小星系"
             @click="canvas?.zoomOut()"><ZoomOut :size="18" /></button>
         </div>
-        <div class="gx-hint"><Compass :size="13" /> 拖动旋转 · 滚轮缩放 · 点击星球进入章节</div>
+        <div class="gx-hint"><Compass :size="13" /> {{ displayMode==='groups' ? '前后景深可旋转查看 · 悬停显示分组名称 · 点击进入' : '拖动旋转 · 滚轮缩放 · 点击星球探索' }}</div>
       </main>
 
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
