@@ -320,10 +320,10 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     const height = mountPoint.value?.clientHeight ?? 850
     const aspect = width / Math.max(1, height)
     const columns = Math.max(1, Math.min(groups.length,
-      Math.ceil(Math.sqrt(groups.length * aspect * .85))))
+      Math.round(Math.sqrt(groups.length * aspect * .70))))
     const rows = Math.ceil(groups.length / columns)
-    const stepX = 83
-    const stepY = 72
+    const stepX = 102
+    const stepY = 68
     groups.forEach((g, index) => {
       const row = Math.floor(index / columns)
       const rowCount = Math.min(columns, groups.length - row * columns)
@@ -902,7 +902,7 @@ function focus(id: string | null, resetAtlasAngle = false) {
       // reserve space for each two-line label.
       distance = projectedFitDistance(
         fitPoints, overviewCenter, direction,
-        .80, .77, 25, 14,
+        .80, .86, 25, 14,
       )
     } else if (!localGroup) {
       // Course/chapters are arranged on the XZ atlas plane. Projected
