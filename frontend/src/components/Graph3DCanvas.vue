@@ -328,24 +328,33 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     const groups = [...groupNodes].sort((a,b) =>
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
     const count = groups.length
-    const arms = Math.min(6, Math.max(3, Math.round(Math.sqrt(count))))
-    const depth = count >= 16 ? 86 : 38
-    const levels = Math.ceil(count / arms)
+    // A chapter with 12 browse groups must use SIX directions, not
+    // round(sqrt(12)) = 3. Larger chapters use eight arms; small chapters
+    // put each group in its own direction rather than stacking them.
+    const arms = count >= 24 ? 8 : count >= 8 ? 6 : Math.max(1, count)
+    const depth = count >= 16 ? 62 : 32
     groups.forEach((node, i) => {
       const arm = i % arms
       const layer = Math.floor(i / arms)
       const baseAngle = (arm / arms) * Math.PI * 2 - Math.PI / 2
-      const angle = baseAngle + layer * .06
-        + (ordinalHash(node.id + ':arm') - .5) * .04
+      // Alternating half-sector offsets spread successive rings in ALL
+      // directions, rather than piling them on the same radial spokes.
+      // The small deterministic jitter keeps the layout organic and stable.
+      const ringOffset = (layer % 2) * (Math.PI / arms) * .72
+      const angle = baseAngle + ringOffset + Math.floor(layer / 2) * .035
+        + (ordinalHash(node.id + ':arm') - .5) * .055
       const radius = count === 1 ? 0
-        : 90 + layer * (count > 20 ? 72 : 78)
+        : (count <= 20 ? 125 : 120)
+          + layer * (count > 20 ? 96 : 112)
           + (ordinalHash(node.id + ':reach') - .5) * 9
       // Three depth tiers provide real parallax on drag, yet preserve a
       // readable broad constellation with its own visual foreground.
+      // Modest depth staggering creates parallax without projecting the
+      // entire top or bottom of the constellation onto a single line.
       const z = count === 1 ? 0
-        : ((arm % 3) - 1) * depth
-          + (layer % 2 ? 21 : -13)
-          + (ordinalHash(node.id + ':depth') - .5) * 16
+        : ((arm % 4) - 1.5) * depth * .55
+          + (layer % 2 ? 14 : -14)
+          + (ordinalHash(node.id + ':depth') - .5) * 14
       pos.set(node.id, new THREE.Vector3(
         Math.cos(angle) * radius * 1.70,
         Math.sin(angle) * radius * .92,
