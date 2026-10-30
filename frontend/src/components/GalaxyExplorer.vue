@@ -7,7 +7,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, CircleHelp, Eye, EyeOff, FileText,
-  Maximize2, Menu, RotateCcw, Search, Layers3, X,
+  Maximize2, Menu, RotateCcw, Search, Layers3, X, ChevronLeft, Compass,
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
 import { api, sourcePreviewUrl, type GraphNode,
@@ -45,6 +45,7 @@ const expanded = computed(() => level.value === 'knowledge' ||
 const displayMode = computed(() => expanded.value ? 'knowledge' : 'clusters')
 const visibleKnowledgeCount = computed(() => nodes.value.filter(n => n.kind === 'knowledge').length)
 const hiddenKnowledgeCount = computed(() => Math.max(0, knowledge.value.length - visibleKnowledgeCount.value))
+const currentChapter = computed(() => chapters.value.find(ch => ch.id === chapterChoice.value))
 const chapterName = computed(() => {
   const chapterId = selected.value?.chapter_id
   if (!chapterId) return '未归类'
@@ -214,39 +215,50 @@ onBeforeUnmount(() => {
     <header class="gx-toolbar">
       <div class="gx-brand">
         <button type="button" class="gx-nav-trigger" :aria-expanded="navOpen"
-          aria-label="打开或收起知识图谱筛选面板" @click="navOpen=!navOpen">
-          <X v-if="navOpen" :size="19" /><Menu v-else :size="19" />
+          aria-label="打开或收起知识图谱导航" @click="navOpen=!navOpen">
+          <X v-if="navOpen" :size="18" /><Menu v-else :size="18" />
         </button>
-        <span class="gx-brand-mark"><Maximize2 :size="18" /></span>
-        <div><strong>知识星系</strong><small>{{ graph.course_name }} · 章节星团探索</small></div>
+        <div class="gx-brand-text">
+          <strong>知迹 <span>· 知识星系</span></strong>
+          <small>{{ graph.course_name }} / {{ currentChapter?.name ?? (displayMode==='clusters' ? '章节总览' : '知识全景') }}</small>
+        </div>
       </div>
-      <div class="gx-toolbar-info">
-        <span><Layers3 :size="13" /> {{ displayMode==='clusters' ? '章节总览' : '知识点探索' }}</span>
-        <span>{{ chapters.length }} 个章节</span>
-        <span>{{ knowledge.length }} 个知识点</span>
-        <span>{{ graph.stats.approved_semantic_edges }} 条已审核关系</span>
+      <div class="gx-header-mode">
+        <span class="gx-live-dot"></span>
+        {{ displayMode==='clusters' ? 'COURSE ATLAS' : 'KNOWLEDGE EXPLORER' }}
       </div>
       <div class="gx-toolbar-actions">
-        <button type="button" title="回到全部章节和初始视角" @click="reset"><RotateCcw :size="16" /> <span>重置视角</span></button>
-        <button type="button" title="关闭全屏探索" aria-label="关闭全屏探索" @click="emit('close')"><X :size="19" /> <span>退出全屏</span></button>
+        <button type="button" title="探索与搜索" aria-label="探索与搜索" @click="navOpen=!navOpen"><Search :size="17" /></button>
+        <button type="button" title="返回章节总览" aria-label="返回章节总览" @click="reset"><RotateCcw :size="17" /></button>
+        <button type="button" class="gx-exit" title="退出全屏探索" aria-label="退出全屏探索" @click="emit('close')"><X :size="19" /></button>
       </div>
     </header>
 
     <div class="gx-body" :class="{ 'gx-nav-open': navOpen, 'gx-has-detail': !!selected }">
       <aside v-if="navOpen" class="gx-panel gx-nav" aria-label="知识图谱筛选">
         <div class="gx-panel-title">
-          <strong>探索设置</strong>
+          <strong>探索知识</strong>
           <button type="button" aria-label="收起探索设置" @click="navOpen=false"><X :size="17" /></button>
         </div>
         <label class="gx-field"><span><Search :size="14" /> 搜索知识点</span>
           <input v-model="term" type="search" placeholder="输入知识点名称或摘要" />
         </label>
-        <label class="gx-field"><span><BookOpen :size="14" /> 按章节探索</span>
-          <select v-model="chapterChoice">
-            <option value="all">全部章节</option>
-            <option v-for="chapter in chapters" :key="chapter.id" :value="chapter.id">{{ chapter.name }}</option>
-          </select>
-        </label>
+        <h3><BookOpen :size="14" /> 章节导航</h3>
+        <div class="gx-chapters">
+          <button type="button" :class="{active:chapterChoice==='all'}"
+            @click="selectChapter('all');navOpen=false">
+            <span class="gx-chapter-index"><Layers3 :size="14"/></span>
+            <span class="gx-chapter-name">课程总览</span>
+            <small>{{ chapters.length }} 章</small>
+          </button>
+          <button v-for="(chapter,i) in chapters" :key="chapter.id" type="button"
+            :class="{active:chapterChoice===chapter.id}"
+            @click="selectChapter(chapter.id);navOpen=false">
+            <span class="gx-chapter-index">{{ String(i+1).padStart(2,'0') }}</span>
+            <span class="gx-chapter-name">{{ chapter.name }}</span>
+            <small>{{ chapterCounts.get(chapter.id) ?? 0 }}</small>
+          </button>
+        </div>
         <label class="gx-checkbox">
           <input v-model="includePending" type="checkbox" /> 显示尚未审核的知识点
         </label>
@@ -259,7 +271,7 @@ onBeforeUnmount(() => {
           <button type="button" :class="{active:displayMode==='knowledge'}"
             @click="switchLevel('knowledge')">全部知识点</button>
         </div>
-        <p class="gx-note">默认折叠知识点；点击章节星球或搜索后自动展开，减少总览拥挤。</p>
+        <p class="gx-note">建议从章节开始探索；“全部知识点”适合查找整体分布。</p>
 
         <div class="gx-divider"></div>
         <h3>连线显示</h3>
@@ -294,29 +306,26 @@ onBeforeUnmount(() => {
           :show-relations="relationView!=='none'" :show-structure="showStructure"
           :relation-edges="graph.edges" :layout-nodes="graph.nodes" :layout-edges="graph.edges"
           @select="selectCanvasNode" />
+        <div class="gx-stage-nav">
+          <button v-if="currentChapter" type="button" @click="selectChapter('all')"
+            class="gx-back"><ChevronLeft :size="17" /> 返回总览</button>
+          <span class="gx-stage-kicker">{{ displayMode==='clusters' ? 'CHAPTER CONSTELLATIONS' : 'EXPLORE CONCEPTS' }}</span>
+          <h1>{{ currentChapter?.name ?? (displayMode==='clusters' ? '从章节开始，探索知识宇宙' : '知识点全景') }}</h1>
+          <p>{{ currentChapter ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系` :
+            (displayMode==='clusters' ? '每颗星球代表一个真实章节。选择章节，逐层深入。' : '点击知识点，点亮它的一阶关联。') }}</p>
+        </div>
         <div class="gx-view-switch" role="group" aria-label="图谱显示层级">
           <button type="button" :class="{active:displayMode==='clusters'}"
-            @click="switchLevel('clusters')"><Layers3 :size="15" /> 章节总览</button>
+            @click="switchLevel('clusters')"><Layers3 :size="15" /> 章节</button>
           <button type="button" :class="{active:displayMode==='knowledge'}"
-            @click="switchLevel('knowledge')"><BookOpen :size="15" /> 全部知识点</button>
-        </div>
-        <div class="gx-chapter-strip" role="group" aria-label="快速切换章节">
-          <button type="button" :class="{active:chapterChoice==='all'}"
-            @click="selectChapter('all')">全部星团</button>
-          <button v-for="chapter in chapters" :key="chapter.id" type="button"
-            :class="{active:chapterChoice===chapter.id}" :title="chapter.name"
-            @click="selectChapter(chapter.id)">
-            <span class="gx-tab-dot"></span><span class="gx-tab-name">{{ chapter.name }}</span>
-            <small>{{ chapterCounts.get(chapter.id) ?? 0 }}</small>
-          </button>
+            @click="switchLevel('knowledge')"><BookOpen :size="15" /> 知识点</button>
         </div>
         <div class="gx-counter">
-          <span><i class="gx-symbol"></i> {{ visibleKnowledgeCount }} / {{ knowledge.length }} 知识点</span>
-          <span v-if="hiddenKnowledgeCount && displayMode==='clusters'">折叠 {{ hiddenKnowledgeCount }} 个节点 · 点击章节展开</span>
-          <span>{{ semanticEdges.length }} 条可见关系</span>
-          <span v-if="selected?.kind==='knowledge'">聚焦 {{ selectedRelations.length }} 条一阶关联</span>
+          <strong>{{ chapters.length }}<small>章节</small></strong>
+          <strong>{{ knowledge.length }}<small>知识点</small></strong>
+          <strong>{{ graph.stats.approved_semantic_edges }}<small>已审核关系</small></strong>
         </div>
-        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击章节展开 · 点击知识点查看一阶关联</p>
+        <div class="gx-hint"><Compass :size="13" /> 拖动旋转 · 滚轮缩放 · 点击星球进入章节</div>
       </main>
 
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
@@ -355,109 +364,93 @@ onBeforeUnmount(() => {
       </aside>
     </div>
     <footer class="gx-footer">
-      <span><CircleHelp :size="13" /> 章节圆球大小表示包含知识点规模；关系仅来自已审核记录。</span>
-      <span>KNOWTRACE · GALAXY EXPLORER</span>
+      <span><CircleHelp :size="13" /> 章节星球大小反映知识点数量，星球位置不代表知识先修关系。</span>
+      <span>KNOWTRACE</span>
     </footer>
   </div>
 </template>
 
 <style scoped>
-.gx-page{position:fixed;inset:0;z-index:1000;background:#07182a;color:#d6e8f3;display:flex;flex-direction:column;width:100vw;height:100vh;height:100dvh;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-.gx-toolbar{height:70px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:10px 22px;border-bottom:1px solid #25435b;background:#0c2539}
-.gx-brand{display:flex;align-items:center;gap:13px;min-width:0}
-.gx-brand-mark{display:grid;place-items:center;width:39px;height:39px;border-radius:12px;background:#155e63;color:#8befe4}
-.gx-brand>div{display:grid;gap:4px;min-width:0}.gx-brand strong{font-size:17px;white-space:nowrap}.gx-brand small{font-size:11px;color:#86a9bc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gx-toolbar-actions{display:flex;gap:9px}
-.gx-toolbar button,.gx-toggle,.gx-list-header button{border:1px solid #355a70;border-radius:9px;background:#16364b;color:#b9dce5;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 13px;font-size:12px}
-.gx-toolbar button:hover,.gx-toggle:hover{background:#24506a}
-.gx-body{display:flex;min-height:0;flex:1;position:relative}
-.gx-panel{background:#0d2639;flex:none;width:270px;overflow:auto;padding:19px 15px;z-index:2}
-.gx-nav{border-right:1px solid #2b4d61}
-.gx-detail{width:310px;border-left:1px solid #2b4d61}
-.gx-field{display:grid;gap:9px;margin-bottom:17px}.gx-field>span{display:flex;align-items:center;gap:7px;color:#9ebbc9;font-size:11px;font-weight:700}
-.gx-field input,.gx-field select{min-width:0;width:100%;height:41px;background:#0a1b2c;border:1px solid #35556a;border-radius:9px;color:#e6f7fa;padding:9px 10px;font-size:12px}
-.gx-checkbox{display:flex;align-items:center;gap:9px;color:#9db7c5;font-size:11px;line-height:1.5}.gx-checkbox input{accent-color:#3bccb8}
-.gx-divider{border-top:1px solid #294458;margin:20px 0}.gx-panel h3{font-size:12px;color:#d3e8ee;margin:0 0 10px;display:flex;align-items:center;gap:8px}
-.gx-note{color:#789aab;font-size:11px;line-height:1.8;margin:8px 0}
-.gx-segment{display:flex;border:1px solid #315266;border-radius:9px;overflow:hidden;margin:13px 0;max-width:100%}
-.gx-segment button{flex:1;min-width:0;border:0;border-right:1px solid #315266;background:#102d41;color:#93b5c5;padding:10px 5px;font-size:11px}
-.gx-segment button:last-child{border:0}.gx-segment button.active{background:#166c6c;color:#d3fff3;font-weight:700}
-.gx-toggle{width:100%;justify-content:flex-start}
-.gx-list-header{display:flex;align-items:center;justify-content:space-between}.gx-list-header button{padding:3px 8px;font-size:10px}
-.gx-results{display:grid;gap:3px;overflow:auto;max-height:min(40vh,390px)}
-.gx-results>button{display:flex;align-items:center;gap:9px;width:100%;background:transparent;border:1px solid transparent;border-radius:7px;color:#b2cdd9;text-align:left;padding:9px 6px;font-size:11px}
-.gx-results>button span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gx-results>button:hover,.gx-results>button.active{background:#1c4b53;border-color:#246c70}
-.gx-point{flex:0 0 7px;width:7px;height:7px;border-radius:50%;background:#40c7b6}
-.gx-main{min-width:0;flex:1;position:relative;overflow:hidden;background:#07182a}
-.gx-main :deep(.galaxy-canvas){position:absolute;inset:0;min-height:0;height:100%}
-.gx-counter{position:absolute;top:17px;left:18px;display:flex;flex-wrap:wrap;gap:8px;pointer-events:none}
-.gx-counter span{background:#061b2bca;border:1px solid #2a5866;border-radius:100px;padding:8px 13px;color:#b8e7e4;font-size:11px}
-.gx-symbol{width:8px;height:8px;border-radius:50%;background:#59d8be;display:inline-block;margin-right:5px}
-.gx-hint{position:absolute;bottom:8px;left:18px;right:18px;text-align:center;font-size:11px;color:#89b2c3;pointer-events:none}
-.gx-detail-head{display:flex;justify-content:space-between;align-items:center;color:#70d6c6;font-size:11px}
-.gx-detail-head button{border:0;background:none;color:#a7c8d5;padding:6px}
-.gx-detail h2{font-size:20px;color:#eaffff;line-height:1.45;margin:14px 0;overflow-wrap:anywhere}
-.gx-section{color:#67d7c8;font-size:12px}.gx-summary{font-size:12px;line-height:1.9;color:#a8c5d4}
-.gx-metrics{display:grid;grid-template-columns:1fr auto;gap:9px;margin:20px 0;border-top:1px solid #335164;border-bottom:1px solid #335164;padding:17px 0;font-size:11px}
-.gx-metrics span{color:#84a3b7}.gx-metrics strong{color:#ddf6f0}
-.gx-related{background:#102f44;border:1px solid #2a5263;border-radius:8px;padding:10px;display:flex;align-items:center;gap:8px;margin:5px 0;width:100%;text-align:left;color:#d2e6eb;font-size:11px}
-.gx-related small{color:#7edacb;white-space:nowrap}.gx-related span{flex:1}
-.gx-source{border-bottom:1px solid #2c495d;padding:10px 0;display:grid;gap:8px;font-size:11px;color:#c0d8e0;overflow-wrap:anywhere}
-.gx-source a{color:#75dece;display:inline-flex;align-items:center;gap:5px}
-.gx-primary{width:100%;display:flex;align-items:center;justify-content:center;gap:9px;background:#116a67;color:#e9fffb;border:0;border-radius:9px;padding:12px}
-.gx-footer{height:32px;flex:none;padding:0 19px;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#092234;border-top:1px solid #264357;color:#7194a8;font-size:10px}
-.gx-footer span:first-child{display:flex;align-items:center;gap:6px}
-@media(max-width:900px){.gx-panel{width:214px}.gx-detail{width:252px}.gx-toolbar{padding:10px 14px}.gx-hint{display:none}}
-@media(max-width:660px){.gx-toolbar{height:62px}.gx-toolbar-actions button span{display:none}.gx-toolbar-actions button{padding:9px}.gx-brand strong{font-size:13px}.gx-nav{position:absolute;left:8px;top:9px;width:min(240px,56vw);max-height:58%;border:1px solid #30576b;border-radius:12px;background:#092439e9}.gx-detail{position:absolute;right:7px;bottom:10px;width:min(290px,70vw);max-height:58%;border:1px solid #30576b;border-radius:12px;background:#092439ef}.gx-main{width:100%}.gx-counter{top:10px;right:8px;left:auto;justify-content:flex-end}.gx-footer span:last-child{display:none}}
-/* Immersive, canvas-first exploration. Panels float above the scene rather
-   than shrinking its WebGL viewport whenever a knowledge point is selected. */
-.gx-toolbar{height:66px;padding:10px 20px;background:#092237;border-bottom:1px solid #264b5a;box-shadow:0 8px 30px #04101b42;z-index:10}
-.gx-nav-trigger{width:40px;height:40px;padding:0!important;border-radius:12px!important;background:#143b4a!important;color:#b9f3e8!important;border-color:#28626b!important}
-.gx-brand-mark{width:34px;height:34px;border-radius:11px}
-.gx-toolbar-info{display:flex;align-items:center;gap:9px;margin-left:auto;margin-right:12px}
-.gx-toolbar-info span{white-space:nowrap;font-size:11px;color:#a7c8d6;background:#123449;padding:8px 12px;border:1px solid #254d60;border-radius:99px}
-.gx-brand small{color:#80a4b8}
-.gx-body{display:block;position:relative;isolation:isolate}
-.gx-main{position:absolute;inset:0;width:100%;height:100%;z-index:0}
-.gx-panel{position:absolute;top:14px;bottom:14px;width:280px;max-height:calc(100% - 28px);z-index:4;background:#0c273bea;border:1px solid #36566b;border-radius:16px;box-shadow:0 20px 60px #0009;backdrop-filter:blur(18px);scrollbar-width:thin;scrollbar-color:#375d71 transparent}
-.gx-nav{left:16px;border:1px solid #36566b;width:282px}
-.gx-detail{right:16px;border:1px solid #36566b;width:332px}
-.gx-panel-title{display:flex;justify-content:space-between;align-items:center;margin:-4px 0 17px;padding-bottom:13px;border-bottom:1px solid #28475a}
-.gx-panel-title strong{font-size:13px;letter-spacing:.3px;color:#d6f3f0}
-.gx-panel-title button{display:grid;place-items:center;width:27px;height:27px;border:1px solid #315569;border-radius:7px;color:#a0c7d2;background:#173b4e}
-.gx-chapter-strip{position:absolute;z-index:2;left:20px;right:20px;top:16px;display:flex;gap:7px;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#376475 transparent;padding:3px 2px 10px;white-space:nowrap;transition:left .15s,right .15s}
-.gx-chapter-strip button{flex:none;display:flex;align-items:center;gap:7px;max-width:190px;border:1px solid #315268;border-radius:99px;padding:9px 13px;background:#09243bdf;color:#9cbacb;font-size:11px;box-shadow:0 6px 16px #0004}
-.gx-chapter-strip button:hover{border-color:#4e9997;color:#dcf8f3}
-.gx-chapter-strip button.active{background:#145e61;color:#e4fffa;border-color:#42b9a8}
-.gx-tab-dot{flex:none;width:6px;height:6px;border-radius:50%;background:#6799bd}
-.gx-chapter-strip button.active .gx-tab-dot{background:#65ead4}
-.gx-tab-name{overflow:hidden;text-overflow:ellipsis}
-.gx-chapter-strip button small{font-size:10px;opacity:.6}
-.gx-body.gx-nav-open .gx-chapter-strip{left:314px}
-.gx-body.gx-has-detail .gx-chapter-strip{right:365px}
-.gx-counter{top:auto;bottom:28px;left:20px;right:auto}
-.gx-counter span{background:#092439dc;border-color:#2d5368;box-shadow:0 6px 20px #0004}
-.gx-body.gx-nav-open .gx-counter{left:314px}
-.gx-hint{bottom:5px;left:auto;right:22px;font-size:10px;text-align:right;max-width:70%;white-space:nowrap}
-.gx-body.gx-has-detail .gx-hint{right:365px}
-.gx-detail h2{font-size:19px;letter-spacing:-.2px}
-.gx-related{transition:background .16s,border-color .16s}
-.gx-related:hover{background:#1b4557;border-color:#57a99f}
-.gx-footer{height:28px;background:#071c2c;border-top-color:#1c3c4d}
-.gx-page button:focus-visible,.gx-page a:focus-visible,.gx-page input:focus-visible,.gx-page select:focus-visible{outline:2px solid #74e8ce;outline-offset:2px}
-@media(max-width:1060px){.gx-toolbar-info span:last-child{display:none}.gx-panel{width:264px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-chapter-strip{left:288px}.gx-body.gx-has-detail .gx-chapter-strip{right:288px}.gx-body.gx-nav-open .gx-counter{left:288px}.gx-body.gx-has-detail .gx-hint{right:288px}}
-@media(max-width:760px){.gx-toolbar-info{display:none}.gx-toolbar{padding:8px 12px}.gx-brand>div strong{font-size:14px}.gx-brand-mark{display:none}.gx-panel{top:10px;bottom:10px}.gx-nav{width:min(285px,calc(100vw - 24px));left:10px}.gx-detail{width:min(330px,calc(100vw - 24px));right:10px;top:auto;max-height:58%;bottom:10px}.gx-chapter-strip,.gx-body.gx-nav-open .gx-chapter-strip,.gx-body.gx-has-detail .gx-chapter-strip{left:12px;right:12px;top:8px}.gx-counter,.gx-body.gx-nav-open .gx-counter{bottom:14px;left:12px}.gx-counter span{font-size:10px;padding:7px 9px}.gx-hint{display:none}}
-
-/* Progressive disclosure: a chapter-first overview with a separate,
-   deliberately accessible control for expanding all knowledge points. */
-.gx-view-switch{position:absolute;z-index:3;top:15px;left:20px;display:inline-flex;gap:5px;background:#092338e8;border:1px solid #2c5868;border-radius:11px;padding:4px;box-shadow:0 9px 20px #0005}
-.gx-view-switch button{display:flex;gap:7px;align-items:center;justify-content:center;padding:9px 12px;font-size:11px;color:#91b9c6;background:transparent;border:0;border-radius:8px;white-space:nowrap}
-.gx-view-switch button.active{background:#1b696e;color:#e1fff8;box-shadow:0 1px 9px #032c2b55}
-.gx-view-switch button:focus-visible{outline:2px solid #74e8ce}
-.gx-chapter-strip{top:69px}
-.gx-body.gx-nav-open .gx-view-switch{left:314px}
-.gx-body.gx-has-detail .gx-chapter-strip{right:365px}
-@media(max-width:1060px){.gx-body.gx-nav-open .gx-view-switch{left:288px}}
-@media(max-width:760px){.gx-view-switch,.gx-body.gx-nav-open .gx-view-switch{left:12px;top:8px}.gx-view-switch button{padding:8px;font-size:10px}.gx-chapter-strip,.gx-body.gx-nav-open .gx-chapter-strip,.gx-body.gx-has-detail .gx-chapter-strip{top:58px}}
+.gx-page{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;width:100vw;height:100dvh;overflow:hidden;background:#061522;color:#deebf5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.gx-page button,.gx-page input,.gx-page select{font:inherit}
+.gx-page button:focus-visible,.gx-page a:focus-visible,.gx-page input:focus-visible{outline:2px solid #83e4d4;outline-offset:2px}
+.gx-toolbar{height:68px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:10px 24px;background:#081c2bdc;border-bottom:1px solid #274455;z-index:10}
+.gx-brand{display:flex;align-items:center;gap:15px;min-width:0}
+.gx-brand-text{display:grid;gap:5px;min-width:0}
+.gx-brand strong{font-size:16px;letter-spacing:.8px;color:#e5f6f8;white-space:nowrap}
+.gx-brand strong span{font-weight:450;color:#a3c2cb}
+.gx-brand small{font-size:10px;color:#78a1b4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gx-nav-trigger,.gx-toolbar-actions button{width:39px;height:39px;display:grid;place-items:center;padding:0;background:transparent;border:1px solid #29465a;border-radius:11px;color:#a9cbd5}
+.gx-nav-trigger:hover,.gx-toolbar-actions button:hover{background:#173a4c;color:#e7fcfa;border-color:#3d7a83}
+.gx-toolbar-actions{display:flex;align-items:center;gap:7px}
+.gx-toolbar-actions .gx-exit{background:#123145}
+.gx-header-mode{font-size:10px;font-weight:700;letter-spacing:1.8px;color:#80aebb;display:flex;align-items:center;gap:9px}
+.gx-live-dot{width:7px;height:7px;border-radius:50%;background:#64d4bd;box-shadow:0 0 10px #45bca688}
+.gx-body{flex:1;min-height:0;position:relative;isolation:isolate}
+.gx-main{position:absolute;inset:0;z-index:0;overflow:hidden}
+.gx-main :deep(.galaxy-canvas){position:absolute;inset:0;height:100%;min-height:0;background:radial-gradient(ellipse at 50% 50%,#11283e 0%,#081928 53%,#04101d 100%)}
+.gx-stage-nav{position:absolute;z-index:2;top:23px;left:26px;max-width:min(560px,calc(100% - 52px));pointer-events:none}
+.gx-stage-nav .gx-back{pointer-events:auto;border:0;display:flex;align-items:center;gap:5px;color:#7bd8c5;background:transparent;font-size:12px;padding:3px 0 10px;cursor:pointer}
+.gx-stage-kicker{display:block;font-size:10px;letter-spacing:2.4px;font-weight:700;color:#72baae;margin-bottom:12px}
+.gx-stage-nav h1{font-size:clamp(19px,2.1vw,30px);line-height:1.35;font-weight:620;letter-spacing:-.7px;color:#e9f9fb;margin:0 0 10px;text-shadow:0 2px 15px #02101ba9}
+.gx-stage-nav p{font-size:12px;line-height:1.7;color:#87adbd;margin:0}
+.gx-view-switch{position:absolute;top:28px;right:28px;z-index:3;display:flex;gap:2px;padding:4px;background:#0a2738d6;border:1px solid #28495a;border-radius:12px;box-shadow:0 10px 25px #020c1470}
+.gx-view-switch button{display:flex;align-items:center;gap:7px;border:0;border-radius:9px;padding:9px 14px;background:transparent;color:#91b2c2;font-size:11px;white-space:nowrap}
+.gx-view-switch button.active{background:#1a545a;color:#defaf4;font-weight:700}
+.gx-view-switch button:hover{color:#defaf4}
+.gx-counter{position:absolute;left:26px;bottom:34px;z-index:2;display:flex;gap:22px;padding:14px 19px;background:#081c2bc9;border:1px solid #264659;border-radius:13px;pointer-events:none;backdrop-filter:blur(10px)}
+.gx-counter strong{display:flex;flex-direction:column;gap:5px;font-size:21px;font-weight:650;line-height:1;color:#d6f6ef}
+.gx-counter small{font-size:10px;font-weight:400;color:#7eabba}
+.gx-hint{position:absolute;right:25px;bottom:28px;display:flex;align-items:center;gap:9px;color:#719aad;font-size:10px;pointer-events:none}
+.gx-footer{height:27px;flex:none;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:0 22px;background:#071725;border-top:1px solid #193747;color:#5c879c;font-size:10px}
+.gx-footer span:first-child{display:flex;align-items:center;gap:7px}
+.gx-panel{position:absolute;z-index:5;top:14px;bottom:14px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#305b6c transparent;background:#0b2335f2;border:1px solid #365668;box-shadow:0 25px 70px #0009;backdrop-filter:blur(16px);border-radius:16px;padding:20px}
+.gx-nav{left:18px;width:308px}
+.gx-detail{right:18px;width:330px}
+.gx-body.gx-nav-open .gx-stage-nav,.gx-body.gx-nav-open .gx-counter{left:350px}
+.gx-body.gx-has-detail .gx-view-switch{right:370px}
+.gx-panel-title{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:17px;margin-bottom:21px;border-bottom:1px solid #28495b}
+.gx-panel-title strong{font-size:14px;color:#e4f8fa}
+.gx-panel-title button,.gx-detail-head button{width:28px;height:28px;display:grid;place-items:center;border:0;background:transparent;color:#a7cbd6}
+.gx-panel h3{display:flex;align-items:center;gap:9px;margin:16px 0 12px;font-size:12px;color:#b3d6dc}
+.gx-field{display:grid;gap:9px;margin-bottom:20px}
+.gx-field span{display:flex;align-items:center;gap:8px;font-size:11px;color:#94b5c2}
+.gx-field input{height:42px;width:100%;min-width:0;background:#071b2d;color:#e4f9fa;border:1px solid #31566a;border-radius:10px;padding:11px 13px;font-size:12px}
+.gx-chapters{display:grid;gap:4px;max-height:35vh;overflow-y:auto;margin:0 -5px 16px}
+.gx-chapters button{width:100%;display:flex;align-items:center;gap:11px;border:1px solid transparent;background:transparent;text-align:left;color:#a5c4d0;border-radius:10px;padding:10px 8px;font-size:11px}
+.gx-chapters button:hover,.gx-chapters button.active{background:#16394b;color:#e1f9f8;border-color:#285966}
+.gx-chapter-index{flex:0 0 32px;font-size:10px;color:#81bbbc;letter-spacing:.6px;text-align:center}
+.gx-chapter-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gx-chapters small{flex:none;color:#729dac;font-size:10px}
+.gx-checkbox{display:flex;align-items:center;gap:9px;font-size:11px;color:#94b6c4}
+.gx-checkbox input{accent-color:#3dccbc}
+.gx-note{font-size:11px;color:#7498aa;line-height:1.7;margin:9px 0 15px}
+.gx-divider{border-top:1px solid #2a4759;margin:22px 0}
+.gx-segment{display:flex;padding:3px;gap:3px;border:1px solid #2c4c5e;background:#0a2235;border-radius:10px;margin:12px 0}
+.gx-segment button{flex:1;border:0;background:transparent;color:#8cabbc;padding:9px 5px;font-size:11px;border-radius:7px}
+.gx-segment button.active{background:#1c5d64;color:#e0fbf6}
+.gx-toggle{width:100%;display:flex;justify-content:flex-start;align-items:center;gap:9px;padding:10px;border:1px solid #315367;background:#12374b;border-radius:9px;color:#b8d5df;font-size:11px}
+.gx-list-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.gx-list-header button{background:transparent;border:0;color:#78d5c5;font-size:11px}
+.gx-results{display:grid;gap:3px;max-height:270px;overflow:auto}
+.gx-results>button{display:flex;gap:9px;align-items:center;text-align:left;background:transparent;border:0;border-radius:7px;color:#accbd3;padding:9px;font-size:11px}
+.gx-results>button:hover,.gx-results>button.active{background:#1c4855}
+.gx-results>button span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gx-point{width:7px;height:7px;flex:0 0 7px;background:#55c9bc;border-radius:50%}
+.gx-detail-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#72d4c4}
+.gx-detail h2{font-size:20px;line-height:1.5;font-weight:630;color:#f0ffff;margin:15px 0;overflow-wrap:anywhere}
+.gx-section{font-size:12px;color:#70d6c6}
+.gx-summary{font-size:12px;line-height:1.85;color:#a8c5d1}
+.gx-metrics{display:grid;grid-template-columns:1fr auto;gap:10px;margin:20px 0;padding:17px 0;border-top:1px solid #305064;border-bottom:1px solid #305064;font-size:11px}
+.gx-metrics span{color:#8ba7b9}.gx-metrics strong{color:#d5f5ee}
+.gx-related{width:100%;display:flex;align-items:center;gap:9px;margin:5px 0;padding:11px;background:#112f43;border:1px solid #295269;border-radius:9px;text-align:left;color:#d0e5eb;font-size:11px}
+.gx-related:hover{background:#204a55;border-color:#4f9c92}
+.gx-related small{color:#7bd9c8;white-space:nowrap}
+.gx-related span{flex:1}
+.gx-source{border-bottom:1px solid #2b4c60;padding:10px 0;display:grid;gap:8px;font-size:11px;color:#b9d5e0;overflow-wrap:anywhere}
+.gx-source a{color:#78dfcb;display:inline-flex;align-items:center;gap:5px}
+.gx-primary{width:100%;display:flex;align-items:center;justify-content:center;gap:9px;background:#176d6b;color:#efffff;border:0;border-radius:9px;padding:12px}
+@media(max-width:1150px){.gx-header-mode{display:none}.gx-body.gx-nav-open .gx-stage-nav,.gx-body.gx-nav-open .gx-counter{left:345px}.gx-body.gx-has-detail .gx-view-switch{right:367px}}
+@media(max-width:830px){.gx-toolbar{padding:10px 13px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-stage-nav{display:none}.gx-body.gx-nav-open .gx-counter{left:26px}.gx-body.gx-has-detail .gx-view-switch{right:28px;top:10px}.gx-stage-nav{top:18px;left:18px}.gx-view-switch{right:13px;top:15px}.gx-hint{display:none}}
+@media(max-width:600px){.gx-brand strong{font-size:13px}.gx-brand strong span{display:none}.gx-brand small{max-width:160px}.gx-toolbar{height:58px}.gx-toolbar-actions{gap:4px}.gx-nav-trigger,.gx-toolbar-actions button{width:34px;height:34px}.gx-nav,.gx-detail{width:min(335px,calc(100vw - 20px));top:10px;bottom:10px}.gx-detail{max-height:65%;top:auto}.gx-body.gx-has-detail .gx-view-switch{display:none}.gx-stage-nav{top:18px;left:15px;right:15px}.gx-stage-nav h1{font-size:20px}.gx-stage-nav p{max-width:230px}.gx-view-switch{top:122px;left:14px;right:auto}.gx-counter{left:13px;bottom:15px;gap:15px;padding:11px}.gx-counter strong{font-size:16px}.gx-footer span:last-child{display:none}}
 </style>
