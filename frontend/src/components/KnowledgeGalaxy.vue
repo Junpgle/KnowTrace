@@ -430,6 +430,7 @@ watch(() => props.courseId, () => {
             </div>
           </div>
           <Graph3DCanvas v-if="display==='3d' && !explorerOpen" ref="canvas" :nodes="visibleNodes" :edges="visibleEdges"
+            :layout-nodes="graph.nodes" :layout-edges="graph.edges" :relation-edges="graph.edges"
             :selected-id="selectedId" :show-relations="showRelations" @select="select" />
           <div v-else class="kg-list-mode">
             <p v-if="!matching.length" class="kg-muted">暂无匹配知识点。</p>
