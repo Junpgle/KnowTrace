@@ -14,6 +14,7 @@ const props = defineProps<{
   edges: GraphEdge[]
   selectedId: string | null
   showRelations: boolean
+  showStructure?: boolean
 }>()
 const emit = defineEmits<{ select: [id: string] }>()
 const mountPoint = ref<HTMLDivElement | null>(null)
@@ -210,7 +211,8 @@ function rebuild() {
       g.add(label)
     }
   }
-  const activeEdges = props.edges.filter(edge => edge.structural || props.showRelations)
+  const activeEdges = props.edges.filter(edge => edge.structural
+    ? props.showStructure !== false : props.showRelations)
   const positionsStructural: number[] = []
   const positionsSemantic: number[] = []
   activeEdges.forEach(edge => {
@@ -250,9 +252,21 @@ function focus(id: string | null) {
   desiredTarget.copy(coordinate || new THREE.Vector3())
   const selected = props.nodes.find(n => n.id === id)
   const currentDistance = camera.position.distanceTo(controls.target)
-  const distance = !id
-    ? Math.max(85, Math.max(18, props.nodes.filter(n => n.kind === 'chapter').length * 5.2) * 2.7)
-    : selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
+  // Fit the real node bounds, not a fixed chapter-count distance; large
+  // course graphs can extend far beyond the previous 280-unit camera cap.
+  let distance: number
+  if (!id) {
+    const extent = Math.max(12, ...[...positions.values()].map(p => p.length() + 8))
+    const vfov = THREE.MathUtils.degToRad(camera.fov)
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect)
+    const halfAngle = Math.min(vfov, hfov) / 2
+    distance = Math.max(85, extent / Math.sin(halfAngle) * 1.12)
+    controls.maxDistance = Math.max(280, distance * 1.4)
+    camera.far = Math.max(1600, distance * 3)
+    camera.updateProjectionMatrix()
+  } else {
+    distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
+  }
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < 0.01) direction.set(1, .6, 1)
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
@@ -377,6 +391,7 @@ watch(() => [props.nodes, props.edges], () => {
   if (props.selectedId) focus(props.selectedId)
 })
 watch(() => props.showRelations, rebuild)
+watch(() => props.showStructure, rebuild)
 watch(() => props.selectedId, id => {
   rebuild()
   focus(id)
