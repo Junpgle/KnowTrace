@@ -168,6 +168,15 @@ const visibleIds = computed(() => {
     chapters.value.forEach(n => addParents(n.id))
   matching.value.forEach(node => addParents(node.id))
   if (selectedChapter.value !== 'all') addParents(selectedChapter.value)
+  // Keep approved one-hop neighbors visible across chapter/search filters.
+  if (selectedId.value && graph.value?.nodes.some(n => n.id === selectedId.value && n.kind === 'knowledge')) {
+    addParents(selectedId.value)
+    for (const edge of graph.value?.edges ?? []) {
+      if (edge.structural || !edge.verified) continue
+      if (edge.source === selectedId.value) addParents(edge.target)
+      else if (edge.target === selectedId.value) addParents(edge.source)
+    }
+  }
   return ids
 })
 const visibleNodes = computed(() => (graph.value?.nodes ?? []).filter(n => visibleIds.value.has(n.id)))
@@ -218,12 +227,12 @@ async function refresh() {
     if (token === requestToken) error.value = e instanceof Error ? e.message : '图谱加载失败'
   } finally { if (token === requestToken) loading.value = false }
 }
-async function select(id: string) {
+async function select(id: string | null) {
   const token = ++detailToken
   selectedId.value = id
   detail.value = null
   const node = graph.value?.nodes.find(n => n.id === id)
-  if (node?.kind !== 'knowledge') { detailLoading.value = false; return }
+  if (!id || node?.kind !== 'knowledge') { detailLoading.value = false; return }
   detailLoading.value = true
   try {
     const response = await api.knowledgePoint(id)
@@ -514,6 +523,7 @@ watch(() => props.courseId, () => {
         <span><i class="kg-dot weak"></i>待巩固 &lt;50%</span>
         <span><i class="kg-dot untested"></i>未测评</span>
         <span><i class="kg-dot pending"></i>待审核</span>
+        <span>选中知识点时：自己与直接关联点高亮，无关节点弱化；点击空白处可取消。</span>
       </div>
       <p class="kg-disclaimer"><CircleHelp :size="16" />
         章节连线仅表示真实归属；金色连线仅表示已审核的知识关系。星球的距离不代表知识相似度。
