@@ -335,11 +335,11 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       const arm = i % arms
       const layer = Math.floor(i / arms)
       const baseAngle = (arm / arms) * Math.PI * 2 - Math.PI / 2
-      const angle = baseAngle + layer * .14
-        + (ordinalHash(node.id + ':arm') - .5) * .095
+      const angle = baseAngle + layer * .06
+        + (ordinalHash(node.id + ':arm') - .5) * .04
       const radius = count === 1 ? 0
-        : 48 + layer * (count > 20 ? 52 : 65)
-          + (ordinalHash(node.id + ':reach') - .5) * 13
+        : 90 + layer * (count > 20 ? 72 : 78)
+          + (ordinalHash(node.id + ':reach') - .5) * 9
       // Three depth tiers provide real parallax on drag, yet preserve a
       // readable broad constellation with its own visual foreground.
       const z = count === 1 ? 0
@@ -347,7 +347,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
           + (layer % 2 ? 21 : -13)
           + (ordinalHash(node.id + ':depth') - .5) * 16
       pos.set(node.id, new THREE.Vector3(
-        Math.cos(angle) * radius * 1.14,
+        Math.cos(angle) * radius * 1.70,
         Math.sin(angle) * radius * .92,
         z,
       ))
@@ -751,7 +751,7 @@ function rebuild(animate = false) {
           nodeId: node.id,
           priority: node.kind === 'group'
             ? count + (groupOrder >= 0 && groupOrder < 6 ? 7 : 0) : 100,
-          declutter: overview && node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 12,
+          declutter: overview && node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 7,
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
             radius, gap: node.kind === 'group' ? 8 : 12,
