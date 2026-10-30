@@ -287,7 +287,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       const count = points.length
       const innerCount = count <= 8 ? count : Math.min(6, Math.round(count * .42))
       const outerCount = count - innerCount
-      const ring1 = count <= 3 ? 48 : count <= 8 ? 56 : 53
+      const ring1 = Math.max(49, innerCount * 8.5)
       const ring2 = 112
       // XY lies parallel to the preferred detail camera plane. Keeping the
       // Z depth small avoids accidental label overlaps on entry.
@@ -300,7 +300,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
         const radius = outer ? ring2 : ring1
         const wobble = (ordinalHash(node.id + ':leaf') - .5) * 7
         pos.set(node.id, new THREE.Vector3(
-          Math.cos(theta) * (radius + wobble),
+          Math.cos(theta) * (radius + wobble) * 1.30,
           Math.sin(theta) * (radius + wobble) * .80,
           (ordinalHash(node.id + ':depth') - .5) * 3,
         ))
@@ -772,8 +772,15 @@ function focus(id: string | null) {
     if (localGroup && visibleKnowledge.length && visibleKnowledge.length <= 18) {
       // Fit the FULL radial graph plus labels, not an arbitrary 94-unit cap.
       // With 14 nodes that cap made every label overlap on screen.
-      distance = THREE.MathUtils.clamp(
-        (extent + 18) / Math.sin(halfAngle) * 1.04, 78, 360)
+      // Fit the wide, almost planar network against BOTH viewport axes.
+      // A spherical radius fit wastes horizontal space on desktop.
+      const tanHalf = Math.tan(vFov / 2)
+      const maxX = Math.max(0, ...fitPoints.map(p => Math.abs(p.x - overviewCenter.x)))
+      const maxY = Math.max(0, ...fitPoints.map(p => Math.abs(p.y - overviewCenter.y)))
+      distance = THREE.MathUtils.clamp(Math.max(
+        (maxY + 27) / tanHalf,
+        (maxX + 38) / (tanHalf * camera.aspect),
+      ) * 1.08, 74, 390)
     } else {
       distance = Math.max(localGroup ? 58 : overview ? 72 : 85,
         (extent + (overview ? 15 : 9)) / Math.sin(halfAngle)
