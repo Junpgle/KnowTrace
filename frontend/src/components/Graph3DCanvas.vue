@@ -48,12 +48,16 @@ let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
 const meshes: THREE.Mesh[] = []
+let hoveredNodeId: string | null = null
 const labelAnchors: LabelAnchor[] = []
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
   center: THREE.Vector3
   distance: number
+  nodeId?: string
+  priority?: number
+  declutter?: boolean
   // Atlas captions maintain a readable size in screen pixels while zooming.
   screen?: { width: number; height: number; radius: number; gap: number }
 }
@@ -316,29 +320,38 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // Browsing groups should still read as a constellation, not a table.
-    // Separate staggered inner/outer orbits in the camera-facing XY plane;
-    // their different radii leave enough room for large, readable captions.
+    // A small 3D spiral galaxy of browse-only groups. Six arms radiate
+    // outward on staggered depth planes, instead of a pair of concentric
+    // rings whose projection piled every badge on top of its neighbors.
+    // Screen-space labels are decluttered separately, so positions encode
+    // NO claimed prerequisite or semantic relation.
     const groups = [...groupNodes].sort((a,b) =>
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
     const count = groups.length
-    const innerCount = count <= 7 ? count : Math.max(3, Math.round(count / 3))
-    const outerCount = count - innerCount
-    for (let i = 0; i < count; i++) {
-      const outer = i >= innerCount
-      const index = outer ? i - innerCount : i
-      const n = outer ? outerCount : innerCount
-      const angle = -Math.PI / 2 + 2 * Math.PI * index / Math.max(1,n) +
-        (outer ? Math.PI / Math.max(1,n) : 0)
-      // Leave enough *projected* separation for screen-sized labels.
-      const radius = count === 1 ? 0 : outer ? 242 : count <= 7 ? 142 : 132
-      const drift = count === 1 ? 0 : (ordinalHash(groups[i].id + ':ring') - .5) * 12
-      pos.set(groups[i].id, new THREE.Vector3(
-        Math.cos(angle) * (radius + drift),
-        Math.sin(angle) * (radius + drift),
-        (ordinalHash(groups[i].id + ':depth') - .5) * 4,
+    const arms = Math.min(6, Math.max(3, Math.round(Math.sqrt(count))))
+    const depth = count >= 16 ? 48 : 28
+    const levels = Math.ceil(count / arms)
+    groups.forEach((node, i) => {
+      const arm = i % arms
+      const layer = Math.floor(i / arms)
+      const baseAngle = (arm / arms) * Math.PI * 2 - Math.PI / 2
+      const angle = baseAngle + layer * .14
+        + (ordinalHash(node.id + ':arm') - .5) * .095
+      const radius = count === 1 ? 0
+        : 48 + layer * (count > 20 ? 52 : 65)
+          + (ordinalHash(node.id + ':reach') - .5) * 13
+      // Three depth tiers provide real parallax on drag, yet preserve a
+      // readable broad constellation with its own visual foreground.
+      const z = count === 1 ? 0
+        : ((arm % 3) - 1) * depth
+          + (layer % 2 ? 21 : -13)
+          + (ordinalHash(node.id + ':depth') - .5) * 16
+      pos.set(node.id, new THREE.Vector3(
+        Math.cos(angle) * radius * 1.14,
+        Math.sin(angle) * radius * .92,
+        z,
       ))
-    }
+    })
     return pos
   }
   const root = nodes.find(n => n.kind === 'course')
@@ -494,6 +507,7 @@ function clearGraph(animate = false) {
   }
   meshes.splice(0)
   labelAnchors.splice(0)
+  hoveredNodeId = null
   positions.clear()
   group = null
 }
@@ -610,12 +624,21 @@ function rebuild(animate = false) {
     if (!position) continue
     const isCourse = node.kind === 'course'
     const count = node.kind==='group' ? node.source_count : (cachedChapterTotals.get(node.id) ?? 0)
-    const baseColor = isCourse ? 0x4be6d6 : node.kind==='group' ? 0x5bcabb : palette.get(node.id) ?? 0x83a4d9
+    const groupPalette = [0x54c9cf, 0x8ea0ef, 0x69cba8, 0xe0b981, 0x86c4ed, 0xb39be8]
+    const groupOrder = node.kind === 'group'
+      ? props.nodes.filter(n=>n.kind==='group')
+        .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
+        .findIndex(n=>n.id===node.id) : -1
+    const baseColor = isCourse ? 0x4be6d6
+      : node.kind==='group' ? groupPalette[(groupOrder + groupPalette.length) % groupPalette.length]
+        : palette.get(node.id) ?? 0x83a4d9
     const chapterSelected = node.id === selectedId
     // Overview planets must be readable on a large desktop canvas.
     // The previous 4-6 world-unit spheres appeared only ~30px across.
     const radius = node.kind==='group'
-      ? (smallGroup ? 3.8 : overview ? 9.3 : 6.8)
+      ? (smallGroup ? 3.8 : overview
+        ? 7.7 + Math.min(3.3, Math.sqrt(Math.max(1, count)) * 1.0)
+        : 6.8)
       : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
           ? 11.7 + Math.min(4.1, Math.log2(count + 1) * .53)
@@ -711,6 +734,9 @@ function rebuild(animate = false) {
         labelAnchors.push({
           sprite: label, center: position,
           distance: radius + (overview ? 10.5 : 4),
+          nodeId: node.id,
+          priority: node.kind === 'group' ? count : 100,
+          declutter: overview && node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 12,
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
             radius, gap: node.kind === 'group' ? 8 : 12,
