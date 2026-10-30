@@ -731,6 +731,42 @@ function selectionDistance(kind: GraphNode['kind'], current: number): number {
   return THREE.MathUtils.clamp(current, minimum, maximum)
 }
 
+// Frame what the camera actually projects, not the radius of a 3D sphere.
+// Bounding-sphere fit substantially overestimates the needed distance when
+// the galaxy is spread horizontally across a wide monitor.
+function projectedFitDistance(
+  points: THREE.Vector3[],
+  center: THREE.Vector3,
+  viewDirection: THREE.Vector3,
+  fillX: number,
+  fillY: number,
+): number {
+  if (!camera || points.length === 0) return 100
+  const forward = viewDirection.clone().normalize()
+  const right = new THREE.Vector3().crossVectors(
+    new THREE.Vector3(0, 1, 0), forward,
+  )
+  // At a pole, choose another orthogonal basis.
+  if (right.lengthSq() < 1e-6) right.set(1, 0, 0)
+  right.normalize()
+  const screenUp = new THREE.Vector3().crossVectors(forward, right).normalize()
+  const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+  const tanH = tanV * camera.aspect
+  let result = 72
+  const relative = new THREE.Vector3()
+  for (const point of points) {
+    relative.subVectors(point, center)
+    // Positive depth is closer to the camera; account for perspective
+    // rather than fitting all nodes at the center's depth.
+    const depth = relative.dot(forward)
+    result = Math.max(result,
+      depth + (Math.abs(relative.dot(right)) + 11) / (tanH * fillX),
+      depth + (Math.abs(relative.dot(screenUp)) + 16) / (tanV * fillY),
+    )
+  }
+  return result
+}
+
 function focus(id: string | null) {
   if (!camera || !controls || !positions.size) return
   const coordinate = id ? positions.get(id) : undefined
@@ -763,6 +799,8 @@ function focus(id: string | null) {
   desiredTarget.copy(coordinate ?? overviewCenter)
 
   const currentDistance = camera.position.distanceTo(controls.target)
+  const direction = camera.position.clone().sub(controls.target)
+  if (direction.lengthSq() < .01) direction.set(.4, .8, 1)
   let distance: number
   if (!id) {
     const extent = Math.max(1, ...fitPoints.map(p=>p.distanceTo(overviewCenter)))
@@ -781,6 +819,16 @@ function focus(id: string | null) {
         (maxY + 27) / tanHalf,
         (maxX + 38) / (tanHalf * camera.aspect),
       ) * 1.08, 74, 390)
+    } else if (!localGroup && visibleKnowledge.length >= 40) {
+      // In the "全部" view 1300 nodes are spread over seven flattened
+      // constellations. Old sphere-fit included their unused depth and left
+      // most of the viewport empty. Project every *visible* point instead.
+      // The slightly smaller fill in Y reserves space for the heading/footer.
+      distance = projectedFitDistance(
+        fitPoints, overviewCenter, direction,
+        isSubset ? .68 : .76,
+        isSubset ? .66 : .76,
+      )
     } else {
       distance = Math.max(localGroup ? 58 : overview ? 72 : 85,
         (extent + (overview ? 15 : 9)) / Math.sin(halfAngle)
@@ -797,7 +845,6 @@ function focus(id: string | null) {
   }
   if (scene?.fog instanceof THREE.FogExp2)
     scene.fog.density = Math.min(0.0015, .35 / Math.max(72,distance))
-  const direction = camera.position.clone().sub(controls.target)
   if (localGroup && visibleKnowledge.length > 0 && visibleKnowledge.length <= 18 && !id) {
     // Frame the radial layout face-on. Subsequent user OrbitControls rotation
     // remains available; selecting a concept does not reset the camera angle.
@@ -818,7 +865,33 @@ function focus(id: string | null) {
   }
 }
 function resetCamera() { focus(null) }
-defineExpose({ resetCamera })
+// User-controlled zoom is useful for dense whole-course views; do not reset
+// the scene or change the selected concept when adjusting the lens.
+function zoomBy(factor: number) {
+  if (!camera || !controls || factor <= 0) return
+  const target = tween ? desiredTarget : controls.target
+  const origin = tween ? desiredPosition : camera.position
+  const offset = origin.clone().sub(target)
+  if (offset.lengthSq() < .01) offset.set(.4, .8, 1)
+  const distance = THREE.MathUtils.clamp(
+    offset.length() * factor, controls.minDistance, controls.maxDistance,
+  )
+  desiredTarget.copy(target)
+  desiredPosition.copy(target).add(offset.normalize().multiplyScalar(distance))
+  if (reducedMotion()) {
+    camera.position.copy(desiredPosition)
+    controls.target.copy(desiredTarget)
+    tween = false
+  } else {
+    cameraStartPosition.copy(camera.position)
+    cameraStartTarget.copy(controls.target)
+    cameraAnimationStart = performance.now()
+    tween = true
+  }
+}
+function zoomIn() { zoomBy(.78) }
+function zoomOut() { zoomBy(1.28) }
+defineExpose({ resetCamera, zoomIn, zoomOut })
 
 function draw() {
   if (!renderer || !camera || !controls || !scene || disposed || !visible) return
