@@ -532,7 +532,8 @@ function rebuild() {
       if (label) {
         if (overview) {
           // Twice the previous screen-space label size at the overview camera.
-          label.scale.set(isCourse ? 43 : 50, isCourse ? 12.4 : 14.5, 1)
+          label.scale.set(isCourse ? 43 : node.kind==='group' ? 27 : 50,
+            isCourse ? 12.4 : node.kind==='group' ? 8.2 : 14.5, 1)
         } else {
           label.scale.set(isCourse ? 22 : 24, 5.3, 1)
         }

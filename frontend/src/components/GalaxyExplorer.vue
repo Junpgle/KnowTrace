@@ -84,7 +84,7 @@ const browseGroups = computed<BrowseGroup[]>(()=>{
   if(e.structural||!e.verified||!ids.has(e.source)||!ids.has(e.target))continue
   adj.get(e.source)?.add(e.target);adj.get(e.target)?.add(e.source)
  }
- const remain=new Set(ids),out:BrowseGroup[]=[]
+ const remain=new Set(ids),out:BrowseGroup[]=[],loose:string[]=[]
  while(remain.size){
   const degree=(id:string)=>[...(adj.get(id)??[])].filter(x=>remain.has(x)).length
   const seed=[...remain].sort((x,y)=>degree(y)-degree(x)||x.localeCompare(y))[0]
@@ -92,12 +92,21 @@ const browseGroups = computed<BrowseGroup[]>(()=>{
   while(remain.size&&group.length<14){
    const ranked=[...remain].map(id=>({id,links:group.filter(x=>adj.get(id)?.has(x)).length,degree:degree(id)}))
     .sort((x,y)=>y.links-x.links||y.degree-x.degree||x.id.localeCompare(y.id))
+   if(!ranked[0].links)break
    const next=ranked[0].id;group.push(next);remain.delete(next)
   }
+  if(group.length<3){loose.push(...group);continue}
   const name=points.find(p=>p.id===seed)?.name??''
   const i=out.length+1
   out.push({id:`view-group:${chapterChoice.value}:${i}`,
-    name:`浏览分组 ${String(i).padStart(2,'0')} · ${name.slice(0,10)}`,members:group})
+    name:`关系邻域 ${String(i).padStart(2,'0')} · ${name.slice(0,10)}`,members:group})
+ }
+ const remainder=[...loose,...remain].sort()
+ for(let k=0;k<remainder.length;k+=14){
+  const i=out.length+1
+  out.push({id:`view-group:${chapterChoice.value}:${i}`,
+    name:`待关联浏览组 ${String(i).padStart(2,'0')}`,
+    members:remainder.slice(k,k+14)})
  }
  return out
 })
@@ -304,7 +313,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="gx-header-mode">
         <span class="gx-live-dot"></span>
-        {{ displayMode==='clusters' ? 'COURSE ATLAS' : 'KNOWLEDGE EXPLORER' }}
+        {{ displayMode==='clusters' ? 'COURSE ATLAS' : displayMode==='groups' ? 'CHAPTER GROUPS' : 'KNOWLEDGE EXPLORER' }}
       </div>
       <div class="gx-toolbar-actions">
         <button type="button" title="探索与搜索" aria-label="探索与搜索" @click="navOpen=!navOpen"><Search :size="17" /></button>
@@ -389,9 +398,11 @@ onBeforeUnmount(() => {
           :layout-edges="chapterChoice==='all' ? graph.edges : edges"
           @select="selectCanvasNode" />
         <div class="gx-stage-nav">
-          <button v-if="currentChapter" type="button" @click="selectChapter('all')"
+          <button v-if="activeBrowseGroup" type="button" @click="switchLevel('groups')"
+            class="gx-back"><ChevronLeft :size="17" /> 返回章节分组</button>
+          <button v-else-if="currentChapter" type="button" @click="selectChapter('all')"
             class="gx-back"><ChevronLeft :size="17" /> 返回总览</button>
-          <span class="gx-stage-kicker">{{ displayMode==='clusters' ? 'CHAPTER CONSTELLATIONS' : 'EXPLORE CONCEPTS' }}</span>
+          <span class="gx-stage-kicker">{{ displayMode==='clusters' ? 'CHAPTER CONSTELLATIONS' : displayMode==='groups' ? 'CHAPTER BROWSE GROUPS' : 'EXPLORE CONCEPTS' }}</span>
           <h1>{{ activeBrowseGroup?.name ?? currentChapter?.name ?? (displayMode==='clusters' ? '从章节开始，探索知识宇宙' : '知识点全景') }}</h1>
           <p>{{ currentChapter ? (displayMode==='groups' ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · ${browseGroups.length} 个浏览分组 · 点击进入小规模网络` : activeBrowseGroup ? `${activeBrowseGroup.members.length} 个知识点 · 点击查看真实关联` : `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系`) :
             (displayMode==='clusters' ? '每颗星球代表一个真实章节。选择章节，逐层深入。' : '点击知识点，点亮它的一阶关联。') }}</p>
@@ -399,8 +410,10 @@ onBeforeUnmount(() => {
         <div class="gx-view-switch" role="group" aria-label="图谱显示层级">
           <button type="button" :class="{active:displayMode==='clusters'}"
             @click="switchLevel('clusters')"><Layers3 :size="15" /> 章节</button>
-          <button type="button" :class="{active:displayMode==='knowledge'}"
-            @click="switchLevel('knowledge')"><BookOpen :size="15" /> 知识点</button>
+          <button v-if="currentChapter" type="button" :class="{active:displayMode==='groups'}"
+            @click="switchLevel('groups')"><Layers3 :size="15" /> 分组</button>
+          <button type="button" :class="{active:displayMode==='knowledge' && !activeBrowseGroup}"
+            @click="switchLevel('knowledge')"><BookOpen :size="15" /> 全部</button>
         </div>
         <div class="gx-counter">
           <strong>{{ chapters.length }}<small>章节</small></strong>
