@@ -320,47 +320,68 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // A small 3D spiral galaxy of browse-only groups. Six arms radiate
-    // outward on staggered depth planes, instead of a pair of concentric
-    // rings whose projection piled every badge on top of its neighbors.
-    // Screen-space labels are decluttered separately, so positions encode
-    // NO claimed prerequisite or semantic relation.
-    const groups = [...groupNodes].sort((a,b) =>
+    // Diffuse annular star field, NOT spokes and NOT rows of perfect rings.
+    // Golden-angle azimuth and an independent low-discrepancy radial sequence
+    // create an irregular but balanced cloud around a softly empty center.
+    // No semantic/learning relationship is encoded by this visual position.
+    const groups = [...groupNodes].sort((a, b) =>
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
     const count = groups.length
-    // A chapter with 12 browse groups must use SIX directions, not
-    // round(sqrt(12)) = 3. Larger chapters use eight arms; small chapters
-    // put each group in its own direction rather than stacking them.
-    const arms = count >= 24 ? 8 : count >= 8 ? 6 : Math.max(1, count)
-    const depth = count >= 16 ? 62 : 32
-    groups.forEach((node, i) => {
-      const arm = i % arms
-      const layer = Math.floor(i / arms)
-      const baseAngle = (arm / arms) * Math.PI * 2 - Math.PI / 2
-      // Alternating half-sector offsets spread successive rings in ALL
-      // directions, rather than piling them on the same radial spokes.
-      // The small deterministic jitter keeps the layout organic and stable.
-      const ringOffset = (layer % 2) * (Math.PI / arms) * .72
-      const angle = baseAngle + ringOffset + Math.floor(layer / 2) * .035
-        + (ordinalHash(node.id + ':arm') - .5) * .055
-      const radius = count === 1 ? 0
-        : (count <= 20 ? 125 : 120)
-          + layer * (count > 20 ? 96 : 112)
-          + (ordinalHash(node.id + ':reach') - .5) * 9
-      // Three depth tiers provide real parallax on drag, yet preserve a
-      // readable broad constellation with its own visual foreground.
-      // Modest depth staggering creates parallax without projecting the
-      // entire top or bottom of the constellation onto a single line.
-      const z = count === 1 ? 0
-        : ((arm % 4) - 1.5) * depth * .55
-          + (layer % 2 ? 14 : -14)
-          + (ordinalHash(node.id + ':depth') - .5) * 14
-      pos.set(node.id, new THREE.Vector3(
-        Math.cos(angle) * radius * 1.70,
-        Math.sin(angle) * radius * .92,
-        z,
-      ))
-    })
+    const width = mountPoint.value?.clientWidth ?? 1440
+    const height = mountPoint.value?.clientHeight ?? 820
+    const aspect = width / Math.max(1, height)
+    // Gently use a wider canvas, never flatten the galaxy into a rectangle.
+    const spreadX = THREE.MathUtils.clamp(1 + (aspect - 1) * .14, 1, 1.18)
+    const innerRadius = count < 4 ? 0 : count <= 12 ? 78 : 102
+    const outerRadius = count <= 4 ? 125 : count <= 12 ? 200
+      : count <= 22 ? 255 : 345 + Math.max(0, count - 34) * 1.8
+    const rotation = ordinalHash('annulus:' + count) * Math.PI * 2
+    const goldenRatioFraction = .7548776662466927
+    const points: THREE.Vector3[] = []
+    for (let i = 0; i < count; i++) {
+      const node = groups[i]
+      const radialUnit = (i * goldenRatioFraction + .37) % 1
+      const theta = i * G + rotation +
+        (ordinalHash(node.id + ':theta') - .5) * .17
+      const radius = innerRadius + (outerRadius - innerRadius)
+        * Math.sqrt(.08 + radialUnit * .92)
+      const x = Math.cos(theta) * radius * spreadX
+      const y = Math.sin(theta) * radius
+      const z = ((ordinalHash(node.id + ':depth') - .5) * 36)
+        + 9 * Math.sin(theta * 2.3)
+      points.push(new THREE.Vector3(x, y, z))
+    }
+    // Mild collision relaxation in the projection plane for small/medium
+    // group counts. Keep a soft annulus instead of pushing points into
+    // either a six-armed structure or a rigid lattice.
+    const clearance = count <= 12 ? 73 : count <= 24 ? 67 : 54
+    for (let pass = 0; pass < 16; pass++) {
+      for (let i = 0; i < count; i++) {
+        for (let j = i + 1; j < count; j++) {
+          const dx = points[j].x - points[i].x
+          const dy = points[j].y - points[i].y
+          const distance = Math.hypot(dx, dy)
+          if (distance >= clearance) continue
+          const fallbackAngle = (i + j * 2.399) * G
+          const ux = distance > .0001 ? dx / distance : Math.cos(fallbackAngle)
+          const uy = distance > .0001 ? dy / distance : Math.sin(fallbackAngle)
+          const shift = (clearance - distance) * .29
+          points[i].x -= ux * shift
+          points[i].y -= uy * shift
+          points[j].x += ux * shift
+          points[j].y += uy * shift
+        }
+      }
+      for (const point of points) {
+        const radius = Math.hypot(point.x / spreadX, point.y)
+        if (radius < innerRadius * .75 && radius > .0001) {
+          const boost = innerRadius * .75 / radius
+          point.x *= boost
+          point.y *= boost
+        }
+      }
+    }
+    groups.forEach((node, i) => pos.set(node.id, points[i]))
     return pos
   }
   const root = nodes.find(n => n.kind === 'course')
