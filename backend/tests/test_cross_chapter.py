@@ -224,3 +224,37 @@ def test_bridge_preview_explains_missing_chapters_in_single_source_file(tmp_path
         impossible=http.post(f"/api/courses/{course}/relation-batches",
                              json={"mode":"bridge","max_focus_points":30})
         assert impossible.status_code==409
+
+
+
+def test_shared_original_evidence_retrieves_cross_chapter_pair_without_matching_terms(tmp_path):
+    """The evidence inverted index must discover a bridge without name overlap."""
+    db=tmp_path/"shared-evidence.sqlite3"
+    with TestClient(create_app(db_path=db,storage_dir=tmp_path/"uploads")) as http:
+        course=http.post("/api/courses",json={"title":"Systems"}).json()["id"]
+        with connect(db) as conn:
+            for chapter in ["A","B"]:
+                conn.execute("INSERT INTO chapters(id,course_id,title) VALUES(?,?,?)",
+                             (chapter,course,chapter))
+            conn.execute("""INSERT INTO documents
+                (id,course_id,uploaded_by,original_filename,media_type,storage_key,
+                 sha256,total_pages,status)
+                 VALUES('doc',?,'local','ref.pdf','application/pdf','ref.pdf','h',1,'ready')""",
+                 (course,))
+            conn.execute("""INSERT INTO document_chunks
+                (id,document_id,chunk_index,page_start,page_end,content_kind,content_text)
+                VALUES('shared','doc',0,1,1,'text','Two topics share a referenced passage.')""")
+            for kid,chapter,name in [
+                ("x","A","矩阵链最优括号化"),
+                ("y","B","蜂群感知神经编码"),
+            ]:
+                conn.execute("""INSERT INTO knowledge_points
+                    (id,course_id,chapter_id,canonical_name,summary,review_status)
+                    VALUES(?,?,?,?,?,'approved')""",(kid,course,chapter,name,""))
+                conn.execute("""INSERT INTO knowledge_point_sources
+                    (knowledge_point_id,chunk_id) VALUES (?,'shared')""",(kid,))
+        found=bridge_groups(db,course,set(),2,2)
+        assert found==[["x","y"]]
+        # Retrieval is only a candidate. It MUST NOT insert a semantic edge.
+        with connect(db) as conn:
+            assert conn.execute("SELECT count(*) FROM knowledge_relations").fetchone()[0]==0
