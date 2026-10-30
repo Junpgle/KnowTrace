@@ -41,7 +41,7 @@ const byId = computed(() => new Map(props.graph.nodes.map(n => [n.id, n])))
 const parent = computed(() => new Map(props.graph.edges.filter(e => e.structural)
   .map(e => [e.target, e.source])))
 const expanded = computed(() => level.value === 'knowledge' ||
-  Boolean(term.value.trim()) || (chapterChoice.value !== 'all' && level.value === 'knowledge') ||
+  Boolean(term.value.trim()) ||
   (selected.value?.kind === 'knowledge'))
 const displayMode = computed(() => chapterChoice.value !== 'all' && level.value === 'groups' && !term.value.trim() ? 'groups' : expanded.value ? 'knowledge' : 'clusters')
 const visibleKnowledgeCount = computed(() => nodes.value.filter(n => n.kind === 'knowledge').length)
