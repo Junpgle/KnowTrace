@@ -129,6 +129,45 @@ function makeLabel(text: string, width = 320, subtitle?: string) {
   return label
 }
 
+// Chapter labels use a larger, high-resolution canvas than knowledge labels.
+// Two-line wrapping keeps real chapter names readable without covering planets.
+function makeChapterLabel(title: string, subtitle: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 720
+  canvas.height = 208
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.fillStyle = 'rgba(7, 29, 44, .90)'
+  ctx.beginPath()
+  ctx.roundRect(5, 5, 710, 198, 26)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(120, 204, 204, .44)'
+  ctx.lineWidth = 2
+  ctx.stroke()
+  const name = title.length > 26 ? title.slice(0, 25) + '…' : title
+  const lines = name.length > 13 ? [name.slice(0, 13), name.slice(13)] : [name]
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#f0ffff'
+  ctx.font = '600 48px system-ui, sans-serif'
+  if (lines.length > 1) {
+    ctx.fillText(lines[0], 360, 64, 668)
+    ctx.fillText(lines[1], 360, 115, 668)
+  } else {
+    ctx.fillText(lines[0], 360, 82, 668)
+  }
+  ctx.font = '500 29px system-ui, sans-serif'
+  ctx.fillStyle = '#8edacf'
+  ctx.fillText(subtitle, 360, lines.length > 1 ? 166 : 155, 668)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthWrite: false,
+    depthTest: false, opacity: .98,
+  }))
+  return label
+}
+
 // Deterministic, quasi-uniform spherical samples. Unlike a cubic lattice,
 // these have no parallel rows or visible square silhouettes at any camera angle.
 // Muted chapter accents: an identifier only affects presentation and
@@ -381,8 +420,12 @@ function rebuild() {
     const count = cachedChapterTotals.get(node.id) ?? 0
     const baseColor = isCourse ? 0x4be6d6 : palette.get(node.id) ?? 0x83a4d9
     const chapterSelected = node.id === selectedId
-    const radius = isCourse ? 6.0
-      : (3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
+    // Overview planets must be readable on a large desktop canvas.
+    // The previous 4-6 world-unit spheres appeared only ~30px across.
+    const radius = isCourse ? (overview ? 9.8 : 6.0)
+      : (overview
+          ? 8.1 + Math.min(3.0, Math.log2(count + 1) * .47)
+          : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
         * (chapterSelected ? 1.12 : 1)
     const material = new THREE.MeshPhongMaterial({
       color: baseColor,
@@ -409,7 +452,7 @@ function rebuild() {
       opacity: focusState.active ? .10 : (isCourse ? .65 : .42),
     }))
     aura.position.copy(position)
-    aura.scale.setScalar(radius * (isCourse ? 7.4 : 6.7))
+    aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
 
     if (!focusState.active) {
@@ -453,11 +496,20 @@ function rebuild() {
     // A readable chapter name / count is much more useful than a tiny label
     // submerged in the cloud of points.
     if (!focusState.active || chapterSelected) {
-      const label = makeLabel(node.name, isCourse ? 430 : 520,
-        isCourse ? '课程中心' : `${count} 个知识点`)
+      const label = overview
+        ? makeChapterLabel(node.name, isCourse ? '课程中心' : `${count} 个知识点`)
+        : makeLabel(node.name, isCourse ? 430 : 520,
+            isCourse ? '课程中心' : `${count} 个知识点`)
       if (label) {
-        label.scale.set(isCourse ? 22 : 24, 5.3, 1)
-        label.position.copy(position).add(new THREE.Vector3(0, radius + (overview ? 7 : 4), 0))
+        if (overview) {
+          // Twice the previous screen-space label size at the overview camera.
+          label.scale.set(isCourse ? 43 : 50, isCourse ? 12.4 : 14.5, 1)
+        } else {
+          label.scale.set(isCourse ? 22 : 24, 5.3, 1)
+        }
+        label.position.copy(position).add(new THREE.Vector3(
+          0, radius + (overview ? 10.5 : 4), 0,
+        ))
         g.add(label)
       }
     }
@@ -531,7 +583,12 @@ function focus(id: string | null) {
     const vfov = THREE.MathUtils.degToRad(camera.fov)
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect)
     const halfAngle = Math.min(vfov, hfov) / 2
-    distance = Math.max(85, extent / Math.sin(halfAngle) * 1.12)
+    const overview = props.nodes.every(n => n.kind !== 'knowledge')
+    // On the atlas, fill more of the screen while retaining a safe edge margin.
+    // Detail and unfiltered knowledge views keep their previous conservative fit.
+    const fitPadding = overview ? 0.88 : 1.12
+    distance = Math.max(overview ? 72 : 85,
+      extent / Math.sin(halfAngle) * fitPadding)
     controls.maxDistance = Math.max(280, distance * 1.4)
     // Large cluster overviews should not disappear into fixed-distance fog.
     if (scene?.fog instanceof THREE.FogExp2)
@@ -616,7 +673,9 @@ function initialize() {
   scene = new THREE.Scene()
   scene.fog = new THREE.FogExp2(0x07192c, 0.0015)
   camera = new THREE.PerspectiveCamera(57, 1, 0.1, 1600)
-  camera.position.set(0, 32, 82)
+  // A slightly overhead view gives chapter orbits a circular silhouette,
+  // rather than flattening the galaxy into an edge-on ribbon.
+  camera.position.set(34, 112, 96)
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
