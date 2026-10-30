@@ -614,7 +614,7 @@ function rebuild(animate = false) {
       ? (smallGroup ? 3.8 : overview ? 9.3 : 6.8)
       : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
-          ? 8.1 + Math.min(3.0, Math.log2(count + 1) * .47)
+          ? 11.7 + Math.min(4.1, Math.log2(count + 1) * .53)
           : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
         * (chapterSelected ? 1.12 : 1)
     const material = new THREE.MeshPhongMaterial({
@@ -767,6 +767,8 @@ function projectedFitDistance(
   viewDirection: THREE.Vector3,
   fillX: number,
   fillY: number,
+  paddingX = 11,
+  paddingY = 16,
 ): number {
   if (!camera || points.length === 0) return 100
   const forward = viewDirection.clone().normalize()
@@ -787,8 +789,8 @@ function projectedFitDistance(
     // rather than fitting all nodes at the center's depth.
     const depth = relative.dot(forward)
     result = Math.max(result,
-      depth + (Math.abs(relative.dot(right)) + 11) / (tanH * fillX),
-      depth + (Math.abs(relative.dot(screenUp)) + 16) / (tanV * fillY),
+      depth + (Math.abs(relative.dot(right)) + paddingX) / (tanH * fillX),
+      depth + (Math.abs(relative.dot(screenUp)) + paddingY) / (tanV * fillY),
     )
   }
   return result
@@ -807,14 +809,17 @@ function focus(id: string | null, resetAtlasAngle = false) {
     .filter(n => n.kind === 'knowledge').length
   const isSubset = visibleKnowledge.length > 0 && visibleKnowledge.length < allKnowledgeCount
   const overview = props.nodes.every(n => n.kind !== 'knowledge')
+  const groupOverview = localGroup && visibleKnowledge.length === 0
 
   // Group detail: fit only the actual neighborhood and its group anchor,
   // not a far-away chapter planet. This is what keeps 3-point views legible.
   let fitPoints: THREE.Vector3[]
   if (localGroup) {
-    fitPoints = visibleKnowledge.length
-      ? [...visibleKnowledge, ...groupPoints]
-      : groupPoints
+    // The labels in a group overview sit above the planets. Include that
+    // screen-space extent when computing the framing center and zoom.
+    fitPoints = groupOverview
+      ? groupPoints.flatMap(p => [p, p.clone().add(new THREE.Vector3(0, 30, 0))])
+      : [...visibleKnowledge, ...groupPoints]
   } else if (isSubset) {
     fitPoints = visibleKnowledge
   } else {
@@ -847,14 +852,16 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < .01) direction.set(.4, .8, 1)
-  if (resetAtlasAngle && !id && !localGroup && !isSubset &&
-      visibleKnowledge.length >= 300) {
-    // Deep relationship views are nearly face-on. Returning to all chapters
-    // should recover a readable elevated atlas angle, not leave the orbit
-    // edge-on and artificially compress the constellations.
-    // Nearly overhead: avoids perspective foreshortening of the XZ atlas.
-    // This direction leaves X horizontal and Z vertical on the screen.
-    direction.set(0, 1, .23)
+  if (!id && (resetAtlasAngle || overview)) {
+    if (localGroup) {
+      // Browsing groups and leaf networks are laid out in the XY plane.
+      // Show them face-on instead of projecting their rows onto each other.
+      direction.set(0, .16, 1)
+    } else {
+      // The chapter/course systems occupy the XZ plane: use a high
+      // overhead perspective for both chapter AND "all concepts" views.
+      direction.set(0, 1, .24)
+    }
   }
   let distance: number
   if (relationFocus) {
@@ -889,20 +896,27 @@ function focus(id: string | null, resetAtlasAngle = false) {
         (maxY + 27) / tanHalf,
         (maxX + 38) / (tanHalf * camera.aspect),
       ) * 1.08, 74, 390)
-    } else if (!localGroup && visibleKnowledge.length >= 40) {
-      // In the "全部" view 1300 nodes are spread over seven flattened
-      // constellations. Old sphere-fit included their unused depth and left
-      // most of the viewport empty. Project every *visible* point instead.
-      // The slightly smaller fill in Y reserves space for the heading/footer.
+    } else if (groupOverview) {
+      // The previous 3D bounding-sphere fit made 12 groups tiny, while a
+      // ring plus chapter hub still overlapped. Fit the planar grid and
+      // reserve space for each two-line label.
       distance = projectedFitDistance(
         fitPoints, overviewCenter, direction,
-        isSubset ? .68 : .76,
-        isSubset ? .66 : .76,
+        .80, .77, 25, 14,
+      )
+    } else if (!localGroup) {
+      // Course/chapters are arranged on the XZ atlas plane. Projected
+      // framing fills most of the available viewport, without the
+      // over-conservative spherical radius and minimum zoom clamps.
+      distance = projectedFitDistance(
+        fitPoints, overviewCenter, direction,
+        overview ? .86 : (isSubset ? .76 : .87),
+        overview ? .82 : (isSubset ? .73 : .85),
+        overview ? 29 : 13,
+        overview ? 36 : 18,
       )
     } else {
-      distance = Math.max(localGroup ? 58 : overview ? 72 : 85,
-        (extent + (overview ? 15 : 9)) / Math.sin(halfAngle)
-        * (overview ? .93 : 1.10))
+      distance = Math.max(68, (extent + 12) / Math.sin(halfAngle) * .97)
     }
     controls.maxDistance = Math.max(280, distance * 1.8)
     camera.far = Math.max(1600, distance * 3)
@@ -915,13 +929,7 @@ function focus(id: string | null, resetAtlasAngle = false) {
   }
   if (scene?.fog instanceof THREE.FogExp2)
     scene.fog.density = Math.min(0.0015, .35 / Math.max(72,distance))
-  if (localGroup && visibleKnowledge.length > 0 && visibleKnowledge.length <= 18 && !id) {
-    // Frame the radial layout face-on. Subsequent user OrbitControls rotation
-    // remains available; selecting a concept does not reset the camera angle.
-    direction.set(0, .14, 1)
-  } else if (direction.lengthSq() < 0.01) {
-    direction.set(.4, .8, 1)
-  }
+  if (direction.lengthSq() < 0.01) direction.set(.4, .8, 1)
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
   if (reducedMotion()) {
     camera.position.copy(desiredPosition)
