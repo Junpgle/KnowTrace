@@ -330,7 +330,8 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       const n = outer ? outerCount : innerCount
       const angle = -Math.PI / 2 + 2 * Math.PI * index / Math.max(1,n) +
         (outer ? Math.PI / Math.max(1,n) : 0)
-      const radius = count === 1 ? 0 : outer ? 216 : count <= 7 ? 142 : 91
+      // Leave enough *projected* separation for screen-sized labels.
+      const radius = count === 1 ? 0 : outer ? 242 : count <= 7 ? 142 : 132
       const drift = count === 1 ? 0 : (ordinalHash(groups[i].id + ':ring') - .5) * 12
       pos.set(groups[i].id, new THREE.Vector3(
         Math.cos(angle) * (radius + drift),
