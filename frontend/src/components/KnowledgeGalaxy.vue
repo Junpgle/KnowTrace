@@ -2,10 +2,11 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import {
   Activity, ArrowRight, BookOpen, CircleHelp, FileText, List,
-  LoaderCircle, Network, Orbit, RefreshCw, RotateCcw, Search,
+  LoaderCircle, Maximize2, Network, Orbit, RefreshCw, RotateCcw, Search,
   ShieldCheck, Sparkles, X,
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
+import GalaxyExplorer from './GalaxyExplorer.vue'
 import RelationStudio from './RelationStudio.vue'
 import {
   api, sourcePreviewUrl,
@@ -27,6 +28,7 @@ const selectedChapter = ref('all')
 const includePending = ref(true)
 const showRelations = ref(true)
 const display = ref<'3d' | 'list'>('3d')
+const explorerOpen = ref(false)
 const showStudio = ref(false)
 const studioAnchor = ref<HTMLDivElement | null>(null)
 async function toggleStudio() {
@@ -274,6 +276,7 @@ watch(() => props.courseId, () => {
   query.value = ''
   filter.value = 'all'
   detail.value = null
+  explorerOpen.value = false
   showPDFClassification.value = false
   pdfPreview.value = null
   pdfMessage.value = ''
@@ -291,6 +294,7 @@ watch(() => props.courseId, () => {
         <p class="section-description">以真实知识为星球，以经过审核的关联为星际航路。</p>
       </div>
       <div class="kg-top-actions">
+        <button type="button" class="button button-primary button-small" :disabled="loading || !graph" @click="explorerOpen=true"><Maximize2 :size="16" /> 全屏探索</button>
         <button type="button" class="button button-outline button-small" @click="togglePDFClassification">
           <FileText :size="16" /> {{ showPDFClassification ? '收起 PDF 归类' : '按来源 PDF 归类' }}
         </button>
@@ -416,7 +420,7 @@ watch(() => props.courseId, () => {
               <button type="button" :class="{active:display==='list'}" @click="display='list'"><List :size="14" /> 列表</button>
             </div>
           </div>
-          <Graph3DCanvas v-if="display==='3d'" ref="canvas" :nodes="visibleNodes" :edges="visibleEdges"
+          <Graph3DCanvas v-if="display==='3d' && !explorerOpen" ref="canvas" :nodes="visibleNodes" :edges="visibleEdges"
             :selected-id="selectedId" :show-relations="showRelations" @select="select" />
           <div v-else class="kg-list-mode">
             <p v-if="!matching.length" class="kg-muted">暂无匹配知识点。</p>
@@ -516,6 +520,10 @@ watch(() => props.courseId, () => {
       </p>
     </template>
   </div>
+  <Teleport to="body">
+    <GalaxyExplorer v-if="explorerOpen && graph" :graph="graph"
+      @close="explorerOpen=false" />
+  </Teleport>
 </template>
 
 <style scoped>
