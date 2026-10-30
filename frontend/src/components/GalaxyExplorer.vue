@@ -152,7 +152,10 @@ const visibleIds = computed(() => {
 })
 const nodes = computed<GraphNode[]>(()=>{
  const chapter=currentChapter.value
- if(chapter&&displayMode.value==='groups')return [chapter,...browseGroups.value.map(groupNode)]
+ // Browse groups are visual containers, not child planets orbiting the chapter.
+ // The chapter is already named in the breadcrumb; draw only group cards so
+ // screen-space grid layout can use the complete viewport without a huge hub.
+ if(chapter&&displayMode.value==='groups')return browseGroups.value.map(groupNode)
  if(chapter&&activeBrowseGroup.value&&level.value==='knowledge'&&!term.value.trim()){
   const ids=new Set(activeBrowseGroup.value.members)
   if(selectedId.value){
@@ -172,7 +175,7 @@ const nodes = computed<GraphNode[]>(()=>{
 })
 const edges = computed(()=>{
  const chapter=currentChapter.value
- if(chapter&&displayMode.value==='groups')return browseGroups.value.map(g=>syntheticEdge(chapter.id,g.id))
+ if(chapter&&displayMode.value==='groups')return [] // no artificial chapter-to-group spokes
  if(chapter&&activeBrowseGroup.value&&level.value==='knowledge'&&!term.value.trim()){
   const g=activeBrowseGroup.value,ids=new Set(nodes.value.map(n=>n.id))
   return [
