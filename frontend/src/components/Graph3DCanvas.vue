@@ -146,6 +146,41 @@ function makeLabel(text: string, width = 320, subtitle?: string) {
   return label
 }
 
+// Leaf-neighborhood labels stay crisp at the larger camera distance.
+// Use up to two compact lines to avoid extra-wide cards on 14-node rings.
+function makeLeafLabel(title: string): THREE.Sprite | null {
+  const canvas = document.createElement('canvas')
+  canvas.width = 520
+  canvas.height = 150
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.fillStyle = 'rgba(9, 32, 48, .91)'
+  ctx.beginPath()
+  ctx.roundRect(3, 3, 514, 144, 19)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(113, 207, 207, .39)'
+  ctx.lineWidth = 2
+  ctx.stroke()
+  const name = title.length > 24 ? title.slice(0, 23) + '…' : title
+  const lines = name.length > 12 ? [name.slice(0, 12), name.slice(12)] : [name]
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#e9fbfc'
+  ctx.font = '600 61px system-ui, sans-serif'
+  if (lines.length === 1) ctx.fillText(lines[0], 260, 75, 476)
+  else {
+    ctx.fillText(lines[0], 260, 51, 476)
+    ctx.fillText(lines[1], 260, 107, 476)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthWrite: false, depthTest: false,
+  }))
+  label.scale.set(44, 12.7, 1)
+  return label
+}
+
 // Chapter labels use a larger, high-resolution canvas than knowledge labels.
 // Two-line wrapping keeps real chapter names readable without covering planets.
 function makeChapterLabel(title: string, subtitle: string) {
@@ -513,9 +548,8 @@ function rebuild(animate = false) {
 
       if (smallGroup || center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
-        const label = makeLabel(node.name, smallGroup ? 480 : 320)
+        const label = smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
         if (label) {
-          if (smallGroup) label.scale.set(34, 6.1, 1)
           label.position.copy(position)
           labelAnchors.push({ sprite: label, center: position, distance: radius + (smallGroup ? 6.5 : 4.5) })
           g.add(label)
@@ -625,7 +659,8 @@ function rebuild(animate = false) {
 
     // A readable chapter name / count is much more useful than a tiny label
     // submerged in the cloud of points.
-    if (!focusState.active || chapterSelected) {
+    if ((!focusState.active || chapterSelected) &&
+        !(smallGroup && node.kind === 'group')) {
       const label = overview
         ? makeChapterLabel(node.name, isCourse ? '课程中心' : `${count} 个知识点`)
         : makeLabel(node.name, isCourse ? 430 : 520,
