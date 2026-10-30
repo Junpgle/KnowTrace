@@ -329,7 +329,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
     const count = groups.length
     const arms = Math.min(6, Math.max(3, Math.round(Math.sqrt(count))))
-    const depth = count >= 16 ? 48 : 28
+    const depth = count >= 16 ? 86 : 38
     const levels = Math.ceil(count / arms)
     groups.forEach((node, i) => {
       const arm = i % arms
@@ -644,13 +644,18 @@ function rebuild(animate = false) {
           ? 11.7 + Math.min(4.1, Math.log2(count + 1) * .53)
           : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
         * (chapterSelected ? 1.12 : 1)
+    // Front and back stars get different brightness and actual projected
+    // sizes, rather than uniformly sized flat dots.
+    const depthFactor = node.kind === 'group' && overview
+      ? THREE.MathUtils.clamp((position.z + 125) / 250, 0, 1) : .5
     const material = new THREE.MeshPhongMaterial({
       color: baseColor,
       emissive: baseColor,
-      emissiveIntensity: focusState.active ? .09 : .23,
+      emissiveIntensity: focusState.active ? .09 : (.14 + depthFactor * .22),
       shininess: 100, specular: 0xd9ffff,
       transparent: true,
-      opacity: focusState.active && !chapterSelected ? .55 : .96,
+      opacity: focusState.active && !chapterSelected ? .55
+        : node.kind === 'group' && overview ? .72 + depthFactor * .27 : .96,
     })
     const planet = new THREE.Mesh(planetSphere, material)
     planet.scale.setScalar(radius)
@@ -682,7 +687,15 @@ function rebuild(animate = false) {
         color: baseColor, transparent: true, opacity: isCourse ? .28 : .20,
         depthWrite: false,
       }))
-      ring.rotation.set(.32, ordinalHash(node.id) * Math.PI, .15)
+      if (node.kind === 'group' && overview) {
+        // Ring lives in an almost camera-facing plane; its slight tilt
+        // changes with each constellation arm and reveals true parallax.
+        ring.rotation.set(Math.PI / 2 - .35,
+          (ordinalHash(node.id + ':tilt') - .5) * .48,
+          (ordinalHash(node.id + ':spin') - .5) * .52)
+      } else {
+        ring.rotation.set(.32, ordinalHash(node.id) * Math.PI, .15)
+      }
       ring.position.copy(position)
       g.add(ring)
       // Sparse decorative halo is intentionally NOT part of the knowledge
@@ -896,7 +909,7 @@ function focus(id: string | null, resetAtlasAngle = false) {
     if (localGroup) {
       // Browsing groups and leaf networks are laid out in the XY plane.
       // Show them face-on instead of projecting their rows onto each other.
-      direction.set(0, .16, 1)
+      direction.set(groupOverview ? .22 : 0, groupOverview ? .34 : .16, 1)
     } else {
       // The chapter/course systems occupy the XZ plane: use a high
       // overhead perspective for both chapter AND "all concepts" views.
