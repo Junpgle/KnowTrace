@@ -15,8 +15,10 @@ const props = defineProps<{
   selectedId: string | null
   showRelations: boolean
   showStructure?: boolean
+  // Full set of approved relationships, even when a view hides some lines.
+  relationEdges?: GraphEdge[]
 }>()
-const emit = defineEmits<{ select: [id: string] }>()
+const emit = defineEmits<{ select: [id: string | null] }>()
 const mountPoint = ref<HTMLDivElement | null>(null)
 const supported = ref(true)
 const error = ref('')
@@ -52,6 +54,37 @@ function statusColor(node: GraphNode): number {
   if (node.mastery >= 0.8) return 0x54ddb0
   if (node.mastery >= 0.5) return 0x6cbeef
   return 0xf5a86d
+}
+
+// A selection highlights real, approved, direct (one-hop) relationships only.
+// The set is restricted to rendered nodes so hidden filters never create ghosts.
+function focusRelations() {
+  const selectedId = props.selectedId
+  const focusedNode = props.nodes.find(n => n.id === selectedId)
+  const neighbors = new Set<string>()
+  const highlighted = new Set<string>()
+  if (focusedNode?.kind !== 'knowledge') return { active: false, neighbors, highlighted }
+  const visibleKnowledge = new Set(props.nodes.filter(n => n.kind === 'knowledge').map(n => n.id))
+  for (const edge of props.relationEdges ?? props.edges) {
+    if (edge.structural || !edge.verified) continue
+    if (!visibleKnowledge.has(edge.source) || !visibleKnowledge.has(edge.target)) continue
+    if (edge.source === selectedId) {
+      neighbors.add(edge.target)
+      highlighted.add(edge.id)
+    } else if (edge.target === selectedId) {
+      neighbors.add(edge.source)
+      highlighted.add(edge.id)
+    }
+  }
+  return { active: true, neighbors, highlighted }
+}
+
+const RELATION_COLORS: Record<string, number> = {
+  prerequisite_required: 0xffa76a,
+  prerequisite_recommended: 0xffd184,
+  related: 0x66e8eb,
+  uses: 0x5fd6ab,
+  compares: 0xc5adff,
 }
 
 function makeLabel(text: string, width = 320) {
@@ -152,35 +185,58 @@ function rebuild() {
   scene.add(g)
   const coords = layout(props.nodes, props.edges)
   coords.forEach((v, id) => positions.set(id, v))
-  // One InstancedMesh for all knowledge points: thousands of planets require
-  // one draw call, not a separate draw call/material per planet.
+  const focusState = focusRelations()
+  const selectedId = props.selectedId
+  // One InstancedMesh for all knowledge points, including dimmed ones:
+  // preserve a single draw call for 1300+ nodes instead of per-node meshes.
   const sphere = new THREE.SphereGeometry(1, 12, 10)
   const knowledge = props.nodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
   if (knowledge.length) {
     const material = new THREE.MeshPhongMaterial({
       color: 0xffffff, shininess: 70, specular: 0x526b80,
-      emissive: 0x243743, emissiveIntensity: 0.18,
+      emissive: 0x14212b, emissiveIntensity: 0.12,
     })
     const cluster = new THREE.InstancedMesh(sphere, material, knowledge.length)
     const matrix = new THREE.Matrix4()
     const size = new THREE.Vector3()
     const rotation = new THREE.Quaternion()
     const ids: string[] = []
+    let neighborLabels = 0
     knowledge.forEach((node, index) => {
       const position = positions.get(node.id)!
-      // Highlight the selected point without blowing up the planet itself.
-      const radius = node.id === props.selectedId ? 1.24 : 1
+      const center = focusState.active && node.id === selectedId
+      const neighbor = focusState.active && focusState.neighbors.has(node.id)
+      const radius = center ? 1.36 : neighbor ? 1.19 : 1
       size.setScalar(radius)
       matrix.compose(position, rotation, size)
       cluster.setMatrixAt(index, matrix)
-      cluster.setColorAt(index, new THREE.Color(statusColor(node)))
+
+      const color = new THREE.Color(statusColor(node))
+      if (center) color.lerp(new THREE.Color(0xffffff), 0.7)
+      else if (neighbor) color.lerp(new THREE.Color(0x81f5ea), 0.65)
+      else if (focusState.active) color.multiplyScalar(0.16)
+      cluster.setColorAt(index, color)
       ids.push(node.id)
-      if (node.id === props.selectedId) {
+
+      if (center || (neighbor && neighborLabels < 12)) {
+        if (neighbor) neighborLabels += 1
         const label = makeLabel(node.name)
         if (label) {
           label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
           g.add(label)
         }
+      }
+      if (center) {
+        // One translucent spherical halo (not a pick target), disposed on rebuild.
+        const halo = new THREE.Mesh(
+          new THREE.SphereGeometry(1.92, 16, 12),
+          new THREE.MeshBasicMaterial({
+            color: 0x72ffe6, transparent: true, opacity: 0.22,
+            depthWrite: false, side: THREE.BackSide,
+          }),
+        )
+        halo.position.copy(position)
+        g.add(halo)
       }
     })
     cluster.instanceMatrix.needsUpdate = true
@@ -193,9 +249,10 @@ function rebuild() {
   for (const node of props.nodes.filter(n => n.kind !== 'knowledge')) {
     const position = positions.get(node.id)
     if (!position) continue
-    const color = statusColor(node)
+    const color = new THREE.Color(statusColor(node))
+    if (focusState.active) color.multiplyScalar(0.42)
     const material = new THREE.MeshPhongMaterial({
-      color, emissive: color, emissiveIntensity: 0.28,
+      color, emissive: color, emissiveIntensity: focusState.active ? 0.08 : 0.28,
       shininess: 86, specular: 0x6b8fae,
     })
     const radius = node.kind === 'course' ? 3.8 : 2.15
@@ -205,24 +262,33 @@ function rebuild() {
     mesh.userData.nodeId = node.id
     g.add(mesh)
     meshes.push(mesh)
-    const label = makeLabel(node.name)
-    if (label) {
-      label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
-      g.add(label)
+    // Hide chapter labels in local-focus mode, reducing visual competition.
+    if (!focusState.active || node.id === selectedId) {
+      const label = makeLabel(node.name)
+      if (label) {
+        label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
+        g.add(label)
+      }
     }
   }
-  const activeEdges = props.edges.filter(edge => edge.structural
-    ? props.showStructure !== false : props.showRelations)
-  const positionsStructural: number[] = []
-  const positionsSemantic: number[] = []
-  activeEdges.forEach(edge => {
+
+  const structural: number[] = []
+  const ordinary: number[] = []
+  const highlightedByType = new Map<string, number[]>()
+  for (const edge of props.edges) {
     const a = coords.get(edge.source)
     const b = coords.get(edge.target)
-    if (!a || !b) return
-    ;(edge.structural ? positionsStructural : positionsSemantic).push(
-      a.x, a.y, a.z, b.x, b.y, b.z,
-    )
-  })
+    if (!a || !b) continue
+    const bucket = edge.structural ? structural
+      : !props.showRelations ? null
+      : focusState.active && focusState.highlighted.has(edge.id)
+        ? (() => {
+            if (!highlightedByType.has(edge.type)) highlightedByType.set(edge.type, [])
+            return highlightedByType.get(edge.type)!
+          })()
+        : ordinary
+    if (bucket) bucket.push(a.x, a.y, a.z, b.x, b.y, b.z)
+  }
   function addLines(points: number[], color: number, opacity: number) {
     if (!points.length) return
     const geom = new THREE.BufferGeometry()
@@ -232,8 +298,13 @@ function rebuild() {
     }))
     g.add(lines)
   }
-  addLines(positionsStructural, 0x7b9aad, 0.3)
-  addLines(positionsSemantic, 0xffd184, 0.79)
+  if (props.showStructure !== false) {
+    addLines(structural, 0x7b9aad, focusState.active ? 0.055 : 0.3)
+  }
+  addLines(ordinary, 0xffd184, focusState.active ? 0.085 : 0.79)
+  for (const [type, points] of highlightedByType) {
+    addLines(points, RELATION_COLORS[type] ?? 0xffd184, 1)
+  }
 }
 
 // Automatic selection should move the camera to the chosen node, NOT dive
@@ -319,7 +390,7 @@ function pointerUp(event: PointerEvent) {
   const id = (instanceIds && hit.instanceId !== undefined
     ? instanceIds[hit.instanceId]
     : hit?.object.userData.nodeId) as string | undefined
-  if (id) emit('select', id)
+  emit('select', id ?? null)
 }
 function initialize() {
   const el = mountPoint.value
@@ -386,7 +457,7 @@ function initialize() {
 onMounted(initialize)
 // Changing line visibility must never zoom the camera. Only a change of
 // selected node should trigger automatic focus.
-watch(() => [props.nodes, props.edges], () => {
+watch(() => [props.nodes, props.edges, props.relationEdges], () => {
   rebuild()
   if (props.selectedId) focus(props.selectedId)
 })
