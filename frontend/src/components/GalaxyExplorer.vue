@@ -162,7 +162,9 @@ const nodes = computed<GraphNode[]>(()=>{
     if(edge.target===selectedId.value)ids.add(edge.source)
    }
   }
-  return [chapter,groupNode(activeBrowseGroup.value),
+  // The chapter remains in the breadcrumb and drawer. Rendering another
+  // chapter planet inside a leaf neighborhood wastes space and crowds labels.
+  return [groupNode(activeBrowseGroup.value),
    ...props.graph.nodes.filter(n=>n.kind==='knowledge'&&ids.has(n.id))]
  }
  return props.graph.nodes.filter(n=>visibleIds.value.has(n.id))
@@ -172,7 +174,7 @@ const edges = computed(()=>{
  if(chapter&&displayMode.value==='groups')return browseGroups.value.map(g=>syntheticEdge(chapter.id,g.id))
  if(chapter&&activeBrowseGroup.value&&level.value==='knowledge'&&!term.value.trim()){
   const g=activeBrowseGroup.value,ids=new Set(nodes.value.map(n=>n.id))
-  return [syntheticEdge(chapter.id,g.id),
+  return [
    ...nodes.value.filter(n=>n.kind==='knowledge').map(n=>syntheticEdge(g.id,n.id)),
    ...props.graph.edges.filter(e=>!e.structural&&ids.has(e.source)&&ids.has(e.target)&&
     (relationView.value==='all'||relationView.value==='selected'&&!!selectedId.value&&
