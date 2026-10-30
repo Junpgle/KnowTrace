@@ -524,7 +524,7 @@ function rebuild(animate = false) {
     // Overview planets must be readable on a large desktop canvas.
     // The previous 4-6 world-unit spheres appeared only ~30px across.
     const radius = node.kind==='group'
-      ? (smallGroup ? 5.7 : overview ? 9.3 : 6.8)
+      ? (smallGroup ? 3.8 : overview ? 9.3 : 6.8)
       : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
           ? 8.1 + Math.min(3.0, Math.log2(count + 1) * .47)
