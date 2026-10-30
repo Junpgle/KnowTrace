@@ -546,7 +546,7 @@ function rebuild(animate = false) {
       cluster.setColorAt(index, color)
       ids.push(node.id)
 
-      if (smallGroup || center || (neighbor && neighborLabels < 12)) {
+      if ((smallGroup && !focusState.active) || center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
         const label = smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
         if (label) {
@@ -558,7 +558,7 @@ function rebuild(animate = false) {
       if (center) {
         // One translucent spherical halo (not a pick target), disposed on rebuild.
         const halo = new THREE.Mesh(
-          new THREE.SphereGeometry(1.92, 16, 12),
+          new THREE.SphereGeometry(radius * 1.5, 16, 12),
           new THREE.MeshBasicMaterial({
             color: 0x72ffe6, transparent: true, opacity: 0.22,
             depthWrite: false, side: THREE.BackSide,
@@ -709,8 +709,9 @@ function rebuild(animate = false) {
     }))
     g.add(lines)
   }
-  if (props.showStructure !== false || props.nodes.some(n=>n.kind==='group')) {
-    addLines(structural, 0x7b9aad, focusState.active ? 0.055 : 0.3)
+  if (!focusState.active &&
+      (props.showStructure !== false || props.nodes.some(n=>n.kind==='group'))) {
+    addLines(structural, 0x7b9aad, 0.3)
   }
   addLines(ordinary, 0xffd184, focusState.active ? 0.085 : 0.79)
   for (const [type, points] of highlightedByType) {
@@ -794,9 +795,28 @@ function focus(id: string | null, resetAtlasAngle = false) {
     fitPoints = [...positions.values()]
   }
   if (!fitPoints.length) fitPoints = [...positions.values()]
-  const bounds = new THREE.Box3().setFromPoints(fitPoints)
+  // Selecting a concept is selecting its one-hop network, not a single
+  // isolated planet. Fit the selected concept plus all visible, approved
+  // semantic neighbors into the viewport (including the details sidebar).
+  const selectedNode = id ? props.nodes.find(n => n.id === id) : undefined
+  const visibleIds = new Set(props.nodes.filter(n => n.kind === 'knowledge').map(n => n.id))
+  const relatedIds = new Set<string>()
+  if (id && selectedNode?.kind === 'knowledge') {
+    for (const edge of props.relationEdges ?? props.edges) {
+      if (edge.structural || !edge.verified) continue
+      if (edge.source === id && visibleIds.has(edge.target)) relatedIds.add(edge.target)
+      else if (edge.target === id && visibleIds.has(edge.source)) relatedIds.add(edge.source)
+    }
+  }
+  const relatedPoints = [...relatedIds].map(n => positions.get(n))
+    .filter((p): p is THREE.Vector3 => Boolean(p))
+  const relationFocus = !!coordinate && relatedPoints.length > 0
+  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints] : fitPoints
+  const bounds = new THREE.Box3().setFromPoints(focusedPoints)
   const overviewCenter = bounds.getCenter(new THREE.Vector3())
-  desiredTarget.copy(coordinate ?? overviewCenter)
+  // For a real relationship network use its center; for a single point,
+  // retain the existing click-to-center behavior.
+  desiredTarget.copy(relationFocus ? overviewCenter : (coordinate ?? overviewCenter))
 
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
@@ -809,7 +829,22 @@ function focus(id: string | null, resetAtlasAngle = false) {
     direction.set(.40, 1.20, 1.0)
   }
   let distance: number
-  if (!id) {
+  if (relationFocus) {
+    // Reserve the right-side detail drawer and the large readable labels.
+    // The focus must be based on the actual neighbor positions rather than
+    // the old fixed 92-unit zoom that cropped most related nodes.
+    distance = Math.max(
+      localGroup ? 86 : 110,
+      projectedFitDistance(
+        focusedPoints, overviewCenter, direction,
+        localGroup ? .49 : .54,
+        .64,
+      ),
+    )
+    controls.maxDistance = Math.max(280, distance * 1.7)
+    camera.far = Math.max(1600, distance * 3)
+    camera.updateProjectionMatrix()
+  } else if (!id) {
     const extent = Math.max(1, ...fitPoints.map(p=>p.distanceTo(overviewCenter)))
     const vFov = THREE.MathUtils.degToRad(camera.fov)
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect)
