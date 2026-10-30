@@ -74,6 +74,16 @@ const visibleIds = computed(() => {
   if (chapterChoice.value === 'all') chapters.value.forEach(c => addAncestors(c.id))
   if (chapterChoice.value !== 'all') addAncestors(chapterChoice.value)
   matching.value.forEach(n => addAncestors(n.id))
+  // A selected point can connect across chapters. Reveal those direct
+  // verified neighbors and their real structural ancestors without guessing.
+  if (selectedId.value && byId.value.get(selectedId.value)?.kind === 'knowledge') {
+    addAncestors(selectedId.value)
+    for (const edge of props.graph.edges) {
+      if (edge.structural || !edge.verified) continue
+      if (edge.source === selectedId.value) addAncestors(edge.target)
+      else if (edge.target === selectedId.value) addAncestors(edge.source)
+    }
+  }
   return ids
 })
 const nodes = computed(() => props.graph.nodes.filter(n => visibleIds.value.has(n.id)))
@@ -211,13 +221,15 @@ onBeforeUnmount(() => {
 
       <main class="gx-main">
         <Graph3DCanvas ref="canvas" :nodes="nodes" :edges="edges" :selected-id="selectedId"
-          :show-relations="relationView!=='none'" :show-structure="showStructure"
+           :show-relations="relationView!=='none'" :show-structure="showStructure"
+          :relation-edges="graph.edges"
           @select="selectedId=$event" />
         <div class="gx-counter">
           <span><i class="gx-symbol"></i> {{ nodes.filter(n=>n.kind==='knowledge').length }} 知识点</span>
           <span>{{ semanticEdges.length }} 条可见关系</span>
+          <span v-if="selected?.kind==='knowledge'">聚焦 {{ selectedRelations.length }} 条一阶关联</span>
         </div>
-        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击星球聚焦 · Esc 取消选中 / 退出</p>
+        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击星球高亮一阶关联 · 点击空白或 Esc 取消聚焦</p>
       </main>
 
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
