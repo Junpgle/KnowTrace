@@ -201,8 +201,8 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   }
   for (const chapter of ordered) {
     const pid = parent.get(chapter.id)
-    const anchor = (pid && pos.get(pid)) ?? pos.get(root.id)!
-    const parentRadius = (pid && footprint.get(pid)) ?? 11
+    const anchor = (pid ? pos.get(pid) : undefined) ?? pos.get(root.id)!
+    const parentRadius = (pid ? footprint.get(pid) : undefined) ?? 11
     const radius = footprint.get(chapter.id) ?? 7
     const initial = parentRadius + radius + 8
     const seed = ordinalHash(chapter.id) * Math.PI * 2
