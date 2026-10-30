@@ -191,7 +191,7 @@ const edges = computed(()=>{
 })
 const semanticEdges = computed(() => edges.value.filter(e => !e.structural))
 const selectedRelations = computed(() => props.graph.edges.filter(e =>
-  !e.structural && selectedId.value !== null &&
+  !e.structural && e.verified && selectedId.value !== null &&
   (e.source === selectedId.value || e.target === selectedId.value))
   .map(e => {
     const other = e.source === selectedId.value ? e.target : e.source
@@ -407,7 +407,10 @@ onBeforeUnmount(() => {
             class="gx-back"><ChevronLeft :size="17" /> 返回总览</button>
           <span class="gx-stage-kicker">{{ displayMode==='clusters' ? 'CHAPTER CONSTELLATIONS' : displayMode==='groups' ? 'CHAPTER BROWSE GROUPS' : 'EXPLORE CONCEPTS' }}</span>
           <h1>{{ activeBrowseGroup?.name ?? currentChapter?.name ?? (displayMode==='clusters' ? '从章节开始，探索知识宇宙' : '知识点全景') }}</h1>
-          <p>{{ currentChapter ? (displayMode==='groups' ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · ${browseGroups.length} 个浏览分组 · 点击进入小规模网络` : activeBrowseGroup ? `${activeBrowseGroup.members.length} 个知识点 · 点击查看真实关联` : `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系`) :
+          <p v-if="selected?.kind === 'knowledge' && selectedRelations.length">
+            已点亮 {{ new Set(selectedRelations.map(r => r.id)).size }} 个直接关联知识点 · 点击关联星球继续探索
+          </p>
+          <p v-else>{{ currentChapter ? (displayMode==='groups' ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · ${browseGroups.length} 个浏览分组 · 点击进入小规模网络` : activeBrowseGroup ? `${activeBrowseGroup.members.length} 个知识点 · 点击查看真实关联` : `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系`) :
             (displayMode==='clusters' ? '每颗星球代表一个真实章节。选择章节，逐层深入。' : '点击知识点，点亮它的一阶关联。') }}</p>
         </div>
         <div class="gx-view-switch" role="group" aria-label="图谱显示层级">
