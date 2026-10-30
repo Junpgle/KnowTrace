@@ -516,7 +516,7 @@ function rebuild(animate = false) {
   const palette = chapterColors(props.layoutNodes ?? props.nodes)
   const overview = !props.nodes.some(n => n.kind === 'knowledge')
   const knowledge = props.nodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
-  const smallGroup=props.nodes.some(n=>n.kind==='group')&&knowledge.length<=18
+  const smallGroup=props.nodes.some(n=>n.kind==='group') && knowledge.length>0 && knowledge.length<=18
   if (knowledge.length) {
     const material = new THREE.MeshPhongMaterial({
       color: 0xffffff, shininess: 70, specular: 0x526b80,
