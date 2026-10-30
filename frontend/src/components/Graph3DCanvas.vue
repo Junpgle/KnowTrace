@@ -391,6 +391,13 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     const offsets = organicOffsets(points.length, owner)
     points.forEach((p, i) => pos.set(p.id, center.clone().add(offsets[i])))
   }
+  // A round course galaxy wastes most of a widescreen canvas: the height
+  // determines camera distance while horizontal whitespace stays empty.
+  // Keep the actual course/chapter hierarchy unchanged but spread *all*
+  // course coordinates horizontally. Do not alter the tight group layouts.
+  if (chapters.length >= 4) {
+    for (const point of pos.values()) point.x *= 2.2
+  }
   return pos
 }
 
@@ -826,7 +833,9 @@ function focus(id: string | null, resetAtlasAngle = false) {
     // Deep relationship views are nearly face-on. Returning to all chapters
     // should recover a readable elevated atlas angle, not leave the orbit
     // edge-on and artificially compress the constellations.
-    direction.set(.40, 1.20, 1.0)
+    // Nearly overhead: avoids perspective foreshortening of the XZ atlas.
+    // This direction leaves X horizontal and Z vertical on the screen.
+    direction.set(0, 1, .23)
   }
   let distance: number
   if (relationFocus) {
@@ -906,7 +915,7 @@ function focus(id: string | null, resetAtlasAngle = false) {
     tween = true
   }
 }
-function resetCamera() { focus(null) }
+function resetCamera() { focus(null, true) }
 // User-controlled zoom is useful for dense whole-course views; do not reset
 // the scene or change the selected concept when adjusting the lens.
 function zoomBy(factor: number) {
