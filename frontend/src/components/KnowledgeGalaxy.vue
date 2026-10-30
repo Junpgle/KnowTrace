@@ -26,7 +26,7 @@ const filter = ref<'all' | 'weak' | 'unlearned' | 'mastered'>('all')
 const query = ref('')
 const selectedChapter = ref('all')
 const includePending = ref(true)
-const showRelations = ref(true)
+const showRelations = ref(false)
 const display = ref<'3d' | 'list'>('3d')
 const explorerOpen = ref(false)
 const showStudio = ref(false)
@@ -408,7 +408,7 @@ watch(() => props.courseId, () => {
             <button type="button" :class="{active:filter==='mastered'}" @click="filter='mastered'">已掌握</button>
           </div>
           <label class="kg-check"><input v-model="includePending" type="checkbox" />显示未审核知识点</label>
-          <label class="kg-check"><input v-model="showRelations" type="checkbox" />显示已审核关系线</label>
+          <label class="kg-check"><input v-model="showRelations" type="checkbox" />总览显示全部关系线</label>
           <p class="kg-count">已筛选 {{ matching.length }} 个知识点 · {{ visibleRelations }} 条已审核关系</p>
           <h2 class="kg-subtitle"><Network :size="17" /> 定位知识星球</h2>
           <div v-if="!matching.length" class="kg-muted">没有匹配的知识点，可调整筛选条件。</div>
@@ -427,11 +427,12 @@ watch(() => props.courseId, () => {
             <div>
               <button type="button" :class="{active:display==='3d'}" @click="display='3d'"><Orbit :size="14" /> 3D</button>
               <button type="button" :class="{active:display==='list'}" @click="display='list'"><List :size="14" /> 列表</button>
+              <button type="button" aria-label="放大全屏知识星系" title="全屏探索" @click="explorerOpen=true"><Maximize2 :size="14" /> 全屏</button>
             </div>
           </div>
           <Graph3DCanvas v-if="display==='3d' && !explorerOpen" ref="canvas" :nodes="visibleNodes" :edges="visibleEdges"
             :layout-nodes="graph.nodes" :layout-edges="graph.edges" :relation-edges="graph.edges"
-            :selected-id="selectedId" :show-relations="showRelations" @select="select" />
+            :selected-id="selectedId" :show-relations="showRelations || !!selectedId" @select="select" />
           <div v-else class="kg-list-mode">
             <p v-if="!matching.length" class="kg-muted">暂无匹配知识点。</p>
             <button v-for="node in matching" :key="node.id" type="button"
@@ -632,4 +633,19 @@ watch(() => props.courseId, () => {
 @media(max-width:1300px){.kg-layout{grid-template-columns:minmax(185px,.7fr) minmax(360px,2fr)}.kg-detail{grid-column:1/-1}}
 @media(max-width:950px){.kg-layout{grid-template-columns:1fr}.kg-detail{grid-column:auto}.kg-navigation{max-height:150px}}
 @media(max-width:650px){.kg-stats{grid-template-columns:repeat(2,1fr)}.kg-heading h1{font-size:26px}.kg-stage-foot span:last-child{display:none}.kg-stage :deep(.galaxy-canvas){min-height:390px}}
+/* Give the canvas more space in the regular workspace while keeping the
+   editing/sidebar views available. The dedicated explorer remains immersive. */
+.kg-layout{grid-template-columns:minmax(185px,220px) minmax(360px,1fr) minmax(225px,270px);min-height:660px;gap:12px}
+.kg-stage{min-height:660px}
+.kg-filter,.kg-detail{max-height:780px;overflow-y:auto;scrollbar-width:thin}
+@media(max-width:1180px){
+  .kg-layout{grid-template-columns:minmax(185px,220px) minmax(0,1fr)}
+  .kg-detail{grid-column:1 / -1;max-height:none}
+  .kg-stage{min-height:640px}
+}
+@media(max-width:700px){
+  .kg-layout{grid-template-columns:minmax(0,1fr)}
+  .kg-filter,.kg-detail{grid-column:1;max-height:none}
+  .kg-stage{min-height:570px}
+}
 </style>
