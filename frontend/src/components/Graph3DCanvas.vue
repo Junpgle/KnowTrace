@@ -767,7 +767,7 @@ function projectedFitDistance(
   return result
 }
 
-function focus(id: string | null) {
+function focus(id: string | null, resetAtlasAngle = false) {
   if (!camera || !controls || !positions.size) return
   const coordinate = id ? positions.get(id) : undefined
   if (id && !coordinate) return
@@ -801,6 +801,13 @@ function focus(id: string | null) {
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < .01) direction.set(.4, .8, 1)
+  if (resetAtlasAngle && !id && !localGroup && !isSubset &&
+      visibleKnowledge.length >= 300) {
+    // Deep relationship views are nearly face-on. Returning to all chapters
+    // should recover a readable elevated atlas angle, not leave the orbit
+    // edge-on and artificially compress the constellations.
+    direction.set(.40, 1.20, 1.0)
+  }
   let distance: number
   if (!id) {
     const extent = Math.max(1, ...fitPoints.map(p=>p.distanceTo(overviewCenter)))
@@ -1020,7 +1027,7 @@ function initialize() {
   renderer.domElement.addEventListener('pointerdown', pointerDown)
   renderer.domElement.addEventListener('pointerup', pointerUp)
   document.addEventListener('visibilitychange', visibilityChanged)
-  focus(null)
+  focus(null, true)
   draw()
 }
 onMounted(initialize)
@@ -1043,7 +1050,8 @@ watch(() => ({
     next.layoutNodes !== previous.layoutNodes ||
     next.layoutEdges !== previous.layoutEdges
   rebuild(layerChanged)
-  if (layerChanged || next.selectedId !== previous.selectedId) focus(next.selectedId)
+  if (layerChanged || next.selectedId !== previous.selectedId)
+    focus(next.selectedId, layerChanged)
 })
 onBeforeUnmount(() => {
   disposed = true
