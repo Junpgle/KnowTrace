@@ -310,18 +310,30 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // Chapter grouping overview retains its own orbital arrangement.
-    if (chapter) pos.set(chapter.id, new THREE.Vector3())
-    groupNodes.forEach((group, i) => {
-      const theta = 2 * Math.PI * i / Math.max(1, groupNodes.length) - Math.PI / 2
-      const radius = 36 + Math.sqrt(groupNodes.length) * 6
-      const center = groupNodes.length === 1 ? new THREE.Vector3() :
-        new THREE.Vector3(
-          Math.cos(theta) * radius,
-          Math.sin(i * 2.4) * 6,
-          Math.sin(theta) * radius,
-        )
-      pos.set(group.id, center)
+    // At the group level there are no chapter hub or hierarchy edges.
+    // Arrange browsing groups on a camera-facing, aspect-aware XY grid.
+    // Each slot reserves space for its planet AND a two-line name badge.
+    // A ring viewed nearly edge-on previously stacked all labels together.
+    const groups = [...groupNodes].sort((a,b) =>
+      a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
+    const width = mountPoint.value?.clientWidth ?? 1500
+    const height = mountPoint.value?.clientHeight ?? 850
+    const aspect = width / Math.max(1, height)
+    const columns = Math.max(1, Math.min(groups.length,
+      Math.ceil(Math.sqrt(groups.length * aspect * .85))))
+    const rows = Math.ceil(groups.length / columns)
+    const stepX = 83
+    const stepY = 72
+    groups.forEach((g, index) => {
+      const row = Math.floor(index / columns)
+      const rowCount = Math.min(columns, groups.length - row * columns)
+      const col = index % columns
+      // Center each partial row, preventing an unbalanced last row.
+      pos.set(g.id, new THREE.Vector3(
+        (col - (rowCount - 1) / 2) * stepX,
+        ((rows - 1) / 2 - row) * stepY,
+        0,
+      ))
     })
     return pos
   }
@@ -682,15 +694,15 @@ function rebuild(animate = false) {
       if (label) {
         if (overview) {
           // Twice the previous screen-space label size at the overview camera.
-          label.scale.set(isCourse ? 43 : node.kind==='group' ? 27 : 50,
-            isCourse ? 12.4 : node.kind==='group' ? 8.2 : 14.5, 1)
+          label.scale.set(isCourse ? 43 : node.kind==='group' ? 49 : 50,
+            isCourse ? 12.4 : node.kind==='group' ? 14.2 : 14.5, 1)
         } else {
           label.scale.set(isCourse ? 22 : 24, 5.3, 1)
         }
         label.position.copy(position)
         labelAnchors.push({
           sprite: label, center: position,
-          distance: radius + (overview ? 10.5 : 4),
+          distance: radius + (overview ? (node.kind === 'group' ? 17 : 10.5) : 4),
         })
         g.add(label)
       }
