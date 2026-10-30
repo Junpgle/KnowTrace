@@ -8,7 +8,7 @@ point: a concept can connect multiple chapters in subsequent runs.
 from __future__ import annotations
 
 import math
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 from .db import transaction
@@ -39,6 +39,7 @@ def bridge_groups(db_path: Path, course_id: str, examined_pairs: set[frozenset[s
 
     nodes={}
     inverted: dict[str,list[str]]=defaultdict(list)
+    source_index: dict[str,list[str]]=defaultdict(list)
     for row in rows:
         point=dict(row)
         point["bucket"]=("chapter",point["chapter_id"]) if point["chapter_id"] else (
@@ -50,6 +51,9 @@ def bridge_groups(db_path: Path, course_id: str, examined_pairs: set[frozenset[s
         nodes[point["id"]]=point
         for term in point["terms"]:
             inverted[term].append(point["id"])
+        for chunk in point["chunks"]:
+            if chunk:
+                source_index[chunk].append(point["id"])
 
     n=len(nodes)
     if n<2:return []
@@ -71,6 +75,16 @@ def bridge_groups(db_path: Path, course_id: str, examined_pairs: set[frozenset[s
                 pair=frozenset((source["id"],target_id))
                 if pair in examined_pairs:continue
                 scores[target_id]+=weight
+        # Shared actual PDF evidence can reveal a legitimate bridge even
+        # when concepts have no common words. Retrieve these by an inverted
+        # chunk index rather than relying exclusively on lexical overlap.
+        for chunk in source["chunks"]:
+            for target_id in source_index.get(chunk,[]):
+                if target_id==source["id"]:continue
+                target=nodes[target_id]
+                if target["bucket"]==source["bucket"]:continue
+                if frozenset((source["id"],target_id)) in examined_pairs:continue
+                scores.setdefault(target_id,0.0)
         ranked=[]
         for target_id,score in scores.items():
             target=nodes[target_id]
