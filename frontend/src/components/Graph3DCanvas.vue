@@ -225,11 +225,12 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   if(groupNodes.length){
     const chapter=nodes.find(n=>n.kind==='chapter')
     if(chapter)pos.set(chapter.id,groupNodes.length===1?
-      new THREE.Vector3(-42,-10,-30):new THREE.Vector3())
+      new THREE.Vector3(-27,-5,-7):new THREE.Vector3())
     groupNodes.forEach((g,i)=>{
       const angle=2*Math.PI*i/groupNodes.length-Math.PI/2
       const center=groupNodes.length===1?new THREE.Vector3():
-       new THREE.Vector3(Math.cos(angle)*53,Math.sin(i*2.4)*8,Math.sin(angle)*53)
+       new THREE.Vector3(Math.cos(angle)*(32+Math.sqrt(groupNodes.length)*4),
+         Math.sin(i*2.4)*5,Math.sin(angle)*(32+Math.sqrt(groupNodes.length)*4))
       pos.set(g.id,center)
       const points=nodes.filter(n=>n.kind==='knowledge'&&
         edges.some(e=>e.structural&&e.source===g.id&&e.target===n.id))
@@ -238,9 +239,11 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
         const theta=j*Math.PI*(3-Math.sqrt(5))
         const y=1-2*(j+.5)/points.length
         const radial=Math.sqrt(Math.max(0,1-y*y))
-        const radius=26+(j%3)*3
+        // Small relationship neighborhoods must occupy a tight, readable
+        // field rather than distributing 3 points over a 60-unit diameter.
+        const radius = 11 + Math.min(8, Math.sqrt(points.length)*2.4)
         pos.set(p.id,center.clone().add(new THREE.Vector3(
-          Math.cos(theta)*radial*radius,y*18,Math.sin(theta)*radial*radius)))
+          Math.cos(theta)*radial*radius,y*radius*.63,Math.sin(theta)*radial*radius)))
       })
     })
     return pos
@@ -401,7 +404,9 @@ function rebuild() {
       const position = positions.get(node.id)!
       const center = focusState.active && node.id === selectedId
       const neighbor = focusState.active && focusState.neighbors.has(node.id)
-      const radius = center ? 1.36 : neighbor ? 1.19 : 1
+      const radius = smallGroup
+        ? (center ? 3.5 : neighbor ? 3.15 : 2.75)
+        : (center ? 1.36 : neighbor ? 1.19 : 1)
       size.setScalar(radius)
       matrix.compose(position, rotation, size)
       cluster.setMatrixAt(index, matrix)
@@ -415,10 +420,11 @@ function rebuild() {
 
       if (smallGroup || center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
-        const label = makeLabel(node.name)
+        const label = makeLabel(node.name, smallGroup ? 480 : 320)
         if (label) {
+          if (smallGroup) label.scale.set(19, 4, 1)
           label.position.copy(position)
-          labelAnchors.push({ sprite: label, center: position, distance: radius + 4.5 })
+          labelAnchors.push({ sprite: label, center: position, distance: radius + (smallGroup ? 4.3 : 4.5) })
           g.add(label)
         }
       }
@@ -451,7 +457,9 @@ function rebuild() {
     const chapterSelected = node.id === selectedId
     // Overview planets must be readable on a large desktop canvas.
     // The previous 4-6 world-unit spheres appeared only ~30px across.
-    const radius = node.kind==='group' ? (overview ? 7.8 : 5.8) : isCourse ? (overview ? 9.8 : 6.0)
+    const radius = node.kind==='group'
+      ? (smallGroup ? 5.7 : overview ? 9.3 : 6.8)
+      : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
           ? 8.1 + Math.min(3.0, Math.log2(count + 1) * .47)
           : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
@@ -592,48 +600,65 @@ function selectionDistance(kind: GraphNode['kind'], current: number): number {
 }
 
 function focus(id: string | null) {
-  if (!camera || !controls) return
+  if (!camera || !controls || !positions.size) return
   const coordinate = id ? positions.get(id) : undefined
   if (id && !coordinate) return
-  // With a chapter/search filter active, center on the visible knowledge
-  // cloud rather than the original course core. Coordinates stay stable.
-  const displayed = props.nodes.filter(n => n.kind === 'knowledge')
-    .map(n => positions.get(n.id)).filter((p): p is THREE.Vector3 => !!p)
-  const fullKnowledgeCount = (props.layoutNodes ?? props.nodes)
+  const localGroup = props.nodes.some(n => n.kind === 'group')
+  const visibleKnowledge = props.nodes.filter(n => n.kind === 'knowledge')
+    .map(n => positions.get(n.id)).filter((p): p is THREE.Vector3 => Boolean(p))
+  const groupPoints = props.nodes.filter(n => n.kind === 'group')
+    .map(n => positions.get(n.id)).filter((p): p is THREE.Vector3 => Boolean(p))
+  const allKnowledgeCount = (props.layoutNodes ?? props.nodes)
     .filter(n => n.kind === 'knowledge').length
-  const subset = !id && displayed.length > 0 && displayed.length < fullKnowledgeCount
-  const overviewCenter = new THREE.Vector3()
-  if (subset) new THREE.Box3().setFromPoints(displayed).getCenter(overviewCenter)
+  const isSubset = visibleKnowledge.length > 0 && visibleKnowledge.length < allKnowledgeCount
+  const overview = props.nodes.every(n => n.kind !== 'knowledge')
+
+  // Group detail: fit only the actual neighborhood and its group anchor,
+  // not a far-away chapter planet. This is what keeps 3-point views legible.
+  let fitPoints: THREE.Vector3[]
+  if (localGroup) {
+    fitPoints = visibleKnowledge.length
+      ? [...visibleKnowledge, ...groupPoints]
+      : groupPoints
+  } else if (isSubset) {
+    fitPoints = visibleKnowledge
+  } else {
+    fitPoints = [...positions.values()]
+  }
+  if (!fitPoints.length) fitPoints = [...positions.values()]
+  const bounds = new THREE.Box3().setFromPoints(fitPoints)
+  const overviewCenter = bounds.getCenter(new THREE.Vector3())
   desiredTarget.copy(coordinate ?? overviewCenter)
-  const selected = props.nodes.find(n => n.id === id)
+
   const currentDistance = camera.position.distanceTo(controls.target)
-  // Fit real visible bounds rather than a fixed chapter-count distance.
   let distance: number
   if (!id) {
-    const fitPoints = subset ? displayed : [...positions.values()]
-    const extent = Math.max(12, ...fitPoints.map(p => p.distanceTo(overviewCenter) + 8))
-    const vfov = THREE.MathUtils.degToRad(camera.fov)
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect)
-    const halfAngle = Math.min(vfov, hfov) / 2
-    const overview = props.nodes.every(n => n.kind !== 'knowledge')
-    // On the atlas, fill more of the screen while retaining a safe edge margin.
-    // Detail and unfiltered knowledge views keep their previous conservative fit.
-    const fitPadding = overview ? 0.88 : 1.12
-    distance = Math.max(overview ? 72 : 85,
-      extent / Math.sin(halfAngle) * fitPadding)
-    controls.maxDistance = Math.max(280, distance * 1.4)
-    // Large cluster overviews should not disappear into fixed-distance fog.
-    if (scene?.fog instanceof THREE.FogExp2)
-      scene.fog.density = Math.min(0.0015, 0.33 / distance)
+    const extent = Math.max(1, ...fitPoints.map(p=>p.distanceTo(overviewCenter)))
+    const vFov = THREE.MathUtils.degToRad(camera.fov)
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect)
+    const halfAngle = Math.min(vFov, hFov) / 2
+    if (localGroup && visibleKnowledge.length && visibleKnowledge.length <= 18) {
+      // Node radius and labels are also enlarged in this detail mode.
+      distance = THREE.MathUtils.clamp(
+        (extent + 8) / Math.sin(halfAngle) * 1.06, 46, 94)
+    } else {
+      distance = Math.max(localGroup ? 58 : overview ? 72 : 85,
+        (extent + (overview ? 15 : 9)) / Math.sin(halfAngle)
+        * (overview ? .93 : 1.10))
+    }
+    controls.maxDistance = Math.max(280, distance * 1.8)
     camera.far = Math.max(1600, distance * 3)
     camera.updateProjectionMatrix()
   } else {
-    distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
-    if (scene?.fog instanceof THREE.FogExp2)
-      scene.fog.density = 0.0015
+    const selected = props.nodes.find(n => n.id === id)
+    if (localGroup && visibleKnowledge.length <= 18)
+      distance = selected?.kind === 'knowledge' ? 46 : 59
+    else distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
   }
+  if (scene?.fog instanceof THREE.FogExp2)
+    scene.fog.density = Math.min(0.0015, .35 / Math.max(72,distance))
   const direction = camera.position.clone().sub(controls.target)
-  if (direction.lengthSq() < 0.01) direction.set(1, .6, 1)
+  if (direction.lengthSq() < 0.01) direction.set(.4,.8,1)
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
   tween = true
 }
