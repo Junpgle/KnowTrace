@@ -4,7 +4,7 @@
  * Read-only: semantic and membership edges always come from the graph API.
  * Filtering changes visibility, never knowledge chapter assignment or approval.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, CircleHelp, Eye, EyeOff, FileText,
   Maximize2, Menu, RotateCcw, Search, Layers3, X, ChevronLeft, Compass,
@@ -226,7 +226,8 @@ function reset() {
   level.value = 'clusters'
   activeGroup.value = null
   term.value = ''
-  void nextTick(() => canvas.value?.resetCamera())
+  // The WebGL canvas watches the level's nodes and performs one fitted
+  // camera transition. A second nextTick reset used to override it.
 }
 function switchLevel(value: 'clusters' | 'groups' | 'knowledge') {
   activeGroup.value = null
@@ -237,7 +238,8 @@ function switchLevel(value: 'clusters' | 'groups' | 'knowledge') {
     selectedId.value = null
     term.value = ''
   }
-  void nextTick(() => canvas.value?.resetCamera())
+  // The WebGL canvas watches the level's nodes and performs one fitted
+  // camera transition. A second nextTick reset used to override it.
 }
 function selectCanvasNode(id: string | null) {
   if (!id) { selectedId.value = null; return }
@@ -278,7 +280,8 @@ function selectChapter(id: string) {
   level.value = id === 'all' ? 'clusters' : 'groups'
   activeGroup.value = null
   selectedId.value = null
-  void nextTick(() => canvas.value?.resetCamera())
+  // The WebGL canvas watches the level's nodes and performs one fitted
+  // camera transition. A second nextTick reset used to override it.
 }
 function chooseChapter(chapter: GraphNode) {
   selectChapter(chapter.id)
