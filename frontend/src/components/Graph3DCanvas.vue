@@ -17,6 +17,9 @@ const props = defineProps<{
   showStructure?: boolean
   // Full set of approved relationships, even when a view hides some lines.
   relationEdges?: GraphEdge[]
+  // Use all course nodes for stable positions while filtering displayed nodes.
+  layoutNodes?: GraphNode[]
+  layoutEdges?: GraphEdge[]
 }>()
 const emit = defineEmits<{ select: [id: string | null] }>()
 const mountPoint = ref<HTMLDivElement | null>(null)
@@ -118,39 +121,115 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   const root = nodes.find(n => n.kind === 'course')
   if (!root) return pos
   pos.set(root.id, new THREE.Vector3())
-  const chapters = nodes.filter(n => n.kind === 'chapter')
-  const n = Math.max(1, chapters.length)
-  const orbit = Math.max(19, n * 5.2)
-  // Nested chapters are still real chapters; angle encodes groups only.
-  chapters.forEach((chapter, i) => {
-    const a = (i / n) * Math.PI * 2 + Math.PI / 6
-    const r = orbit + (i % 2) * 3
-    pos.set(chapter.id, new THREE.Vector3(
-      Math.cos(a) * r, Math.sin(i * 2.1) * 7, Math.sin(a) * r,
-    ))
-  })
 
+  const chapters = nodes.filter(n => n.kind === 'chapter')
+  const chapterIds = new Set(chapters.map(n => n.id))
   const parent = new Map<string, string>()
-  edges.filter(e => e.structural && e.type === 'contains').forEach(e => parent.set(e.target, e.source))
+  for (const e of edges) {
+    if (e.structural && e.type === 'contains') parent.set(e.target, e.source)
+  }
   const byChapter = new Map<string, GraphNode[]>()
-  nodes.filter(n => n.kind === 'knowledge').forEach(kp => {
-    const id = parent.get(kp.id) || root.id
+  for (const node of nodes) {
+    if (node.kind !== 'knowledge') continue
+    const id = parent.get(node.id) ?? root.id
     if (!byChapter.has(id)) byChapter.set(id, [])
-    byChapter.get(id)!.push(kp)
-  })
-  for (const [id, points] of byChapter) {
-    const center = pos.get(id) || new THREE.Vector3()
-    points.sort((a, b) => a.id.localeCompare(b.id))
-    points.forEach((point, i) => {
-      const angle = i * G + ordinalHash(id) * 6.28
-      const radius = 4.1 + 1.9 * Math.sqrt(i + 1)
-      const elevation = (ordinalHash(point.id) - 0.5) * 8
-      pos.set(point.id, new THREE.Vector3(
-        center.x + radius * Math.cos(angle),
-        center.y + elevation,
-        center.z + radius * Math.sin(angle),
-      ))
+    byChapter.get(id)!.push(node)
+  }
+
+  // A 3D lattice produces compact, evenly spaced point clouds instead of
+  // the previous flattened spiral. Rotation and small deterministic jitter
+  // remove its grid appearance without creating node collisions.
+  const offsets = (count: number, key: string) => {
+    if (!count) return [] as THREE.Vector3[]
+    let shell = 1
+    while ((2 * shell + 1) ** 3 - 1 < count) shell++
+    const cells: { x: number, y: number, z: number, d: number, tie: number }[] = []
+    for (let x = -shell; x <= shell; x++) {
+      for (let y = -shell; y <= shell; y++) {
+        for (let z = -shell; z <= shell; z++) {
+          if (x === 0 && y === 0 && z === 0) continue
+          const d = x * x + y * y + z * z
+          cells.push({ x, y, z, d, tie: ordinalHash(key + ':' + x + ':' + y + ':' + z) })
+        }
+      }
+    }
+    cells.sort((a, b) => a.d - b.d || a.tie - b.tie)
+    const rotation = new THREE.Euler(
+      .16 + ordinalHash(key + ':x') * .35,
+      ordinalHash(key + ':y') * Math.PI * 2,
+      .12 + ordinalHash(key + ':z') * .25,
+    )
+    return cells.slice(0, count).map(({ x, y, z }, i) => {
+      const jitter = (axis: string) => (ordinalHash(key + ':' + i + ':' + axis) - .5) * .42
+      return new THREE.Vector3(
+        (x + jitter('x')) * 4.65,
+        (y + jitter('y')) * 4.65,
+        (z + jitter('z')) * 4.65,
+      ).applyEuler(rotation)
     })
+  }
+
+  // Pack the chapter systems without overlap. A real nested chapter starts
+  // near its parent, whereas top-level chapters orbit the course core.
+  // Only real membership edges determine parentage; no learned relation
+  // is used to assign a chapter or determine an apparent dependency.
+  const footprint = new Map<string, number>()
+  for (const chapter of chapters) {
+    const size = byChapter.get(chapter.id)?.length ?? 0
+    footprint.set(chapter.id, size ? Math.max(9, 5 + 3.2 * Math.cbrt(size)) : 7)
+  }
+  const placed: { x: number, z: number, radius: number }[] = [
+    { x: 0, z: 0, radius: 11 },
+  ]
+  const remaining = new Map(chapters.map(c => [c.id, c]))
+  const ordered: GraphNode[] = []
+  // Parent-first walk, even if source chapter records were not ordered.
+  while (remaining.size) {
+    let advanced = false
+    for (const [id, chapter] of remaining) {
+      const pid = parent.get(id)
+      if (!pid || !chapterIds.has(pid) || !remaining.has(pid)) {
+        ordered.push(chapter)
+        remaining.delete(id)
+        advanced = true
+      }
+    }
+    if (!advanced) { // malformed cycles should not hang the renderer
+      ordered.push(...remaining.values())
+      break
+    }
+  }
+  for (const chapter of ordered) {
+    const pid = parent.get(chapter.id)
+    const anchor = (pid && pos.get(pid)) ?? pos.get(root.id)!
+    const parentRadius = (pid && footprint.get(pid)) ?? 11
+    const radius = footprint.get(chapter.id) ?? 7
+    const initial = parentRadius + radius + 8
+    const seed = ordinalHash(chapter.id) * Math.PI * 2
+    let center: THREE.Vector3 | null = null
+    for (let attempt = 0; attempt < 10000; attempt++) {
+      const angle = seed + attempt * G
+      const distance = initial + Math.sqrt(attempt) * 5.8
+      const x = anchor.x + Math.cos(angle) * distance
+      const z = anchor.z + Math.sin(angle) * distance
+      if (placed.every(p => Math.hypot(p.x - x, p.z - z) >= p.radius + radius + 6)) {
+        center = new THREE.Vector3(x, (ordinalHash(chapter.id + ':h') - .5) * 6, z)
+        break
+      }
+    }
+    // This fallback is deterministic and still separates the cluster.
+    if (!center) {
+      const far = placed.reduce((m, p) => Math.max(m, Math.hypot(p.x, p.z) + p.radius), 0)
+      center = new THREE.Vector3(far + radius + 16, 0, 0)
+    }
+    pos.set(chapter.id, center)
+    placed.push({ x: center.x, z: center.z, radius })
+  }
+  for (const [id, points] of byChapter) {
+    const center = pos.get(id) ?? new THREE.Vector3()
+    points.sort((a, b) => a.id.localeCompare(b.id))
+    const positions = offsets(points.length, id)
+    points.forEach((point, i) => pos.set(point.id, center.clone().add(positions[i])))
   }
   return pos
 }
@@ -183,8 +262,12 @@ function rebuild() {
   const g = new THREE.Group()
   group = g
   scene.add(g)
-  const coords = layout(props.nodes, props.edges)
-  coords.forEach((v, id) => positions.set(id, v))
+  const coords = layout(props.layoutNodes ?? props.nodes, props.layoutEdges ?? props.edges)
+  // Fit the camera to visible nodes while preserving whole-course coordinates.
+  for (const node of props.nodes) {
+    const position = coords.get(node.id)
+    if (position) positions.set(node.id, position)
+  }
   const focusState = focusRelations()
   const selectedId = props.selectedId
   // One InstancedMesh for all knowledge points, including dimmed ones:
@@ -457,10 +540,11 @@ function initialize() {
 onMounted(initialize)
 // Changing line visibility must never zoom the camera. Only a change of
 // selected node should trigger automatic focus.
-watch(() => [props.nodes, props.edges, props.relationEdges], () => {
+watch(() => [props.nodes, props.layoutNodes, props.layoutEdges], () => {
   rebuild()
-  if (props.selectedId) focus(props.selectedId)
+  focus(props.selectedId)
 })
+watch(() => [props.edges, props.relationEdges], rebuild)
 watch(() => props.showRelations, rebuild)
 watch(() => props.showStructure, rebuild)
 watch(() => props.selectedId, id => {
