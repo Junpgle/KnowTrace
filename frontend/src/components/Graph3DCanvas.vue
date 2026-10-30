@@ -45,6 +45,8 @@ let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
 const meshes: THREE.Mesh[] = []
+const labelAnchors: { sprite: THREE.Sprite; center: THREE.Vector3; distance: number }[] = []
+const screenUp = new THREE.Vector3()
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
 let pressed: { x: number, y: number } | null = null
@@ -306,6 +308,7 @@ function clearGraph() {
   })
   geometries.forEach(geometry => geometry.dispose())
   meshes.splice(0)
+  labelAnchors.splice(0)
   positions.clear()
   group = null
 }
@@ -389,7 +392,8 @@ function rebuild() {
         if (neighbor) neighborLabels += 1
         const label = makeLabel(node.name)
         if (label) {
-          label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
+          label.position.copy(position)
+          labelAnchors.push({ sprite: label, center: position, distance: radius + 4.5 })
           g.add(label)
         }
       }
@@ -507,9 +511,11 @@ function rebuild() {
         } else {
           label.scale.set(isCourse ? 22 : 24, 5.3, 1)
         }
-        label.position.copy(position).add(new THREE.Vector3(
-          0, radius + (overview ? 10.5 : 4), 0,
-        ))
+        label.position.copy(position)
+        labelAnchors.push({
+          sprite: label, center: position,
+          distance: radius + (overview ? 10.5 : 4),
+        })
         g.add(label)
       }
     }
@@ -617,6 +623,12 @@ function draw() {
         && controls.target.distanceTo(desiredTarget) < 0.075) tween = false
   }
   controls.update()
+  // Follow the actual screen-up direction. With an overhead camera, a
+  // world-Y offset would sit on top of the planet instead of above it.
+  screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
+  for (const anchor of labelAnchors) {
+    anchor.sprite.position.copy(anchor.center).addScaledVector(screenUp, anchor.distance)
+  }
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
 }
