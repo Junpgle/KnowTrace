@@ -7,7 +7,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, CircleHelp, Eye, EyeOff, FileText,
-  Maximize2, Menu, RotateCcw, Search, X,
+  Maximize2, Menu, RotateCcw, Search, Layers3, X,
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
 import { api, sourcePreviewUrl, type GraphNode,
@@ -18,6 +18,7 @@ const emit = defineEmits<{ close: [] }>()
 const canvas = ref<InstanceType<typeof Graph3DCanvas> | null>(null)
 const term = ref('')
 const chapterChoice = ref('all')
+const level = ref<'clusters' | 'knowledge'>('clusters')
 const includePending = ref(true)
 const selectedId = ref<string | null>(null)
 const relationView = ref<'none' | 'selected' | 'all'>('selected')
@@ -38,6 +39,12 @@ const selected = computed(() => props.graph.nodes.find(n => n.id === selectedId.
 const byId = computed(() => new Map(props.graph.nodes.map(n => [n.id, n])))
 const parent = computed(() => new Map(props.graph.edges.filter(e => e.structural)
   .map(e => [e.target, e.source])))
+const expanded = computed(() => level.value === 'knowledge' ||
+  Boolean(term.value.trim()) || chapterChoice.value !== 'all' ||
+  (selected.value?.kind === 'knowledge'))
+const displayMode = computed(() => expanded.value ? 'knowledge' : 'clusters')
+const visibleKnowledgeCount = computed(() => nodes.value.filter(n => n.kind === 'knowledge').length)
+const hiddenKnowledgeCount = computed(() => Math.max(0, knowledge.value.length - visibleKnowledgeCount.value))
 const chapterName = computed(() => {
   const chapterId = selected.value?.chapter_id
   if (!chapterId) return '未归类'
@@ -77,7 +84,9 @@ const visibleIds = computed(() => {
   }
   if (chapterChoice.value === 'all') chapters.value.forEach(c => addAncestors(c.id))
   if (chapterChoice.value !== 'all') addAncestors(chapterChoice.value)
-  matching.value.forEach(n => addAncestors(n.id))
+  // Cluster overview displays chapter anchors only: do not materialize
+  // 1300+ knowledge meshes until a chapter is opened or search is used.
+  if (expanded.value) matching.value.forEach(n => addAncestors(n.id))
   // A selected point can connect across chapters. Reveal those direct
   // verified neighbors and their real structural ancestors without guessing.
   if (selectedId.value && byId.value.get(selectedId.value)?.kind === 'knowledge') {
@@ -133,8 +142,32 @@ watch(selectedId, async id => {
 function reset() {
   selectedId.value = null
   chapterChoice.value = 'all'
+  level.value = 'clusters'
   term.value = ''
   void nextTick(() => canvas.value?.resetCamera())
+}
+function switchLevel(value: 'clusters' | 'knowledge') {
+  level.value = value
+  if (value === 'clusters') {
+    chapterChoice.value = 'all'
+    selectedId.value = null
+    term.value = ''
+  }
+  void nextTick(() => canvas.value?.resetCamera())
+}
+function selectCanvasNode(id: string | null) {
+  if (!id) { selectedId.value = null; return }
+  const node = byId.value.get(id)
+  if (node?.kind === 'chapter') {
+    chapterChoice.value = id
+    level.value = 'knowledge'
+  } else if (node?.kind === 'course') {
+    chapterChoice.value = 'all'
+    level.value = 'clusters'
+  } else if (node?.kind === 'knowledge') {
+    level.value = 'knowledge'
+  }
+  selectedId.value = id
 }
 function focusRelated(id: string) {
   // Cross-chapter edges may point outside the current filter.
@@ -143,15 +176,17 @@ function focusRelated(id: string) {
     chapterChoice.value = 'all'
     term.value = ''
   }
+  level.value = 'knowledge'
   selectedId.value = id
 }
 function selectChapter(id: string) {
   chapterChoice.value = id
+  level.value = id === 'all' ? 'clusters' : 'knowledge'
   selectedId.value = null
+  void nextTick(() => canvas.value?.resetCamera())
 }
 function chooseChapter(chapter: GraphNode) {
-  chapterChoice.value = chapter.id
-  selectedId.value = null
+  selectChapter(chapter.id)
 }
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
@@ -183,6 +218,7 @@ onBeforeUnmount(() => {
         <div><strong>知识星系</strong><small>{{ graph.course_name }} · 章节星团探索</small></div>
       </div>
       <div class="gx-toolbar-info">
+        <span><Layers3 :size="13" /> {{ displayMode==='clusters' ? '章节总览' : '知识点探索' }}</span>
         <span>{{ chapters.length }} 个章节</span>
         <span>{{ knowledge.length }} 个知识点</span>
         <span>{{ graph.stats.approved_semantic_edges }} 条已审核关系</span>
@@ -211,6 +247,16 @@ onBeforeUnmount(() => {
         <label class="gx-checkbox">
           <input v-model="includePending" type="checkbox" /> 显示尚未审核的知识点
         </label>
+
+        <div class="gx-divider"></div>
+        <h3>显示层级</h3>
+        <div class="gx-segment" role="group" aria-label="节点展开模式">
+          <button type="button" :class="{active:displayMode==='clusters'}"
+            @click="switchLevel('clusters')">章节星团</button>
+          <button type="button" :class="{active:displayMode==='knowledge'}"
+            @click="switchLevel('knowledge')">全部知识点</button>
+        </div>
+        <p class="gx-note">默认折叠知识点；点击章节星球或搜索后自动展开，减少总览拥挤。</p>
 
         <div class="gx-divider"></div>
         <h3>连线显示</h3>
@@ -244,7 +290,13 @@ onBeforeUnmount(() => {
         <Graph3DCanvas ref="canvas" :nodes="nodes" :edges="edges" :selected-id="selectedId"
           :show-relations="relationView!=='none'" :show-structure="showStructure"
           :relation-edges="graph.edges" :layout-nodes="graph.nodes" :layout-edges="graph.edges"
-          @select="selectedId=$event" />
+          @select="selectCanvasNode" />
+        <div class="gx-view-switch" role="group" aria-label="图谱显示层级">
+          <button type="button" :class="{active:displayMode==='clusters'}"
+            @click="switchLevel('clusters')"><Layers3 :size="15" /> 章节总览</button>
+          <button type="button" :class="{active:displayMode==='knowledge'}"
+            @click="switchLevel('knowledge')"><BookOpen :size="15" /> 全部知识点</button>
+        </div>
         <div class="gx-chapter-strip" role="group" aria-label="快速切换章节">
           <button type="button" :class="{active:chapterChoice==='all'}"
             @click="selectChapter('all')">全部星团</button>
@@ -256,11 +308,12 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="gx-counter">
-          <span><i class="gx-symbol"></i> {{ nodes.filter(n=>n.kind==='knowledge').length }} 知识点</span>
+          <span><i class="gx-symbol"></i> {{ visibleKnowledgeCount }} / {{ knowledge.length }} 知识点</span>
+          <span v-if="hiddenKnowledgeCount && displayMode==='clusters'">折叠 {{ hiddenKnowledgeCount }} 个节点 · 点击章节展开</span>
           <span>{{ semanticEdges.length }} 条可见关系</span>
           <span v-if="selected?.kind==='knowledge'">聚焦 {{ selectedRelations.length }} 条一阶关联</span>
         </div>
-        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击节点查看关联 · Esc 取消聚焦</p>
+        <p class="gx-hint">拖拽旋转 · 滚轮缩放 · 点击章节展开 · 点击知识点查看一阶关联</p>
       </main>
 
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
@@ -299,7 +352,7 @@ onBeforeUnmount(() => {
       </aside>
     </div>
     <footer class="gx-footer">
-      <span><CircleHelp :size="13" /> 节点距离只是排版效果；前置关系仅来自经过审核的记录。</span>
+      <span><CircleHelp :size="13" /> 章节圆球大小表示包含知识点规模；关系仅来自已审核记录。</span>
       <span>KNOWTRACE · GALAXY EXPLORER</span>
     </footer>
   </div>
@@ -392,4 +445,16 @@ onBeforeUnmount(() => {
 .gx-page button:focus-visible,.gx-page a:focus-visible,.gx-page input:focus-visible,.gx-page select:focus-visible{outline:2px solid #74e8ce;outline-offset:2px}
 @media(max-width:1060px){.gx-toolbar-info span:last-child{display:none}.gx-panel{width:264px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-chapter-strip{left:288px}.gx-body.gx-has-detail .gx-chapter-strip{right:288px}.gx-body.gx-nav-open .gx-counter{left:288px}.gx-body.gx-has-detail .gx-hint{right:288px}}
 @media(max-width:760px){.gx-toolbar-info{display:none}.gx-toolbar{padding:8px 12px}.gx-brand>div strong{font-size:14px}.gx-brand-mark{display:none}.gx-panel{top:10px;bottom:10px}.gx-nav{width:min(285px,calc(100vw - 24px));left:10px}.gx-detail{width:min(330px,calc(100vw - 24px));right:10px;top:auto;max-height:58%;bottom:10px}.gx-chapter-strip,.gx-body.gx-nav-open .gx-chapter-strip,.gx-body.gx-has-detail .gx-chapter-strip{left:12px;right:12px;top:8px}.gx-counter,.gx-body.gx-nav-open .gx-counter{bottom:14px;left:12px}.gx-counter span{font-size:10px;padding:7px 9px}.gx-hint{display:none}}
+
+/* Progressive disclosure: a chapter-first overview with a separate,
+   deliberately accessible control for expanding all knowledge points. */
+.gx-view-switch{position:absolute;z-index:3;top:15px;left:20px;display:inline-flex;gap:5px;background:#092338e8;border:1px solid #2c5868;border-radius:11px;padding:4px;box-shadow:0 9px 20px #0005}
+.gx-view-switch button{display:flex;gap:7px;align-items:center;justify-content:center;padding:9px 12px;font-size:11px;color:#91b9c6;background:transparent;border:0;border-radius:8px;white-space:nowrap}
+.gx-view-switch button.active{background:#1b696e;color:#e1fff8;box-shadow:0 1px 9px #032c2b55}
+.gx-view-switch button:focus-visible{outline:2px solid #74e8ce}
+.gx-chapter-strip{top:69px}
+.gx-body.gx-nav-open .gx-view-switch{left:314px}
+.gx-body.gx-has-detail .gx-chapter-strip{right:365px}
+@media(max-width:1060px){.gx-body.gx-nav-open .gx-view-switch{left:288px}}
+@media(max-width:760px){.gx-view-switch,.gx-body.gx-nav-open .gx-view-switch{left:12px;top:8px}.gx-view-switch button{padding:8px;font-size:10px}.gx-chapter-strip,.gx-body.gx-nav-open .gx-chapter-strip,.gx-body.gx-has-detail .gx-chapter-strip{top:58px}}
 </style>
