@@ -201,14 +201,14 @@ function makeChapterLabel(title: string, subtitle: string) {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#f0ffff'
-  ctx.font = '600 48px system-ui, sans-serif'
+  ctx.font = '700 58px system-ui, sans-serif'
   if (lines.length > 1) {
     ctx.fillText(lines[0], 360, 64, 668)
     ctx.fillText(lines[1], 360, 115, 668)
   } else {
     ctx.fillText(lines[0], 360, 82, 668)
   }
-  ctx.font = '500 29px system-ui, sans-serif'
+  ctx.font = '600 38px system-ui, sans-serif'
   ctx.fillStyle = '#8edacf'
   ctx.fillText(subtitle, 360, lines.length > 1 ? 166 : 155, 668)
   const texture = new THREE.CanvasTexture(canvas)
@@ -310,31 +310,28 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // At the group level there are no chapter hub or hierarchy edges.
-    // Arrange browsing groups on a camera-facing, aspect-aware XY grid.
-    // Each slot reserves space for its planet AND a two-line name badge.
-    // A ring viewed nearly edge-on previously stacked all labels together.
+    // Browsing groups should still read as a constellation, not a table.
+    // Separate staggered inner/outer orbits in the camera-facing XY plane;
+    // their different radii leave enough room for large, readable captions.
     const groups = [...groupNodes].sort((a,b) =>
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
-    const width = mountPoint.value?.clientWidth ?? 1500
-    const height = mountPoint.value?.clientHeight ?? 850
-    const aspect = width / Math.max(1, height)
-    const columns = Math.max(1, Math.min(groups.length,
-      Math.round(Math.sqrt(groups.length * aspect * .70))))
-    const rows = Math.ceil(groups.length / columns)
-    const stepX = 102
-    const stepY = 68
-    groups.forEach((g, index) => {
-      const row = Math.floor(index / columns)
-      const rowCount = Math.min(columns, groups.length - row * columns)
-      const col = index % columns
-      // Center each partial row, preventing an unbalanced last row.
-      pos.set(g.id, new THREE.Vector3(
-        (col - (rowCount - 1) / 2) * stepX,
-        ((rows - 1) / 2 - row) * stepY,
-        0,
+    const count = groups.length
+    const innerCount = count <= 7 ? count : Math.max(3, Math.round(count / 3))
+    const outerCount = count - innerCount
+    for (let i = 0; i < count; i++) {
+      const outer = i >= innerCount
+      const index = outer ? i - innerCount : i
+      const n = outer ? outerCount : innerCount
+      const angle = -Math.PI / 2 + 2 * Math.PI * index / Math.max(1,n) +
+        (outer ? Math.PI / Math.max(1,n) : 0)
+      const radius = count === 1 ? 0 : outer ? 216 : count <= 7 ? 142 : 91
+      const drift = count === 1 ? 0 : (ordinalHash(groups[i].id + ':ring') - .5) * 12
+      pos.set(groups[i].id, new THREE.Vector3(
+        Math.cos(angle) * (radius + drift),
+        Math.sin(angle) * (radius + drift),
+        (ordinalHash(groups[i].id + ':depth') - .5) * 4,
       ))
-    })
+    }
     return pos
   }
   const root = nodes.find(n => n.kind === 'course')
@@ -364,13 +361,17 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   const sizes = top.map(c => byChapter.get(c.id)?.length ?? 0)
   const large = Math.max(1, ...sizes)
   const orbit = Math.max(52, 34 + total * 4.8 + Math.cbrt(large) * 3.2)
+  // Radial constellation instead of box/rectangle columns. Small angular
+  // jitter and alternating orbit distance break the grid-like alignment while
+  // preserving a clear course-centered star structure.
   top.forEach((ch, i) => {
-    const a = Math.PI * 2 * (i / Math.max(1, total)) - Math.PI / 2
-    const tilt = 0.95 + .08 * Math.sin(i * 3.1)
+    const angle = -Math.PI / 2 + 2 * Math.PI * i / Math.max(1, total)
+      + (ordinalHash(ch.id + ':angle') - .5) * .20
+    const radius = orbit * (.94 + ordinalHash(ch.id + ':orbit') * .20)
     pos.set(ch.id, new THREE.Vector3(
-      Math.cos(a) * orbit * tilt,
-      Math.sin(i * 2.399) * 11,
-      Math.sin(a) * orbit * tilt,
+      Math.cos(angle) * radius,
+      (ordinalHash(ch.id + ':elevation') - .5) * 9,
+      Math.sin(angle) * radius,
     ))
   })
   // Nested chapters stay near their real parent but get their own system.
@@ -403,17 +404,13 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     const offsets = organicOffsets(points.length, owner)
     points.forEach((p, i) => pos.set(p.id, center.clone().add(offsets[i])))
   }
-  // A round course galaxy wastes most of a widescreen canvas: the height
-  // determines camera distance while horizontal whitespace stays empty.
-  // Keep the actual course/chapter hierarchy unchanged but spread *all*
-  // course coordinates horizontally. Do not alter the tight group layouts.
+  // Slightly adapt the star to a wide viewport without flattening it into
+  // a rectangle. Never stretch a course constellation more than 25%.
   if (chapters.length >= 4) {
     const width = mountPoint.value?.clientWidth ?? window.innerWidth
     const height = mountPoint.value?.clientHeight ?? window.innerHeight
-    // Widescreen desktop: ~2.2x horizontal spacing; mobile portrait:
-    // retain the normal round layout instead of shrinking it to fit.
     const xStretch = THREE.MathUtils.clamp(
-      (width / Math.max(1, height)) * 1.2, 1, 2.2,
+      1 + (width / Math.max(1, height) - 1) * .17, 1, 1.25,
     )
     for (const point of pos.values()) point.x *= xStretch
   }
