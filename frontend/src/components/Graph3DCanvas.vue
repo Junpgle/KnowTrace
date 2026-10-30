@@ -96,15 +96,15 @@ const RELATION_COLORS: Record<string, number> = {
   compares: 0xc5adff,
 }
 
-function makeLabel(text: string, width = 320) {
+function makeLabel(text: string, width = 320, subtitle?: string) {
   const canvas = document.createElement('canvas')
   canvas.width = width
-  canvas.height = 76
+  canvas.height = subtitle ? 106 : 76
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
   ctx.fillStyle = 'rgba(6,25,41,.8)'
   ctx.beginPath()
-  ctx.roundRect(2, 4, width - 4, 68, 20)
+  ctx.roundRect(2, 4, width - 4, subtitle ? 97 : 68, 20)
   ctx.fill()
   ctx.strokeStyle = 'rgba(144,218,225,.35)'
   ctx.lineWidth = 2
@@ -114,11 +114,16 @@ function makeLabel(text: string, width = 320) {
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#eaffff'
   const shown = text.length > 14 ? text.slice(0, 13) + '…' : text
-  ctx.fillText(shown, width / 2, 39, width - 28)
+  ctx.fillText(shown, width / 2, subtitle ? 36 : 39, width - 28)
+  if (subtitle) {
+    ctx.fillStyle = '#79cfc5'
+    ctx.font = '500 19px system-ui, sans-serif'
+    ctx.fillText(subtitle, width / 2, 75, width - 28)
+  }
   const texture = new THREE.CanvasTexture(canvas)
   const material = new THREE.SpriteMaterial({ map: texture, depthWrite: false, transparent: true })
   const label = new THREE.Sprite(material)
-  label.scale.set(11, 2.7, 1)
+  label.scale.set(11, subtitle ? 3.6 : 2.7, 1)
   return label
 }
 
@@ -385,9 +390,10 @@ function rebuild() {
     meshes.push(mesh)
     // Hide chapter labels in local-focus mode, reducing visual competition.
     if (!focusState.active || node.id === selectedId) {
-      const label = makeLabel(node.name)
+      const label = makeLabel(node.name, 320,
+        node.kind === 'chapter' ? `${count} 个知识点` : undefined)
       if (label) {
-        label.position.copy(position).add(new THREE.Vector3(0, radius + 2.35, 0))
+        label.position.copy(position).add(new THREE.Vector3(0, radius + 2.85, 0))
         g.add(label)
       }
     }
@@ -463,10 +469,15 @@ function focus(id: string | null) {
     const halfAngle = Math.min(vfov, hfov) / 2
     distance = Math.max(85, extent / Math.sin(halfAngle) * 1.12)
     controls.maxDistance = Math.max(280, distance * 1.4)
+    // Large cluster overviews should not disappear into fixed-distance fog.
+    if (scene?.fog instanceof THREE.FogExp2)
+      scene.fog.density = Math.min(0.0015, 0.33 / distance)
     camera.far = Math.max(1600, distance * 3)
     camera.updateProjectionMatrix()
   } else {
     distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
+    if (scene?.fog instanceof THREE.FogExp2)
+      scene.fog.density = 0.0015
   }
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < 0.01) direction.set(1, .6, 1)
