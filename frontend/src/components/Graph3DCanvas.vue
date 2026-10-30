@@ -38,6 +38,12 @@ let tween = false
 const desiredTarget = new THREE.Vector3()
 const desiredPosition = new THREE.Vector3()
 const positions = new Map<string, THREE.Vector3>()
+// Layout must be stable for a full course and should not recompute on each
+// node selection, relationship toggle, or chapter filter.
+let cachedNodes: GraphNode[] | null = null
+let cachedEdges: GraphEdge[] | null = null
+let cachedCoords = new Map<string, THREE.Vector3>()
+let cachedChapterTotals = new Map<string, number>()
 const meshes: THREE.Mesh[] = []
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
@@ -256,13 +262,40 @@ function clearGraph() {
   group = null
 }
 
+function resolveLayout() {
+  const allNodes = props.layoutNodes ?? props.nodes
+  const allEdges = props.layoutEdges ?? props.edges
+  if (cachedNodes !== allNodes || cachedEdges !== allEdges) {
+    cachedCoords = layout(allNodes, allEdges)
+    cachedChapterTotals = new Map()
+    const chapterIds = new Set(allNodes.filter(n => n.kind === 'chapter').map(n => n.id))
+    const parents = new Map(allEdges.filter(e => e.structural && e.type === 'contains')
+      .map(e => [e.target, e.source]))
+    for (const node of allNodes) {
+      if (node.kind !== 'knowledge') continue
+      let cursor = parents.get(node.id)
+      const visited = new Set<string>()
+      while (cursor && !visited.has(cursor)) {
+        visited.add(cursor)
+        if (chapterIds.has(cursor)) {
+          cachedChapterTotals.set(cursor, (cachedChapterTotals.get(cursor) ?? 0) + 1)
+        }
+        cursor = parents.get(cursor)
+      }
+    }
+    cachedNodes = allNodes
+    cachedEdges = allEdges
+  }
+  return cachedCoords
+}
+
 function rebuild() {
   if (!scene) return
   clearGraph()
   const g = new THREE.Group()
   group = g
   scene.add(g)
-  const coords = layout(props.layoutNodes ?? props.nodes, props.layoutEdges ?? props.edges)
+  const coords = resolveLayout()
   // Fit the camera to visible nodes while preserving whole-course coordinates.
   for (const node of props.nodes) {
     const position = coords.get(node.id)
@@ -338,7 +371,12 @@ function rebuild() {
       color, emissive: color, emissiveIntensity: focusState.active ? 0.08 : 0.28,
       shininess: 86, specular: 0x6b8fae,
     })
-    const radius = node.kind === 'course' ? 3.8 : 2.15
+    // Chapter bubbles encode the number of knowledge points contained in
+    // their subtree. Counts include currently collapsed nodes.
+    const count = cachedChapterTotals.get(node.id) ?? 0
+    const radius = node.kind === 'course' ? 3.8
+      : (2.1 + Math.min(1.65, Math.log2(count + 1) * 0.23))
+        * (node.id === selectedId ? 1.13 : 1)
     const mesh = new THREE.Mesh(sphere, material)
     mesh.scale.setScalar(radius)
     mesh.position.copy(position)
@@ -585,6 +623,10 @@ onBeforeUnmount(() => {
   scene = null
   camera = null
   controls = null
+  cachedNodes = null
+  cachedEdges = null
+  cachedCoords.clear()
+  cachedChapterTotals.clear()
 })
 </script>
 
