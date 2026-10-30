@@ -8,6 +8,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, CircleHelp, Eye, EyeOff, FileText,
   Maximize2, Menu, RotateCcw, Search, Layers3, X, ChevronLeft, Compass,
+  ZoomIn, ZoomOut, Scan,
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
 import { api, sourcePreviewUrl, type GraphNode,
@@ -422,6 +423,14 @@ onBeforeUnmount(() => {
           <strong>{{ knowledge.length }}<small>知识点</small></strong>
           <strong>{{ graph.stats.approved_semantic_edges }}<small>已审核关系</small></strong>
         </div>
+        <div class="gx-zoom-controls" role="group" aria-label="知识图谱缩放">
+          <button type="button" title="放大星系" aria-label="放大星系"
+            @click="canvas?.zoomIn()"><ZoomIn :size="18" /></button>
+          <button type="button" title="自动适配当前可见知识点" aria-label="适应画布"
+            @click="canvas?.resetCamera()"><Scan :size="17" /></button>
+          <button type="button" title="缩小星系" aria-label="缩小星系"
+            @click="canvas?.zoomOut()"><ZoomOut :size="18" /></button>
+        </div>
         <div class="gx-hint"><Compass :size="13" /> 拖动旋转 · 滚轮缩放 · 点击星球进入章节</div>
       </main>
 
@@ -498,6 +507,10 @@ onBeforeUnmount(() => {
 .gx-counter{position:absolute;left:26px;bottom:34px;z-index:2;display:flex;gap:22px;padding:14px 19px;background:#081c2bc9;border:1px solid #264659;border-radius:13px;pointer-events:none;backdrop-filter:blur(10px)}
 .gx-counter strong{display:flex;flex-direction:column;gap:5px;font-size:21px;font-weight:650;line-height:1;color:#d6f6ef}
 .gx-counter small{font-size:10px;font-weight:400;color:#7eabba}
+.gx-zoom-controls{position:absolute;bottom:84px;right:26px;z-index:3;display:flex;flex-direction:column;gap:3px;padding:5px;background:#0a2738df;border:1px solid #28495a;border-radius:13px;box-shadow:0 10px 25px #020c1470}
+.gx-zoom-controls button{display:grid;place-items:center;width:36px;height:36px;color:#9cc9d2;border:0;border-radius:9px;background:transparent;cursor:pointer}
+.gx-zoom-controls button:hover{background:#1b5259;color:#e8fff9}
+.gx-body.gx-has-detail .gx-zoom-controls{right:370px}
 .gx-hint{position:absolute;right:25px;bottom:28px;display:flex;align-items:center;gap:9px;color:#719aad;font-size:10px;pointer-events:none}
 .gx-footer{height:27px;flex:none;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:0 22px;background:#071725;border-top:1px solid #193747;color:#5c879c;font-size:10px}
 .gx-footer span:first-child{display:flex;align-items:center;gap:7px}
@@ -548,6 +561,6 @@ onBeforeUnmount(() => {
 .gx-source a{color:#78dfcb;display:inline-flex;align-items:center;gap:5px}
 .gx-primary{width:100%;display:flex;align-items:center;justify-content:center;gap:9px;background:#176d6b;color:#efffff;border:0;border-radius:9px;padding:12px}
 @media(max-width:1150px){.gx-header-mode{display:none}.gx-body.gx-nav-open .gx-stage-nav,.gx-body.gx-nav-open .gx-counter{left:345px}.gx-body.gx-has-detail .gx-view-switch{right:367px}}
-@media(max-width:830px){.gx-toolbar{padding:10px 13px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-stage-nav{display:none}.gx-body.gx-nav-open .gx-counter{left:26px}.gx-body.gx-has-detail .gx-view-switch{right:28px;top:10px}.gx-stage-nav{top:18px;left:18px}.gx-view-switch{right:13px;top:15px}.gx-hint{display:none}}
-@media(max-width:600px){.gx-brand strong{font-size:13px}.gx-brand strong span{display:none}.gx-brand small{max-width:160px}.gx-toolbar{height:58px}.gx-toolbar-actions{gap:4px}.gx-nav-trigger,.gx-toolbar-actions button{width:34px;height:34px}.gx-nav,.gx-detail{width:min(335px,calc(100vw - 20px));top:10px;bottom:10px}.gx-detail{max-height:65%;top:auto}.gx-body.gx-has-detail .gx-view-switch{display:none}.gx-stage-nav{top:18px;left:15px;right:15px}.gx-stage-nav h1{font-size:20px}.gx-stage-nav p{max-width:230px}.gx-view-switch{top:122px;left:14px;right:auto}.gx-counter{left:13px;bottom:15px;gap:15px;padding:11px}.gx-counter strong{font-size:16px}.gx-footer span:last-child{display:none}}
+@media(max-width:830px){.gx-body.gx-has-detail .gx-zoom-controls{right:26px}.gx-toolbar{padding:10px 13px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-stage-nav{display:none}.gx-body.gx-nav-open .gx-counter{left:26px}.gx-body.gx-has-detail .gx-view-switch{right:28px;top:10px}.gx-stage-nav{top:18px;left:18px}.gx-view-switch{right:13px;top:15px}.gx-hint{display:none}}
+@media(max-width:600px){.gx-zoom-controls{right:12px;bottom:88px}.gx-brand strong{font-size:13px}.gx-brand strong span{display:none}.gx-brand small{max-width:160px}.gx-toolbar{height:58px}.gx-toolbar-actions{gap:4px}.gx-nav-trigger,.gx-toolbar-actions button{width:34px;height:34px}.gx-nav,.gx-detail{width:min(335px,calc(100vw - 20px));top:10px;bottom:10px}.gx-detail{max-height:65%;top:auto}.gx-body.gx-has-detail .gx-view-switch{display:none}.gx-stage-nav{top:18px;left:15px;right:15px}.gx-stage-nav h1{font-size:20px}.gx-stage-nav p{max-width:230px}.gx-view-switch{top:122px;left:14px;right:auto}.gx-counter{left:13px;bottom:15px;gap:15px;padding:11px}.gx-counter strong{font-size:16px}.gx-footer span:last-child{display:none}}
 </style>
