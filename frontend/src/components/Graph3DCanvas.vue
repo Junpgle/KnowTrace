@@ -845,7 +845,6 @@ function rebuild(animate = false) {
     setFade(incoming, 0)
   }
   pendingTransitionOrigin = null
-  }
 }
 
 // Automatic selection should move the camera to the chosen node, NOT dive
