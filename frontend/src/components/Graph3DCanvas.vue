@@ -333,7 +333,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     const height = mountPoint.value?.clientHeight ?? 820
     const aspect = width / Math.max(1, height)
     // Gently use a wider canvas, never flatten the galaxy into a rectangle.
-    const spreadX = THREE.MathUtils.clamp(1 + (aspect - 1) * .14, 1, 1.18)
+    const spreadX = THREE.MathUtils.clamp(1 + (aspect - 1) * .68, 1, 1.60)
     const innerRadius = count < 4 ? 0 : count <= 12 ? 78 : 102
     const outerRadius = count <= 4 ? 125 : count <= 12 ? 200
       : count <= 22 ? 255 : 345 + Math.max(0, count - 34) * 1.8
@@ -1135,9 +1135,24 @@ function draw() {
   const now = performance.now()
   if (tween) {
     const raw = Math.min(1, (now - cameraAnimationStart) / CAMERA_DURATION)
+    // Interpolate pan, orientation and zoom independently. Straight-line
+    // camera interpolation used to pass through the graph and made
+    // chapter-to-group transitions look like a sudden jump.
     const eased = raw * raw * (3 - 2 * raw)
-    camera.position.lerpVectors(cameraStartPosition, desiredPosition, eased)
     controls.target.lerpVectors(cameraStartTarget, desiredTarget, eased)
+    const fromOffset = cameraStartPosition.clone().sub(cameraStartTarget)
+    const toOffset = desiredPosition.clone().sub(desiredTarget)
+    const fromRadius = Math.max(1, fromOffset.length())
+    const toRadius = Math.max(1, toOffset.length())
+    const arc = new THREE.Quaternion().setFromUnitVectors(
+      fromOffset.normalize(), toOffset.normalize(),
+    )
+    const rotation = new THREE.Quaternion().identity().slerp(arc, eased)
+    const radius = Math.exp(Math.log(fromRadius) * (1 - eased) +
+      Math.log(toRadius) * eased)
+    camera.position.copy(controls.target).addScaledVector(
+      fromOffset.applyQuaternion(rotation).normalize(), radius,
+    )
     if (raw >= 1) tween = false
   }
   if (outgoing && incoming) {
