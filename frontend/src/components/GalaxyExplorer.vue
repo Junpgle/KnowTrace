@@ -356,6 +356,16 @@ onBeforeUnmount(() => {
             <small>{{ chapterCounts.get(chapter.id) ?? 0 }}</small>
           </button>
         </div>
+        <template v-if="displayMode==='groups'">
+          <h3><Layers3 :size="14" /> 浏览分组 · {{ browseGroups.length }} 组</h3>
+          <p class="gx-note">星系只标注部分分组以避免遮挡。可悬停星球查看名称，或从下方列表直接进入任意分组。</p>
+          <div class="gx-group-directory">
+            <button v-for="g in browseGroups" :key="g.id" type="button"
+              :title="g.name" @click="activeGroup=g.id;level='knowledge';selectedId=null;navOpen=false">
+              <span>{{ g.name }}</span><small>{{ g.members.length }} 点</small>
+            </button>
+          </div>
+        </template>
         <label class="gx-checkbox">
           <input v-model="includePending" type="checkbox" /> 显示尚未审核的知识点
         </label>
@@ -572,4 +582,9 @@ onBeforeUnmount(() => {
 @media(max-width:1150px){.gx-header-mode{display:none}.gx-body.gx-nav-open .gx-stage-nav,.gx-body.gx-nav-open .gx-counter{left:345px}.gx-body.gx-has-detail .gx-view-switch{right:367px}}
 @media(max-width:830px){.gx-body.gx-has-detail .gx-zoom-controls{right:26px}.gx-toolbar{padding:10px 13px}.gx-nav{left:10px}.gx-detail{right:10px}.gx-body.gx-nav-open .gx-stage-nav{display:none}.gx-body.gx-nav-open .gx-counter{left:26px}.gx-body.gx-has-detail .gx-view-switch{right:28px;top:10px}.gx-stage-nav{top:18px;left:18px}.gx-view-switch{right:13px;top:15px}.gx-hint{display:none}}
 @media(max-width:600px){.gx-zoom-controls{right:12px;bottom:88px}.gx-brand strong{font-size:13px}.gx-brand strong span{display:none}.gx-brand small{max-width:160px}.gx-toolbar{height:58px}.gx-toolbar-actions{gap:4px}.gx-nav-trigger,.gx-toolbar-actions button{width:34px;height:34px}.gx-nav,.gx-detail{width:min(335px,calc(100vw - 20px));top:10px;bottom:10px}.gx-detail{max-height:65%;top:auto}.gx-body.gx-has-detail .gx-view-switch{display:none}.gx-stage-nav{top:18px;left:15px;right:15px}.gx-stage-nav h1{font-size:20px}.gx-stage-nav p{max-width:230px}.gx-view-switch{top:122px;left:14px;right:auto}.gx-counter{left:13px;bottom:15px;gap:15px;padding:11px}.gx-counter strong{font-size:16px}.gx-footer span:last-child{display:none}}
+.gx-group-directory{display:grid;grid-template-columns:1fr;gap:4px;max-height:300px;overflow-y:auto;scrollbar-width:thin;margin:8px -5px 20px}
+.gx-group-directory button{display:flex;align-items:center;gap:8px;min-width:0;border:1px solid transparent;border-radius:9px;padding:10px 9px;background:#112f42;color:#c5e2e8;font-size:12px;text-align:left;cursor:pointer}
+.gx-group-directory button:hover,.gx-group-directory button:focus-visible{border-color:#39887f;background:#1a4c55}
+.gx-group-directory button span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.gx-group-directory button small{flex:none;font-size:10px;color:#80bdb7}
 </style>
