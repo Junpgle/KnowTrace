@@ -396,7 +396,14 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   // Keep the actual course/chapter hierarchy unchanged but spread *all*
   // course coordinates horizontally. Do not alter the tight group layouts.
   if (chapters.length >= 4) {
-    for (const point of pos.values()) point.x *= 2.2
+    const width = mountPoint.value?.clientWidth ?? window.innerWidth
+    const height = mountPoint.value?.clientHeight ?? window.innerHeight
+    // Widescreen desktop: ~2.2x horizontal spacing; mobile portrait:
+    // retain the normal round layout instead of shrinking it to fit.
+    const xStretch = THREE.MathUtils.clamp(
+      (width / Math.max(1, height)) * 1.2, 1, 2.2,
+    )
+    for (const point of pos.values()) point.x *= xStretch
   }
   return pos
 }
