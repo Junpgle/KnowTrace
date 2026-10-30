@@ -881,9 +881,9 @@ watch(() => [props.nodes, props.layoutNodes, props.layoutEdges], () => {
   rebuild(true)
   focus(props.selectedId)
 })
-watch(() => [props.edges, props.relationEdges], rebuild)
-watch(() => props.showRelations, rebuild)
-watch(() => props.showStructure, rebuild)
+watch(() => [props.edges, props.relationEdges], () => rebuild())
+watch(() => props.showRelations, () => rebuild())
+watch(() => props.showStructure, () => rebuild())
 watch(() => props.selectedId, id => {
   rebuild()
   focus(id)
