@@ -18,7 +18,8 @@ const emit = defineEmits<{ close: [] }>()
 const canvas = ref<InstanceType<typeof Graph3DCanvas> | null>(null)
 const term = ref('')
 const chapterChoice = ref('all')
-const level = ref<'clusters' | 'knowledge'>('clusters')
+const level = ref<'clusters' | 'groups' | 'knowledge'>('clusters')
+const activeGroup = ref<string | null>(null)
 const includePending = ref(true)
 const selectedId = ref<string | null>(null)
 const relationView = ref<'none' | 'selected' | 'all'>('selected')
@@ -40,9 +41,9 @@ const byId = computed(() => new Map(props.graph.nodes.map(n => [n.id, n])))
 const parent = computed(() => new Map(props.graph.edges.filter(e => e.structural)
   .map(e => [e.target, e.source])))
 const expanded = computed(() => level.value === 'knowledge' ||
-  Boolean(term.value.trim()) || chapterChoice.value !== 'all' ||
+  Boolean(term.value.trim()) || (chapterChoice.value !== 'all' && level.value === 'knowledge') ||
   (selected.value?.kind === 'knowledge'))
-const displayMode = computed(() => expanded.value ? 'knowledge' : 'clusters')
+const displayMode = computed(() => chapterChoice.value !== 'all' && level.value === 'groups' && !term.value.trim() ? 'groups' : expanded.value ? 'knowledge' : 'clusters')
 const visibleKnowledgeCount = computed(() => nodes.value.filter(n => n.kind === 'knowledge').length)
 const hiddenKnowledgeCount = computed(() => Math.max(0, knowledge.value.length - visibleKnowledgeCount.value))
 const currentChapter = computed(() => chapters.value.find(ch => ch.id === chapterChoice.value))
@@ -71,6 +72,45 @@ const matching = computed(() => {
     (!q || (n.name + ' ' + (n.summary ?? '')).toLocaleLowerCase().includes(q)),
   )
 })
+
+/** Browse-only grouping; no new stored semantic relationships are inferred. */
+type BrowseGroup = {id:string; name:string; members:string[]}
+const browseGroups = computed<BrowseGroup[]>(()=>{
+ if(chapterChoice.value==='all')return []
+ const points=[...matching.value].sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
+ const ids=new Set(points.map(p=>p.id))
+ const adj=new Map(points.map(p=>[p.id,new Set<string>()]))
+ for(const e of props.graph.edges){
+  if(e.structural||!e.verified||!ids.has(e.source)||!ids.has(e.target))continue
+  adj.get(e.source)?.add(e.target);adj.get(e.target)?.add(e.source)
+ }
+ const remain=new Set(ids),out:BrowseGroup[]=[]
+ while(remain.size){
+  const degree=(id:string)=>[...(adj.get(id)??[])].filter(x=>remain.has(x)).length
+  const seed=[...remain].sort((x,y)=>degree(y)-degree(x)||x.localeCompare(y))[0]
+  const group=[seed];remain.delete(seed)
+  while(remain.size&&group.length<14){
+   const ranked=[...remain].map(id=>({id,links:group.filter(x=>adj.get(id)?.has(x)).length,degree:degree(id)}))
+    .sort((x,y)=>y.links-x.links||y.degree-x.degree||x.id.localeCompare(y.id))
+   const next=ranked[0].id;group.push(next);remain.delete(next)
+  }
+  const name=points.find(p=>p.id===seed)?.name??''
+  const i=out.length+1
+  out.push({id:`view-group:${chapterChoice.value}:${i}`,
+    name:`浏览分组 ${String(i).padStart(2,'0')} · ${name.slice(0,10)}`,members:group})
+ }
+ return out
+})
+const activeBrowseGroup=computed(()=>browseGroups.value.find(g=>g.id===activeGroup.value))
+function groupNode(g:BrowseGroup):GraphNode{
+ return {id:g.id,kind:'group',name:g.name,chapter_id:null,
+  summary:'仅用于浏览的关系优先分组，并非新建章节或先修关系',
+  difficulty:null,review_status:'approved',mastery:null,observations:0,
+  source_count:g.members.length,question_count:0,virtual:true}
+}
+function syntheticEdge(source:string,target:string):typeof props.graph.edges[number]{
+ return {id:`browse:${source}:${target}`,source,target,type:'contains',structural:true,verified:false,rationale:null}
+}
 const visibleIds = computed(() => {
   const ids = new Set<string>()
   if (root.value) ids.add(root.value.id)
@@ -100,15 +140,43 @@ const visibleIds = computed(() => {
   }
   return ids
 })
-const nodes = computed(() => props.graph.nodes.filter(n => visibleIds.value.has(n.id)))
-const edges = computed(() => props.graph.edges.filter(e => {
-  if (!visibleIds.value.has(e.source) || !visibleIds.value.has(e.target)) return false
-  if (e.structural) return true // needed for 3D layout even when lines are hidden
-  if (relationView.value === 'none') return false
-  if (relationView.value === 'all') return true
-  return selectedId.value !== null &&
-    (e.source === selectedId.value || e.target === selectedId.value)
-}))
+const nodes = computed<GraphNode[]>(()=>{
+ const chapter=currentChapter.value
+ if(chapter&&displayMode.value==='groups')return [chapter,...browseGroups.value.map(groupNode)]
+ if(chapter&&activeBrowseGroup.value&&level.value==='knowledge'&&!term.value.trim()){
+  const ids=new Set(activeBrowseGroup.value.members)
+  if(selectedId.value){
+   ids.add(selectedId.value)
+   for(const edge of props.graph.edges){
+    if(edge.structural||!edge.verified)continue
+    if(edge.source===selectedId.value)ids.add(edge.target)
+    if(edge.target===selectedId.value)ids.add(edge.source)
+   }
+  }
+  return [chapter,groupNode(activeBrowseGroup.value),
+   ...props.graph.nodes.filter(n=>n.kind==='knowledge'&&ids.has(n.id))]
+ }
+ return props.graph.nodes.filter(n=>visibleIds.value.has(n.id))
+})
+const edges = computed(()=>{
+ const chapter=currentChapter.value
+ if(chapter&&displayMode.value==='groups')return browseGroups.value.map(g=>syntheticEdge(chapter.id,g.id))
+ if(chapter&&activeBrowseGroup.value&&level.value==='knowledge'&&!term.value.trim()){
+  const g=activeBrowseGroup.value,ids=new Set(nodes.value.map(n=>n.id))
+  return [syntheticEdge(chapter.id,g.id),
+   ...nodes.value.filter(n=>n.kind==='knowledge').map(n=>syntheticEdge(g.id,n.id)),
+   ...props.graph.edges.filter(e=>!e.structural&&ids.has(e.source)&&ids.has(e.target)&&
+    (relationView.value==='all'||relationView.value==='selected'&&!!selectedId.value&&
+     (e.source===selectedId.value||e.target===selectedId.value)))]
+ }
+ return props.graph.edges.filter(e=>{
+  if(!visibleIds.value.has(e.source)||!visibleIds.value.has(e.target))return false
+  if(e.structural)return true
+  if(relationView.value==='none')return false
+  if(relationView.value==='all')return true
+  return selectedId.value!==null&&(e.source===selectedId.value||e.target===selectedId.value)
+ })
+})
 const semanticEdges = computed(() => edges.value.filter(e => !e.structural))
 const selectedRelations = computed(() => props.graph.edges.filter(e =>
   !e.structural && selectedId.value !== null &&
@@ -144,12 +212,15 @@ function reset() {
   selectedId.value = null
   chapterChoice.value = 'all'
   level.value = 'clusters'
+  activeGroup.value = null
   term.value = ''
   void nextTick(() => canvas.value?.resetCamera())
 }
-function switchLevel(value: 'clusters' | 'knowledge') {
+function switchLevel(value: 'clusters' | 'groups' | 'knowledge') {
+  activeGroup.value = null
+  selectedId.value = null
   level.value = value
-  if (value === 'clusters') {
+  if (value === 'clusters' || (value === 'groups' && chapterChoice.value === 'all')) {
     chapterChoice.value = 'all'
     selectedId.value = null
     term.value = ''
@@ -158,10 +229,16 @@ function switchLevel(value: 'clusters' | 'knowledge') {
 }
 function selectCanvasNode(id: string | null) {
   if (!id) { selectedId.value = null; return }
+  if(id.startsWith('view-group:')){
+    if(browseGroups.value.some(g=>g.id===id)){
+      activeGroup.value=id;level.value='knowledge';selectedId.value=null
+    }
+    return
+  }
   const node = byId.value.get(id)
   if (node?.kind === 'chapter') {
-    chapterChoice.value = id
-    level.value = 'knowledge'
+    selectChapter(id)
+    return
   } else if (node?.kind === 'course') {
     chapterChoice.value = 'all'
     level.value = 'clusters'
@@ -178,6 +255,7 @@ function focusKnowledge(id: string) {
     ? chapter : 'all'
   term.value = ''
   level.value = 'knowledge'
+  activeGroup.value = browseGroups.value.find(g=>g.members.includes(id))?.id??null
   selectedId.value = id
 }
 function focusRelated(id: string) {
@@ -185,7 +263,8 @@ function focusRelated(id: string) {
 }
 function selectChapter(id: string) {
   chapterChoice.value = id
-  level.value = id === 'all' ? 'clusters' : 'knowledge'
+  level.value = id === 'all' ? 'clusters' : 'groups'
+  activeGroup.value = null
   selectedId.value = null
   void nextTick(() => canvas.value?.resetCamera())
 }
@@ -270,8 +349,10 @@ onBeforeUnmount(() => {
             @click="switchLevel('clusters')">章节星团</button>
           <button type="button" :class="{active:displayMode==='knowledge'}"
             @click="switchLevel('knowledge')">全部知识点</button>
+          <button v-if="currentChapter" type="button" :class="{active:displayMode==='groups'}"
+            @click="switchLevel('groups')">章节分组</button>
         </div>
-        <p class="gx-note">建议从章节开始探索；“全部知识点”适合查找整体分布。</p>
+        <p class="gx-note">进入章节先查看每组最多14个点的浏览分组；仅真实已审核边代表知识关系。</p>
 
         <div class="gx-divider"></div>
         <h3>连线显示</h3>
@@ -304,14 +385,15 @@ onBeforeUnmount(() => {
       <main class="gx-main">
         <Graph3DCanvas ref="canvas" :nodes="nodes" :edges="edges" :selected-id="selectedId"
           :show-relations="relationView!=='none'" :show-structure="showStructure"
-          :relation-edges="graph.edges" :layout-nodes="graph.nodes" :layout-edges="graph.edges"
+          :relation-edges="graph.edges" :layout-nodes="chapterChoice==='all' ? graph.nodes : nodes"
+          :layout-edges="chapterChoice==='all' ? graph.edges : edges"
           @select="selectCanvasNode" />
         <div class="gx-stage-nav">
           <button v-if="currentChapter" type="button" @click="selectChapter('all')"
             class="gx-back"><ChevronLeft :size="17" /> 返回总览</button>
           <span class="gx-stage-kicker">{{ displayMode==='clusters' ? 'CHAPTER CONSTELLATIONS' : 'EXPLORE CONCEPTS' }}</span>
-          <h1>{{ currentChapter?.name ?? (displayMode==='clusters' ? '从章节开始，探索知识宇宙' : '知识点全景') }}</h1>
-          <p>{{ currentChapter ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系` :
+          <h1>{{ activeBrowseGroup?.name ?? currentChapter?.name ?? (displayMode==='clusters' ? '从章节开始，探索知识宇宙' : '知识点全景') }}</h1>
+          <p>{{ currentChapter ? (displayMode==='groups' ? `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · ${browseGroups.length} 个浏览分组 · 点击进入小规模网络` : activeBrowseGroup ? `${activeBrowseGroup.members.length} 个知识点 · 点击查看真实关联` : `${chapterCounts.get(currentChapter.id) ?? 0} 个知识点 · 点击星球查看关系`) :
             (displayMode==='clusters' ? '每颗星球代表一个真实章节。选择章节，逐层深入。' : '点击知识点，点亮它的一阶关联。') }}</p>
         </div>
         <div class="gx-view-switch" role="group" aria-label="图谱显示层级">
@@ -364,7 +446,7 @@ onBeforeUnmount(() => {
       </aside>
     </div>
     <footer class="gx-footer">
-      <span><CircleHelp :size="13" /> 章节星球大小反映知识点数量，星球位置不代表知识先修关系。</span>
+      <span><CircleHelp :size="13" /> 浏览分组只是展示辅助；真实关联仅来自已审核关系，节点位置不代表先修。</span>
       <span>KNOWTRACE</span>
     </footer>
   </div>

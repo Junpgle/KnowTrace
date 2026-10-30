@@ -221,6 +221,30 @@ function organicOffsets(count: number, seed: string): THREE.Vector3[] {
 
 function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   const pos = new Map<string, THREE.Vector3>()
+  const groupNodes=nodes.filter(n=>n.kind==='group')
+  if(groupNodes.length){
+    const chapter=nodes.find(n=>n.kind==='chapter')
+    if(chapter)pos.set(chapter.id,groupNodes.length===1?
+      new THREE.Vector3(-42,-10,-30):new THREE.Vector3())
+    groupNodes.forEach((g,i)=>{
+      const angle=2*Math.PI*i/groupNodes.length-Math.PI/2
+      const center=groupNodes.length===1?new THREE.Vector3():
+       new THREE.Vector3(Math.cos(angle)*53,Math.sin(i*2.4)*8,Math.sin(angle)*53)
+      pos.set(g.id,center)
+      const points=nodes.filter(n=>n.kind==='knowledge'&&
+        edges.some(e=>e.structural&&e.source===g.id&&e.target===n.id))
+        .sort((a,b)=>a.id.localeCompare(b.id))
+      points.forEach((p,j)=>{
+        const theta=j*Math.PI*(3-Math.sqrt(5))
+        const y=1-2*(j+.5)/points.length
+        const radial=Math.sqrt(Math.max(0,1-y*y))
+        const radius=26+(j%3)*3
+        pos.set(p.id,center.clone().add(new THREE.Vector3(
+          Math.cos(theta)*radial*radius,y*18,Math.sin(theta)*radial*radius)))
+      })
+    })
+    return pos
+  }
   const root = nodes.find(n => n.kind === 'course')
   if (!root) return pos
   pos.set(root.id, new THREE.Vector3())
@@ -361,6 +385,7 @@ function rebuild() {
   const palette = chapterColors(props.layoutNodes ?? props.nodes)
   const overview = !props.nodes.some(n => n.kind === 'knowledge')
   const knowledge = props.nodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
+  const smallGroup=props.nodes.some(n=>n.kind==='group')&&knowledge.length<=18
   if (knowledge.length) {
     const material = new THREE.MeshPhongMaterial({
       color: 0xffffff, shininess: 70, specular: 0x526b80,
@@ -388,7 +413,7 @@ function rebuild() {
       cluster.setColorAt(index, color)
       ids.push(node.id)
 
-      if (center || (neighbor && neighborLabels < 12)) {
+      if (smallGroup || center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
         const label = makeLabel(node.name)
         if (label) {
@@ -421,12 +446,12 @@ function rebuild() {
     const position = positions.get(node.id)
     if (!position) continue
     const isCourse = node.kind === 'course'
-    const count = cachedChapterTotals.get(node.id) ?? 0
-    const baseColor = isCourse ? 0x4be6d6 : palette.get(node.id) ?? 0x83a4d9
+    const count = node.kind==='group' ? node.source_count : (cachedChapterTotals.get(node.id) ?? 0)
+    const baseColor = isCourse ? 0x4be6d6 : node.kind==='group' ? 0x5bcabb : palette.get(node.id) ?? 0x83a4d9
     const chapterSelected = node.id === selectedId
     // Overview planets must be readable on a large desktop canvas.
     // The previous 4-6 world-unit spheres appeared only ~30px across.
-    const radius = isCourse ? (overview ? 9.8 : 6.0)
+    const radius = node.kind==='group' ? (overview ? 7.8 : 5.8) : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
           ? 8.1 + Math.min(3.0, Math.log2(count + 1) * .47)
           : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
@@ -547,7 +572,7 @@ function rebuild() {
     }))
     g.add(lines)
   }
-  if (props.showStructure !== false) {
+  if (props.showStructure !== false || props.nodes.some(n=>n.kind==='group')) {
     addLines(structural, 0x7b9aad, focusState.active ? 0.055 : 0.3)
   }
   addLines(ordinary, 0xffd184, focusState.active ? 0.085 : 0.79)

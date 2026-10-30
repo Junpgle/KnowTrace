@@ -109,7 +109,7 @@ export interface Chapter {
 
 export interface GraphNode {
   id: string
-  kind: 'course' | 'chapter' | 'knowledge'
+  kind: 'course' | 'chapter' | 'knowledge' | 'group'
   name: string
   chapter_id: string | null
   summary: string | null
