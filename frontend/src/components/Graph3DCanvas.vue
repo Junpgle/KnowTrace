@@ -403,14 +403,23 @@ function focus(id: string | null) {
   if (!camera || !controls) return
   const coordinate = id ? positions.get(id) : undefined
   if (id && !coordinate) return
-  desiredTarget.copy(coordinate || new THREE.Vector3())
+  // With a chapter/search filter active, center on the visible knowledge
+  // cloud rather than the original course core. Coordinates stay stable.
+  const displayed = props.nodes.filter(n => n.kind === 'knowledge')
+    .map(n => positions.get(n.id)).filter((p): p is THREE.Vector3 => !!p)
+  const fullKnowledgeCount = (props.layoutNodes ?? props.nodes)
+    .filter(n => n.kind === 'knowledge').length
+  const subset = !id && displayed.length > 0 && displayed.length < fullKnowledgeCount
+  const overviewCenter = new THREE.Vector3()
+  if (subset) new THREE.Box3().setFromPoints(displayed).getCenter(overviewCenter)
+  desiredTarget.copy(coordinate ?? overviewCenter)
   const selected = props.nodes.find(n => n.id === id)
   const currentDistance = camera.position.distanceTo(controls.target)
-  // Fit the real node bounds, not a fixed chapter-count distance; large
-  // course graphs can extend far beyond the previous 280-unit camera cap.
+  // Fit real visible bounds rather than a fixed chapter-count distance.
   let distance: number
   if (!id) {
-    const extent = Math.max(12, ...[...positions.values()].map(p => p.length() + 8))
+    const fitPoints = subset ? displayed : [...positions.values()]
+    const extent = Math.max(12, ...fitPoints.map(p => p.distanceTo(overviewCenter) + 8))
     const vfov = THREE.MathUtils.degToRad(camera.fov)
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect)
     const halfAngle = Math.min(vfov, hfov) / 2
