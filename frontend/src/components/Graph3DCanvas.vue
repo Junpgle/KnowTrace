@@ -35,6 +35,9 @@ let frameId = 0
 let visible = true
 let disposed = false
 let tween = false
+let cameraAnimationStart = 0
+const cameraStartPosition = new THREE.Vector3()
+const cameraStartTarget = new THREE.Vector3()
 const desiredTarget = new THREE.Vector3()
 const desiredPosition = new THREE.Vector3()
 const positions = new Map<string, THREE.Vector3>()
@@ -47,6 +50,18 @@ let cachedChapterTotals = new Map<string, number>()
 const meshes: THREE.Mesh[] = []
 const labelAnchors: { sprite: THREE.Sprite; center: THREE.Vector3; distance: number }[] = []
 const screenUp = new THREE.Vector3()
+type LabelAnchor = { sprite: THREE.Sprite; center: THREE.Vector3; distance: number }
+type FadePart = { material: THREE.Material; opacity: number; transparent: boolean; depthWrite: boolean }
+type FadeGroup = { group: THREE.Group; parts: FadePart[]; anchors: LabelAnchor[] }
+let outgoing: FadeGroup | null = null
+let incoming: FadeGroup | null = null
+let layerTransitionStart = 0
+const LAYER_DURATION = 520
+const CAMERA_DURATION = 850
+function reducedMotion() {
+  return typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
 let pressed: { x: number, y: number } | null = null
@@ -317,23 +332,74 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   return pos
 }
 
-function clearGraph() {
-  if (!group || !scene) return
-  scene.remove(group)
+function disposeGraph(target: THREE.Group | null) {
+  if (!target) return
+  scene?.remove(target)
   const geometries = new Set<THREE.BufferGeometry>()
-  group.traverse(object => {
+  const materials = new Set<THREE.Material>()
+  target.traverse(object => {
     if (object instanceof THREE.Mesh || object instanceof THREE.Line ||
         object instanceof THREE.Points || object instanceof THREE.Sprite) {
       if ('geometry' in object && object.geometry instanceof THREE.BufferGeometry)
         geometries.add(object.geometry)
-      const materials = Array.isArray(object.material) ? object.material : [object.material]
-      materials.forEach(m => {
-        if (m instanceof THREE.SpriteMaterial && m.map) m.map.dispose()
-        m.dispose()
-      })
+      const list = Array.isArray(object.material) ? object.material : [object.material]
+      list.forEach(m => materials.add(m))
     }
   })
+  for (const material of materials) {
+    if (material instanceof THREE.SpriteMaterial && material.map)
+      material.map.dispose()
+    material.dispose()
+  }
   geometries.forEach(geometry => geometry.dispose())
+}
+function fadeGroup(target: THREE.Group, anchors: LabelAnchor[]): FadeGroup {
+  const materials = new Set<THREE.Material>()
+  target.traverse(object => {
+    if (object instanceof THREE.Mesh || object instanceof THREE.Line ||
+        object instanceof THREE.Points || object instanceof THREE.Sprite) {
+      const list = Array.isArray(object.material) ? object.material : [object.material]
+      list.forEach(m => materials.add(m))
+    }
+  })
+  return { group: target, anchors, parts: [...materials].map(material => ({
+    material, opacity: material.opacity,
+    transparent: material.transparent, depthWrite: material.depthWrite,
+  })) }
+}
+function setFade(target: FadeGroup, alpha: number) {
+  for (const p of target.parts) {
+    p.material.opacity = p.opacity * alpha
+    p.material.transparent = alpha < 1 || p.transparent
+    p.material.depthWrite = alpha >= 1 && p.depthWrite
+  }
+}
+function finishFade() {
+  if (outgoing) {
+    disposeGraph(outgoing.group)
+    outgoing = null
+  }
+  if (incoming) {
+    for (const p of incoming.parts) {
+      p.material.opacity = p.opacity
+      p.material.transparent = p.transparent
+      p.material.depthWrite = p.depthWrite
+    }
+    incoming = null
+  }
+}
+function clearGraph(animate = false) {
+  if (outgoing) {
+    disposeGraph(outgoing.group)
+    outgoing = null
+  }
+  incoming = null
+  if (group && animate && !reducedMotion()) {
+    outgoing = fadeGroup(group, [...labelAnchors])
+    layerTransitionStart = performance.now()
+  } else {
+    disposeGraph(group)
+  }
   meshes.splice(0)
   labelAnchors.splice(0)
   positions.clear()
@@ -367,9 +433,9 @@ function resolveLayout() {
   return cachedCoords
 }
 
-function rebuild() {
+function rebuild(animate = false) {
   if (!scene) return
-  clearGraph()
+  clearGraph(animate)
   const g = new THREE.Group()
   group = g
   scene.add(g)
@@ -588,6 +654,10 @@ function rebuild() {
   for (const [type, points] of highlightedByType) {
     addLines(points, RELATION_COLORS[type] ?? 0xffd184, 1)
   }
+  if (outgoing) {
+    incoming = fadeGroup(g, [...labelAnchors])
+    setFade(incoming, 0)
+  }
 }
 
 // Automatic selection should move the camera to the chosen node, NOT dive
@@ -660,25 +730,48 @@ function focus(id: string | null) {
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < 0.01) direction.set(.4,.8,1)
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
-  tween = true
+  if (reducedMotion()) {
+    camera.position.copy(desiredPosition)
+    controls.target.copy(desiredTarget)
+    tween = false
+  } else {
+    cameraStartPosition.copy(camera.position)
+    cameraStartTarget.copy(controls.target)
+    cameraAnimationStart = performance.now()
+    tween = true
+  }
 }
 function resetCamera() { focus(null) }
 defineExpose({ resetCamera })
 
 function draw() {
   if (!renderer || !camera || !controls || !scene || disposed || !visible) return
+  const now = performance.now()
   if (tween) {
-    camera.position.lerp(desiredPosition, 0.075)
-    controls.target.lerp(desiredTarget, 0.075)
-    if (camera.position.distanceTo(desiredPosition) < 0.075
-        && controls.target.distanceTo(desiredTarget) < 0.075) tween = false
+    const raw = Math.min(1, (now - cameraAnimationStart) / CAMERA_DURATION)
+    const eased = raw * raw * (3 - 2 * raw)
+    camera.position.lerpVectors(cameraStartPosition, desiredPosition, eased)
+    controls.target.lerpVectors(cameraStartTarget, desiredTarget, eased)
+    if (raw >= 1) tween = false
+  }
+  if (outgoing && incoming) {
+    const raw = Math.min(1, (now - layerTransitionStart) / LAYER_DURATION)
+    const eased = raw * raw * (3 - 2 * raw)
+    setFade(outgoing, 1 - eased)
+    setFade(incoming, eased)
+    if (raw >= 1) finishFade()
   }
   controls.update()
-  // Follow the actual screen-up direction. With an overhead camera, a
-  // world-Y offset would sit on top of the planet instead of above it.
+  // Keep all visible labels above the corresponding planet on screen,
+  // including labels in the outgoing scene during a level transition.
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
   for (const anchor of labelAnchors) {
     anchor.sprite.position.copy(anchor.center).addScaledVector(screenUp, anchor.distance)
+  }
+  if (outgoing) {
+    for (const anchor of outgoing.anchors) {
+      anchor.sprite.position.copy(anchor.center).addScaledVector(screenUp, anchor.distance)
+    }
   }
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
@@ -785,7 +878,7 @@ onMounted(initialize)
 // Changing line visibility must never zoom the camera. Only a change of
 // selected node should trigger automatic focus.
 watch(() => [props.nodes, props.layoutNodes, props.layoutEdges], () => {
-  rebuild()
+  rebuild(true)
   focus(props.selectedId)
 })
 watch(() => [props.edges, props.relationEdges], rebuild)
@@ -806,6 +899,7 @@ onBeforeUnmount(() => {
     renderer.domElement.removeEventListener('pointerup', pointerUp)
   }
   clearGraph()
+  finishFade()
   if (scene) scene.traverse(obj => {
     if (obj instanceof THREE.Points) {
       obj.geometry.dispose()
