@@ -48,9 +48,15 @@ let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
 const meshes: THREE.Mesh[] = []
-const labelAnchors: { sprite: THREE.Sprite; center: THREE.Vector3; distance: number }[] = []
+const labelAnchors: LabelAnchor[] = []
 const screenUp = new THREE.Vector3()
-type LabelAnchor = { sprite: THREE.Sprite; center: THREE.Vector3; distance: number }
+type LabelAnchor = {
+  sprite: THREE.Sprite
+  center: THREE.Vector3
+  distance: number
+  // Atlas captions maintain a readable size in screen pixels while zooming.
+  screen?: { width: number; height: number; radius: number; gap: number }
+}
 type FadePart = { material: THREE.Material; opacity: number; transparent: boolean; depthWrite: boolean }
 type FadeGroup = { group: THREE.Group; parts: FadePart[]; anchors: LabelAnchor[] }
 let outgoing: FadeGroup | null = null
@@ -697,9 +703,17 @@ function rebuild(animate = false) {
           label.scale.set(isCourse ? 22 : 24, 5.3, 1)
         }
         label.position.copy(position)
+        const canvasWidth = mountPoint.value?.clientWidth ?? 1500
+        const widthPx = node.kind === 'group'
+          ? Math.min(186, Math.max(135, canvasWidth / 7.6))
+          : Math.min(242, Math.max(150, canvasWidth / 6.5))
         labelAnchors.push({
           sprite: label, center: position,
-          distance: radius + (overview ? (node.kind === 'group' ? 17 : 10.5) : 4),
+          distance: radius + (overview ? 10.5 : 4),
+          screen: overview ? {
+            width: widthPx, height: widthPx * (208 / 720),
+            radius, gap: node.kind === 'group' ? 8 : 12,
+          } : undefined,
         })
         g.add(label)
       }
@@ -968,6 +982,24 @@ function zoomIn() { zoomBy(.78) }
 function zoomOut() { zoomBy(1.28) }
 defineExpose({ resetCamera, zoomIn, zoomOut })
 
+function placeLabel(anchor: LabelAnchor) {
+  if (!camera || !mountPoint.value) return
+  if (!anchor.screen) {
+    anchor.sprite.position.copy(anchor.center).addScaledVector(screenUp, anchor.distance)
+    return
+  }
+  // Screen-size labels: world-space sprite scales based on their own depth.
+  // This avoids illegible 8px chapter names whenever the 3D camera zooms out.
+  const depth = Math.max(1, camera.position.distanceTo(anchor.center))
+  const worldPerPx = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+    * depth / Math.max(1, mountPoint.value.clientHeight)
+  const { width, height, radius, gap } = anchor.screen
+  anchor.sprite.scale.set(width * worldPerPx, height * worldPerPx, 1)
+  anchor.sprite.position.copy(anchor.center).addScaledVector(
+    screenUp, radius + (height / 2 + gap) * worldPerPx,
+  )
+}
+
 function draw() {
   if (!renderer || !camera || !controls || !scene || disposed || !visible) return
   const now = performance.now()
@@ -989,14 +1021,8 @@ function draw() {
   // Keep all visible labels above the corresponding planet on screen,
   // including labels in the outgoing scene during a level transition.
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
-  for (const anchor of labelAnchors) {
-    anchor.sprite.position.copy(anchor.center).addScaledVector(screenUp, anchor.distance)
-  }
-  if (outgoing) {
-    for (const anchor of outgoing.anchors) {
-      anchor.sprite.position.copy(anchor.center).addScaledVector(screenUp, anchor.distance)
-    }
-  }
+  for (const anchor of labelAnchors) placeLabel(anchor)
+  if (outgoing) for (const anchor of outgoing.anchors) placeLabel(anchor)
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
 }
