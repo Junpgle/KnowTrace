@@ -169,15 +169,18 @@ function selectCanvasNode(id: string | null) {
   }
   selectedId.value = id
 }
-function focusRelated(id: string) {
-  // Cross-chapter edges may point outside the current filter.
-  // Make the target visible before selecting it.
-  if (!visibleIds.value.has(id)) {
-    chapterChoice.value = 'all'
-    term.value = ''
-  }
+function focusKnowledge(id: string) {
+  // Navigate into the concept's actual chapter instead of unexpectedly
+  // expanding the entire course from a collapsed overview.
+  const chapter = parent.value.get(id)
+  chapterChoice.value = chapter && byId.value.get(chapter)?.kind === 'chapter'
+    ? chapter : 'all'
+  term.value = ''
   level.value = 'knowledge'
   selectedId.value = id
+}
+function focusRelated(id: string) {
+  focusKnowledge(id)
 }
 function selectChapter(id: string) {
   chapterChoice.value = id
@@ -279,7 +282,7 @@ onBeforeUnmount(() => {
         <div v-if="explorerList" class="gx-results">
           <p v-if="!matching.length" class="gx-note">没有匹配的知识点。</p>
           <button v-for="node in matching.slice(0, 150)" :key="node.id" type="button"
-            :class="{active:selectedId===node.id}" @click="selectedId=node.id">
+             :class="{active:selectedId===node.id}" @click="focusKnowledge(node.id)">
             <span class="gx-point"></span><span>{{ node.name }}</span>
           </button>
           <p v-if="matching.length>150" class="gx-note">列表显示前 150 个，请搜索或选择章节缩小范围。画布中仍展示所有匹配点。</p>
