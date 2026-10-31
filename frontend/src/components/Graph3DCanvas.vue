@@ -76,6 +76,8 @@ const transitionOrigin = new THREE.Vector3()
 const transitionReturnAnchor = new THREE.Vector3()
 const outgoingCenter = new THREE.Vector3()
 const outgoingTargetOffset = new THREE.Vector3()
+const outgoingStartOffset = new THREE.Vector3()
+let outgoingStartScale = 1
 let outgoingEndScale = 1
 const LAYER_DURATION = 680
 const CAMERA_DURATION = 920
@@ -532,6 +534,8 @@ function finishFade() {
       p.material.transparent = p.transparent
       p.material.depthWrite = p.depthWrite
     }
+    incoming.group.position.set(0, 0, 0)
+    incoming.group.scale.setScalar(1)
     incoming = null
   }
 }
@@ -540,8 +544,13 @@ function clearGraph(animate = false) {
     disposeGraph(outgoing.group)
     outgoing = null
   }
+  // A rapid second navigation can occur while the preceding scene is still
+  // fading in. Take that on-screen pose as the new transition start instead
+  // of snapping to the original full-size graph.
   incoming = null
   if (group && animate && !reducedMotion()) {
+    outgoingStartOffset.copy(group.position)
+    outgoingStartScale = group.scale.x
     outgoing = fadeGroup(group, [...labelAnchors])
     layerTransitionStart = performance.now()
   } else {
@@ -840,18 +849,35 @@ function rebuild(animate = false) {
   }
   if (outgoing) {
     incoming = fadeGroup(g, [...labelAnchors])
-    // Grow the next level out of the clicked planet (or previous camera
-    // target for breadcrumb navigation) instead of teleporting a fully
-    // populated star field into the scene at unrelated world coordinates.
     const anchors = [...positions.values()]
     const nextCenter = anchors.length
       ? new THREE.Box3().setFromPoints(anchors).getCenter(new THREE.Vector3())
       : new THREE.Vector3()
-    const origin = pendingTransitionOrigin ?? controls?.target ?? new THREE.Vector3()
-    incomingStartOffset.copy(origin).addScaledVector(nextCenter, -.76)
-    incomingStartOffset.clampLength(0, 90)
-    incoming.group.position.copy(incomingStartOffset)
-    incoming.group.scale.setScalar(.76)
+    if (transitionMode === 'enter') {
+      // Both scenes initially overlap at the planet that was clicked. Its
+      // children then expand away from that point as the camera flies inward.
+      const startScale = .20
+      incomingStartOffset.copy(transitionOrigin)
+        .addScaledVector(nextCenter, -startScale)
+      incoming.group.position.copy(incomingStartOffset)
+      incoming.group.scale.setScalar(startScale)
+      outgoingEndScale = .20
+      outgoingTargetOffset.copy(transitionOrigin).multiplyScalar(1 - outgoingEndScale)
+    } else if (transitionMode === 'back') {
+      // Child nodes collapse onto exactly the parent planet we entered.
+      // The parent scene is already in its proper coordinates, so do not
+      // grow it from an arbitrary center a second time.
+      incoming.group.position.set(0, 0, 0)
+      incoming.group.scale.setScalar(1)
+      outgoingEndScale = .18
+      outgoingTargetOffset.copy(transitionReturnAnchor)
+        .addScaledVector(outgoingCenter, -outgoingEndScale)
+    } else {
+      incoming.group.position.set(0, 0, 0)
+      incoming.group.scale.setScalar(1)
+      outgoingEndScale = outgoingStartScale
+      outgoingTargetOffset.copy(outgoingStartOffset)
+    }
     setFade(incoming, 0)
   }
   pendingTransitionOrigin = null
@@ -1135,7 +1161,7 @@ function declutterGroupLabels() {
   const cap = Math.min(16, Math.max(8, Math.round(width * height / 78000)))
   let visibleCount = 0
   for (const anchor of sorted) {
-    const screen = anchor.sprite.position.clone().project(camera)
+    const screen = anchor.sprite.getWorldPosition(new THREE.Vector3()).project(camera)
     const px = (screen.x + 1) * width / 2
     const py = (1 - screen.y) * height / 2
     const w = anchor.screen!.width
@@ -1190,16 +1216,25 @@ function draw() {
     const eased = raw * raw * (3 - 2 * raw)
     setFade(outgoing, 1 - eased)
     setFade(incoming, eased)
-    incoming.group.scale.setScalar(.76 + .24 * eased)
-    incoming.group.position.copy(incomingStartOffset).multiplyScalar(1 - eased)
+    if (transitionMode === 'enter') {
+      incoming.group.scale.setScalar(.20 + .80 * eased)
+      incoming.group.position.copy(incomingStartOffset).multiplyScalar(1 - eased)
+    }
+    outgoing.group.scale.setScalar(THREE.MathUtils.lerp(
+      outgoingStartScale, outgoingEndScale, eased,
+    ))
+    outgoing.group.position.copy(outgoingStartOffset)
+      .lerp(outgoingTargetOffset, eased)
     if (raw >= 1) finishFade()
   }
   controls.update()
-  // Keep all visible labels above the corresponding planet on screen,
-  // including labels in the outgoing scene during a level transition.
+  // Labels and click targets must respect animated parent-group
+  // transforms in both forward and reverse transitions.
+  scene.updateMatrixWorld(true)
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
   for (const anchor of labelAnchors) placeLabel(anchor)
   if (outgoing) for (const anchor of outgoing.anchors) placeLabel(anchor)
+  scene.updateMatrixWorld(true)
   declutterGroupLabels()
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
