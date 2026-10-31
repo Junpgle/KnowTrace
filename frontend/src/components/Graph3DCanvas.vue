@@ -1420,6 +1420,11 @@ watch(() => ({
       (action?.nodeId && positions.get(action.nodeId)) ||
       controls?.target || new THREE.Vector3(),
     )
+    // Rebuild now knows the destination scene's true coordinates.
+    if (outgoing) {
+      outgoingTargetOffset.copy(transitionReturnAnchor)
+        .addScaledVector(outgoingCenter, -outgoingEndScale)
+    }
     if (returnCamera) restoreCamera(returnCamera)
     else focus(next.selectedId, true)
   } else if (layerChanged || next.selectedId !== previous.selectedId) {
