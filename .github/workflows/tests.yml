@@ -14,6 +14,10 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: python -m pip install -r backend/requirements-dev.txt
+      - name: Validate one-click launcher
+        run: |
+          python -m py_compile start.py
+          python start.py --help
       - name: Run tests
         env:
           PYTHONPATH: backend
