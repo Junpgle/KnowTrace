@@ -30,6 +30,14 @@ const loadingDetail = ref(false)
 const error = ref('')
 const explorerList = ref(true)
 const navOpen = ref(false)
+// Explicit navigation intent distinguishes drilling down from returning.
+type NavigationMode = 'enter' | 'back' | 'jump'
+const navigation = ref<{ serial: number; mode: NavigationMode; nodeId?: string }>({
+  serial: 0, mode: 'jump',
+})
+function markNavigation(mode: NavigationMode, nodeId?: string) {
+  navigation.value = { serial: navigation.value.serial + 1, mode, nodeId }
+}
 
 const root = computed(() => props.graph.nodes.find(n => n.kind === 'course'))
 const chapters = computed(() => props.graph.nodes.filter(n => n.kind === 'chapter'))
@@ -224,47 +232,74 @@ watch(selectedId, async id => {
   }
 })
 function reset() {
+  markNavigation('jump')
   selectedId.value = null
   chapterChoice.value = 'all'
   level.value = 'clusters'
   activeGroup.value = null
   term.value = ''
-  // The WebGL canvas watches the level's nodes and performs one fitted
-  // camera transition. A second nextTick reset used to override it.
+}
+function backToAtlas() {
+  markNavigation('back', chapterChoice.value)
+  selectedId.value = null
+  chapterChoice.value = 'all'
+  level.value = 'clusters'
+  activeGroup.value = null
+  term.value = ''
+}
+function backToGroups() {
+  if (activeGroup.value) markNavigation('back', activeGroup.value)
+  else markNavigation('jump')
+  selectedId.value = null
+  activeGroup.value = null
+  level.value = 'groups'
+  term.value = ''
+}
+function enterGroup(id: string) {
+  if (!browseGroups.value.some(g => g.id === id)) return
+  markNavigation('enter', id)
+  activeGroup.value = id
+  level.value = 'knowledge'
+  selectedId.value = null
 }
 function switchLevel(value: 'clusters' | 'groups' | 'knowledge') {
+  if (value === 'clusters' && chapterChoice.value !== 'all') {
+    backToAtlas()
+    return
+  }
+  if (value === 'groups' && activeGroup.value) {
+    backToGroups()
+    return
+  }
+  markNavigation('jump')
   activeGroup.value = null
   selectedId.value = null
   level.value = value
   if (value === 'clusters' || (value === 'groups' && chapterChoice.value === 'all')) {
     chapterChoice.value = 'all'
-    selectedId.value = null
     term.value = ''
   }
-  // The WebGL canvas watches the level's nodes and performs one fitted
-  // camera transition. A second nextTick reset used to override it.
 }
 function selectCanvasNode(id: string | null) {
   if (!id) { selectedId.value = null; return }
-  if(id.startsWith('view-group:')){
-    if(browseGroups.value.some(g=>g.id===id)){
-      activeGroup.value=id;level.value='knowledge';selectedId.value=null
-    }
+  if (id.startsWith('view-group:')) {
+    enterGroup(id)
     return
   }
   const node = byId.value.get(id)
   if (node?.kind === 'chapter') {
-    selectChapter(id)
+    selectChapter(id, true)
     return
-  } else if (node?.kind === 'course') {
-    chapterChoice.value = 'all'
-    level.value = 'clusters'
-  } else if (node?.kind === 'knowledge') {
-    level.value = 'knowledge'
   }
+  if (node?.kind === 'course') {
+    backToAtlas()
+    return
+  }
+  if (node?.kind === 'knowledge') level.value = 'knowledge'
   selectedId.value = id
 }
 function focusKnowledge(id: string) {
+  markNavigation('jump')
   // Navigate into the concept's actual chapter instead of unexpectedly
   // expanding the entire course from a collapsed overview.
   const chapter = parent.value.get(id)
@@ -278,13 +313,16 @@ function focusKnowledge(id: string) {
 function focusRelated(id: string) {
   focusKnowledge(id)
 }
-function selectChapter(id: string) {
+function selectChapter(id: string, fromCanvas = false) {
+  if (fromCanvas && id !== 'all') markNavigation('enter', id)
+  else if (id === 'all' && chapterChoice.value !== 'all') {
+    backToAtlas()
+    return
+  } else markNavigation('jump')
   chapterChoice.value = id
   level.value = id === 'all' ? 'clusters' : 'groups'
   activeGroup.value = null
   selectedId.value = null
-  // The WebGL canvas watches the level's nodes and performs one fitted
-  // camera transition. A second nextTick reset used to override it.
 }
 function chooseChapter(chapter: GraphNode) {
   selectChapter(chapter.id)
@@ -361,7 +399,7 @@ onBeforeUnmount(() => {
           <p class="gx-note">星系只标注部分分组以避免遮挡。可悬停星球查看名称，或从下方列表直接进入任意分组。</p>
           <div class="gx-group-directory">
             <button v-for="g in browseGroups" :key="g.id" type="button"
-              :title="g.name" @click="activeGroup=g.id;level='knowledge';selectedId=null;navOpen=false">
+              :title="g.name" @click="enterGroup(g.id);navOpen=false">
               <span>{{ g.name }}</span><small>{{ g.members.length }} 点</small>
             </button>
           </div>
@@ -413,13 +451,13 @@ onBeforeUnmount(() => {
       <main class="gx-main">
         <Graph3DCanvas ref="canvas" :nodes="nodes" :edges="edges" :selected-id="selectedId"
           :show-relations="relationView!=='none'" :show-structure="showStructure"
-          :relation-edges="graph.edges" :layout-nodes="chapterChoice==='all' ? graph.nodes : nodes"
+          :relation-edges="graph.edges" :navigation="navigation" :layout-nodes="chapterChoice==='all' ? graph.nodes : nodes"
           :layout-edges="chapterChoice==='all' ? graph.edges : edges"
           @select="selectCanvasNode" />
         <div class="gx-stage-nav">
-          <button v-if="activeBrowseGroup" type="button" @click="switchLevel('groups')"
+          <button v-if="activeBrowseGroup" type="button" @click="backToGroups"
             class="gx-back"><ChevronLeft :size="17" /> 返回章节分组</button>
-          <button v-else-if="currentChapter" type="button" @click="selectChapter('all')"
+          <button v-else-if="currentChapter" type="button" @click="backToAtlas"
             class="gx-back"><ChevronLeft :size="17" /> 返回总览</button>
           <span class="gx-stage-kicker">{{ displayMode==='clusters' ? 'CHAPTER CONSTELLATIONS' : displayMode==='groups' ? 'CHAPTER BROWSE GROUPS' : 'EXPLORE CONCEPTS' }}</span>
           <h1>{{ activeBrowseGroup?.name ?? currentChapter?.name ?? (displayMode==='clusters' ? '从章节开始，探索知识宇宙' : '知识点全景') }}</h1>
