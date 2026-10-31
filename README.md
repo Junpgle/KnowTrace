@@ -147,6 +147,26 @@ flowchart TD
 - [x] 加入本地 AI 知识点提取原型与人工审核接口
 - [ ] 逐步添加 AI 学习助手、知识图谱及复杂题型
 
+## 🚀 一键启动前后端（macOS / Windows / Linux）
+
+仓库根目录新增了 **start.py**，自动检查 Python 虚拟环境与前端依赖、启动 FastAPI 和 Vite，等待后端健康检查及前端就绪后打开浏览器。
+
+| 系统 | 推荐启动方法 |
+| --- | --- |
+| macOS | 首次执行 `chmod +x start.command`，以后在 Finder 双击 **start.command**；或终端执行 `python3 start.py` |
+| Windows | 双击根目录的 **start.bat**；或终端执行 `py -3 start.py` |
+| Linux | 在根目录执行 `python3 start.py` |
+
+**前置要求**：Python 3.11+、Node.js 20.19+（推荐 Node.js 22 LTS）与 npm。首次启动会自动创建根目录 `.venv` 并按需安装 `backend/requirements.txt` 和前端 npm 依赖；之后一般无需重复安装。
+
+- 前端：<http://127.0.0.1:5173/>
+- 后端文档：<http://127.0.0.1:8000/docs>
+- 退出：在启动窗口按 **Ctrl+C**，脚本会关闭本次启动的前后端进程。
+- 可选：`python3 start.py --no-browser` 不打开网页；`python3 start.py --install` 重新安装/更新依赖；`python3 start.py --no-install` 跳过依赖安装。
+
+脚本只绑定到本机 `127.0.0.1`，端口被占用时会提示你关闭已有服务，**不会强行结束其他程序**。后端仍从 `backend/` 运行，沿用原有的 `backend/data/` 数据目录，不会重置课程或数据库。需要 AI 服务时仍须自行启动 Ollama 或设置相应的 API Key。
+
+> 注意：经 GitHub 下载/克隆的 `start.command` 可能没有可执行权限，因此 macOS 首次双击前需要运行一次 `chmod +x start.command`。启动期间不要关闭终端窗口。
 ## 🖥️ Vue 3 学习工作台（v0.8.0）
 
 新增 frontend/ Vue 3 + TypeScript + Vite 前端，直接使用已有 FastAPI/SQLite 数据，提供：学习总览、选择课程、知识点编辑与审核、AI 生成待审核题目、题目答案核验与版本修订、从最新已审核题库创建测评、逐题作答与答案解析、刷新后恢复未完成测评，以及 BKT 掌握度报告。
