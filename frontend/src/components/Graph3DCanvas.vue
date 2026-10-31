@@ -1401,7 +1401,8 @@ watch(() => ({
     } else if (transitionMode === 'back') {
       // Match the *destination* scene, not just the last stack entry. This
       // also supports a direct jump from a leaf to the course overview.
-      const index = cameraHistory.findLastIndex(item => item.sceneKey === afterKey)
+      let index = cameraHistory.length - 1
+      while (index >= 0 && cameraHistory[index].sceneKey !== afterKey) index--
       if (index >= 0) {
         returnCamera = cameraHistory[index]
         cameraHistory.splice(index)
