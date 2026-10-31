@@ -1384,8 +1384,11 @@ watch(() => ({
     || next.layoutEdges !== previous.layoutEdges
   const action = next.navigation?.serial !== previous.navigation?.serial
     ? next.navigation : undefined
+  // Selected concepts can add one-hop neighbors to the same leaf view.
+  // That changes the node list but is NOT a hierarchy navigation.
+  const hierarchyChanged = layerChanged && Boolean(action)
   let returnCamera: CameraSnapshot | null = null
-  if (layerChanged) {
+  if (hierarchyChanged) {
     transitionMode = action?.mode ?? 'jump'
     if (transitionMode === 'enter' && camera && controls) {
       cameraHistory.push({
@@ -1415,8 +1418,8 @@ watch(() => ({
       new THREE.Box3().setFromPoints(oldPositions).getCenter(outgoingCenter)
     else outgoingCenter.set(0, 0, 0)
   }
-  rebuild(layerChanged)
-  if (layerChanged && transitionMode === 'back') {
+  rebuild(hierarchyChanged)
+  if (hierarchyChanged && transitionMode === 'back') {
     transitionReturnAnchor.copy(
       (action?.nodeId && positions.get(action.nodeId)) ||
       controls?.target || new THREE.Vector3(),
