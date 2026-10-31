@@ -328,10 +328,11 @@ function chooseChapter(chapter: GraphNode) {
   selectChapter(chapter.id)
 }
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    if (selectedId.value) selectedId.value = null
-    else emit('close')
-  }
+  if (event.key !== 'Escape') return
+  if (selectedId.value) selectedId.value = null
+  else if (activeBrowseGroup.value) backToGroups()
+  else if (currentChapter.value) backToAtlas()
+  else emit('close')
 }
 let originalOverflow = ''
 onMounted(() => {
