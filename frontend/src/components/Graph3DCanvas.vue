@@ -20,6 +20,7 @@ const props = defineProps<{
   // Use all course nodes for stable positions while filtering displayed nodes.
   layoutNodes?: GraphNode[]
   layoutEdges?: GraphEdge[]
+  navigation?: { serial: number; mode: 'enter' | 'back' | 'jump'; nodeId?: string }
 }>()
 const emit = defineEmits<{ select: [id: string | null] }>()
 const mountPoint = ref<HTMLDivElement | null>(null)
@@ -68,6 +69,14 @@ let incoming: FadeGroup | null = null
 let layerTransitionStart = 0
 const incomingStartOffset = new THREE.Vector3()
 let pendingTransitionOrigin: THREE.Vector3 | null = null
+type CameraSnapshot = { sceneKey: string; position: THREE.Vector3; target: THREE.Vector3 }
+const cameraHistory: CameraSnapshot[] = []
+let transitionMode: 'enter' | 'back' | 'jump' = 'jump'
+const transitionOrigin = new THREE.Vector3()
+const transitionReturnAnchor = new THREE.Vector3()
+const outgoingCenter = new THREE.Vector3()
+const outgoingTargetOffset = new THREE.Vector3()
+let outgoingEndScale = 1
 const LAYER_DURATION = 680
 const CAMERA_DURATION = 920
 function reducedMotion() {
@@ -1041,6 +1050,27 @@ function focus(id: string | null, resetAtlasAngle = false) {
     tween = true
   }
 }
+function restoreCamera(snapshot: CameraSnapshot) {
+  if (!camera || !controls) return
+  desiredTarget.copy(snapshot.target)
+  desiredPosition.copy(snapshot.position)
+  const distance = snapshot.position.distanceTo(snapshot.target)
+  controls.maxDistance = Math.max(280, distance * 1.8)
+  camera.far = Math.max(1600, distance * 3)
+  camera.updateProjectionMatrix()
+  if (scene?.fog instanceof THREE.FogExp2)
+    scene.fog.density = Math.min(.0015, .35 / Math.max(72, distance))
+  if (reducedMotion()) {
+    camera.position.copy(desiredPosition)
+    controls.target.copy(desiredTarget)
+    tween = false
+  } else {
+    cameraStartPosition.copy(camera.position)
+    cameraStartTarget.copy(controls.target)
+    cameraAnimationStart = performance.now()
+    tween = true
+  }
+}
 function resetCamera() { focus(null, true) }
 // User-controlled zoom is useful for dense whole-course views; do not reset
 // the scene or change the selected concept when adjusting the lens.
@@ -1308,16 +1338,59 @@ watch(() => ({
   layoutNodes: props.layoutNodes,
   layoutEdges: props.layoutEdges,
   selectedId: props.selectedId,
+  navigation: props.navigation,
   showRelations: props.showRelations,
   showStructure: props.showStructure,
 }), (next, previous) => {
-  const layerChanged = sceneSignature(next.nodes) !== sceneSignature(previous.nodes)
+  const beforeKey = sceneSignature(previous.nodes)
+  const afterKey = sceneSignature(next.nodes)
+  const layerChanged = beforeKey !== afterKey
     || next.layoutNodes !== previous.layoutNodes
     || next.layoutEdges !== previous.layoutEdges
-  if (!layerChanged) pendingTransitionOrigin = null
+  const action = next.navigation?.serial !== previous.navigation?.serial
+    ? next.navigation : undefined
+  let returnCamera: CameraSnapshot | null = null
+  if (layerChanged) {
+    transitionMode = action?.mode ?? 'jump'
+    if (transitionMode === 'enter' && camera && controls) {
+      cameraHistory.push({
+        sceneKey: beforeKey,
+        position: camera.position.clone(),
+        target: controls.target.clone(),
+      })
+      if (cameraHistory.length > 12) cameraHistory.shift()
+      transitionOrigin.copy(
+        (action?.nodeId && positions.get(action.nodeId)) ||
+        pendingTransitionOrigin || controls.target,
+      )
+    } else if (transitionMode === 'back') {
+      // Match the *destination* scene, not just the last stack entry. This
+      // also supports a direct jump from a leaf to the course overview.
+      const index = cameraHistory.findLastIndex(item => item.sceneKey === afterKey)
+      if (index >= 0) {
+        returnCamera = cameraHistory[index]
+        cameraHistory.splice(index)
+      }
+    } else {
+      cameraHistory.length = 0
+    }
+    const oldPositions = [...positions.values()]
+    if (oldPositions.length)
+      new THREE.Box3().setFromPoints(oldPositions).getCenter(outgoingCenter)
+    else outgoingCenter.set(0, 0, 0)
+  }
   rebuild(layerChanged)
-  if (layerChanged || next.selectedId !== previous.selectedId)
+  if (layerChanged && transitionMode === 'back') {
+    transitionReturnAnchor.copy(
+      (action?.nodeId && positions.get(action.nodeId)) ||
+      controls?.target || new THREE.Vector3(),
+    )
+    if (returnCamera) restoreCamera(returnCamera)
+    else focus(next.selectedId, true)
+  } else if (layerChanged || next.selectedId !== previous.selectedId) {
     focus(next.selectedId, layerChanged)
+  }
+  pendingTransitionOrigin = null
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -1351,6 +1424,7 @@ onBeforeUnmount(() => {
   cachedEdges = null
   cachedCoords.clear()
   cachedChapterTotals.clear()
+  cameraHistory.length = 0
 })
 </script>
 
