@@ -34,12 +34,15 @@ const filtered = computed(() => points.value.filter(n => {
   return !term || (n.name + ' ' + (n.summary ?? '')).toLocaleLowerCase().includes(term)
 }))
 const pdfMappings = computed<PDFSourceChapterMapping[]>(() => (preview.value?.documents ?? [])
-  .flatMap(doc => {
+  .reduce<PDFSourceChapterMapping[]>((result, doc) => {
     const value = mappings.value[doc.document_id] ?? 'skip'
-    if (value === 'new') return [{ document_id: doc.document_id, chapter_title: (titles.value[doc.document_id] ?? '').trim() }]
-    if (value.startsWith('chapter:')) return [{ document_id: doc.document_id, chapter_id: value.slice(8) }]
-    return []
-  }))
+    if (value === 'new') {
+      result.push({ document_id: doc.document_id, chapter_title: (titles.value[doc.document_id] ?? '').trim() })
+    } else if (value.startsWith('chapter:')) {
+      result.push({ document_id: doc.document_id, chapter_id: value.slice(8) })
+    }
+    return result
+  }, []))
 const canMap = computed(() => pdfMappings.value.length > 0
   && pdfMappings.value.every(m => Boolean(m.chapter_id || m.chapter_title)))
 
