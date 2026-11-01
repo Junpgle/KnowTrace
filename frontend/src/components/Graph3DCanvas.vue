@@ -90,6 +90,12 @@ const labelAnchors: LabelAnchor[] = []
 // Visual tracks are intentionally browse-only and never become knowledge
 // graph edges. Hovering a group subtly illuminates its complete ellipse.
 const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[] = []
+// In the browse overview, group planets and their glow are map markers:
+// their radius is specified in SCREEN pixels, not permanent world units.
+// This prevents a 10-world-unit globe from covering neighboring orbit slots
+// when chapter-level camera zoom brings the group atlas into view.
+const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string }[] = []
+const groupMarkerRadii = new Map<string, number>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
@@ -724,6 +730,8 @@ function clearGraph(animate = false) {
   backdropPoints.splice(0)
   labelAnchors.splice(0)
   orbitTracks.splice(0)
+  groupMarkers.splice(0)
+  groupMarkerRadii.clear()
   hoveredNodeId = null
   hoveredName.value = ''
   positions.clear()
@@ -921,7 +929,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
           unscaled, anchor, look,
           THREE.MathUtils.clamp((safe.right - safe.left) / w * .85, .25, .85),
           THREE.MathUtils.clamp((safe.bottom - safe.top) / h * .78, .25, .82),
-          24, 30,
+          0, 0, 1,
         )
         const currentDistance = camera.position.distanceTo(controls.target)
         // A new zoom level has a smaller world footprint. Compute the map
@@ -929,7 +937,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
         // never changes during animation. This is *not* an expanding layer.
         const targetDistance = Math.max(85, currentDistance * .48)
         const scale = THREE.MathUtils.clamp(
-          targetDistance / Math.max(1, baseDistance) * .78, .045, .82)
+          targetDistance / Math.max(1, baseDistance) * .93, .075, 1.2)
         for (const node of groupNodes) {
           const local = coords.get(node.id)
           if (!local) continue
@@ -1273,11 +1281,16 @@ function rebuild(animate = false, transition?: SceneTransition) {
       map: glowMap, color: baseColor,
       transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending,
-      opacity: focusState.active ? .10 : (isCourse ? .65 : .42),
+      opacity: focusState.active ? .10 :
+        node.kind === 'group' && overview ? .17 :
+        (isCourse ? .65 : .42),
     }))
     aura.position.copy(position)
     aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
+    if (overview && node.kind === 'group') {
+      groupMarkers.push({planet, aura, id:node.id})
+    }
 
     if (!focusState.active && !(overview && node.kind === 'group')) {
       const ringR = radius * (isCourse ? 2.2 : 1.9)
@@ -1429,6 +1442,7 @@ function projectedFitDistance(
   fillY: number,
   paddingX = 11,
   paddingY = 16,
+  minimum = 72,
 ): number {
   if (!camera || points.length === 0) return 100
   const forward = viewDirection.clone().normalize()
@@ -1441,7 +1455,7 @@ function projectedFitDistance(
   const screenUp = new THREE.Vector3().crossVectors(forward, right).normalize()
   const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
   const tanH = tanV * camera.aspect
-  let result = 72
+  let result = minimum
   const relative = new THREE.Vector3()
   for (const point of points) {
     relative.subVectors(point, center)
@@ -1579,7 +1593,7 @@ function focus(id: string | null, resetAtlasAngle = false) {
       // The *camera* does the enlarging; nodes do not move during the flight.
       distance = projectedFitDistance(
         fitPoints, overviewCenter, direction,
-        .82, .85, 14, 15,
+        .80, .79, 0, 0, 36,
       )
     } else if (!localGroup) {
       // Course/chapters are arranged on the XZ atlas plane. Projected
@@ -1625,7 +1639,9 @@ function focus(id: string | null, resetAtlasAngle = false) {
     framePoints, frameCenter, viewDirection,
     THREE.MathUtils.clamp(safeWidth/width*.90,.19,.94),
     THREE.MathUtils.clamp(safeHeight/height*.89,.19,.94),
-    relationFocus ? 22 : 12, relationFocus ? 30 : 18,
+    relationFocus ? 22 : groupOverview ? 0 : 12,
+    relationFocus ? 30 : groupOverview ? 0 : 18,
+    groupOverview ? 36 : 72,
   ))
   const unitsPerPixel = 2 *
     Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * distance/height
@@ -1699,6 +1715,43 @@ function zoomIn() { zoomBy(.78) }
 function zoomOut() { zoomBy(1.28) }
 defineExpose({ resetCamera, zoomIn, zoomOut })
 
+// Pixel-based marker sizing also takes real projected neighbor clearance
+// into account. At high zoom the camera sees more detail but planet meshes
+// must not grow until they mask the other orbit stops or their captions.
+function updateGroupMarkerSizes() {
+  if (!camera || !renderer || !groupMarkers.length) return
+  const height = Math.max(1, renderer.domElement.clientHeight)
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+  const cameraForward = new THREE.Vector3(0, 0, -1)
+    .applyQuaternion(camera.quaternion)
+  const centers = groupMarkers.map(m => screenPosition(
+    m.planet.getWorldPosition(new THREE.Vector3())))
+  const preferredRadius = groupMarkers.length > 28 ? 10 :
+    groupMarkers.length > 18 ? 12 : 14
+  groupMarkers.forEach(({planet,aura,id}, i) => {
+    const here = centers[i]
+    let closest = Infinity
+    if (here.visible) {
+      for (let j = 0; j < centers.length; j++) {
+        if (i === j || !centers[j].visible) continue
+        closest = Math.min(closest,
+          Math.hypot(here.x-centers[j].x,here.y-centers[j].y))
+      }
+    }
+    // Leave a generous clearance for strokes and labels. A narrow projection
+    // can shrink a marker, but can NEVER make adjacent planets overlap.
+    const radiusPixels = Math.max(3.8,Math.min(
+      preferredRadius, closest * .28))
+    const depth = Math.max(1, planet.getWorldPosition(new THREE.Vector3())
+      .sub(camera!.position).dot(cameraForward))
+    const worldPerPixel = 2*tanHalf*depth/height
+    const worldRadius = radiusPixels*worldPerPixel
+    planet.scale.setScalar(worldRadius)
+    aura.scale.setScalar(worldRadius*3.1)
+    groupMarkerRadii.set(id,worldRadius)
+  })
+}
+
 function placeLabel(anchor: LabelAnchor) {
   if (!camera || !mountPoint.value) return
   if (!anchor.screen) {
@@ -1748,7 +1801,8 @@ function arrangeScreenLabels() {
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * depth)
     const worldRadius = node.kind === 'knowledge'
       ? node.id === selected ? 3.5 : 2.7
-      : node.kind === 'group' ? 8 : node.kind === 'chapter' ? 13 : 10
+      : node.kind === 'group' ? (groupMarkerRadii.get(node.id) ?? 8)
+      : node.kind === 'chapter' ? 13 : 10
     planets.push({id:node.id,x:p.x,y:p.y,
       radius:Math.max(11, Math.min(40, pxPerWorld * worldRadius + 6))})
   }
@@ -1990,6 +2044,11 @@ function draw() {
   // Labels and click targets must respect animated parent-group
   // transforms in both forward and reverse transitions.
   scene.updateMatrixWorld(true)
+  updateGroupMarkerSizes()
+  for (const anchor of labelAnchors) {
+    if (anchor.nodeId && anchor.screen && groupMarkerRadii.has(anchor.nodeId))
+      anchor.screen.radius = groupMarkerRadii.get(anchor.nodeId)!
+  }
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
   for (const anchor of labelAnchors) placeLabel(anchor)
   for (const layer of outgoing) for (const anchor of layer.anchors) placeLabel(anchor)
