@@ -1017,36 +1017,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
     addLines(points, RELATION_COLORS[type] ?? 0xffd184, 1)
   }
   if (outgoing) {
+    // Retain the old map in its original world position. New detail fades in
+    // with camera zoom; no shrinking old scene / expanding child scene.
     incoming = fadeGroup(g, [...labelAnchors])
-    const anchors = [...positions.values()]
-    const nextCenter = anchors.length
-      ? new THREE.Box3().setFromPoints(anchors).getCenter(new THREE.Vector3())
-      : new THREE.Vector3()
-    if (transitionMode === 'enter') {
-      // Both scenes initially overlap at the planet that was clicked. Its
-      // children then expand away from that point as the camera flies inward.
-      const startScale = .20
-      incomingStartOffset.copy(transitionOrigin)
-        .addScaledVector(nextCenter, -startScale)
-      incoming.group.position.copy(incomingStartOffset)
-      incoming.group.scale.setScalar(startScale)
-      outgoingEndScale = .20
-      outgoingTargetOffset.copy(transitionOrigin).multiplyScalar(1 - outgoingEndScale)
-    } else if (transitionMode === 'back') {
-      // Child nodes collapse onto exactly the parent planet we entered.
-      // The parent scene is already in its proper coordinates, so do not
-      // grow it from an arbitrary center a second time.
-      incoming.group.position.set(0, 0, 0)
-      incoming.group.scale.setScalar(1)
-      outgoingEndScale = .18
-      outgoingTargetOffset.copy(transitionReturnAnchor)
-        .addScaledVector(outgoingCenter, -outgoingEndScale)
-    } else {
-      incoming.group.position.set(0, 0, 0)
-      incoming.group.scale.setScalar(1)
-      outgoingEndScale = outgoingStartScale
-      outgoingTargetOffset.copy(outgoingStartOffset)
-    }
     setFade(incoming, 0)
   }
   pendingTransitionOrigin = null
@@ -1160,8 +1133,8 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < .01) direction.set(.4, .8, 1)
   if (focusConstellation) {
-    // In concept focus the orbit is near the XY plane, so view it face-on.
-    direction.set(.05, .14, 1)
+    // Continue the overhead map trajectory instead of flipping the camera.
+    direction.set(.03, 1, .26)
   } else if (chapterFocus) {
     direction.set(0, 1, .30)
   } else if (!id && (resetAtlasAngle || overview)) {
@@ -1487,20 +1460,14 @@ function draw() {
     if (raw >= 1) tween = false
   }
   if (outgoing && incoming) {
-    const raw = Math.min(1, (now - layerTransitionStart) / LAYER_DURATION)
-    const eased = raw * raw * (3 - 2 * raw)
-    setFade(outgoing, 1 - eased)
-    setFade(incoming, eased)
-    if (transitionMode === 'enter') {
-      incoming.group.scale.setScalar(.20 + .80 * eased)
-      incoming.group.position.copy(incomingStartOffset).multiplyScalar(1 - eased)
-    }
-    outgoing.group.scale.setScalar(THREE.MathUtils.lerp(
-      outgoingStartScale, outgoingEndScale, eased,
-    ))
-    outgoing.group.position.copy(outgoingStartOffset)
-      .lerp(outgoingTargetOffset, eased)
-    if (raw >= 1) finishFade()
+    // Camera drives level-of-detail reveal (akin to tiled maps).
+    const travel = tween ? Math.min(1, (now - cameraAnimationStart) / CAMERA_DURATION) : 1
+    const t = THREE.MathUtils.clamp(
+      (travel - LAYER_REVEAL_START) / (LAYER_REVEAL_END - LAYER_REVEAL_START), 0, 1)
+    const revealed = t * t * (3 - 2 * t)
+    setFade(outgoing, 1 - revealed)
+    setFade(incoming, revealed)
+    if (travel >= 1) finishFade()
   }
   controls.update()
   // Labels and click targets must respect animated parent-group
@@ -1660,17 +1627,23 @@ watch(() => ({
     || next.layoutEdges !== previous.layoutEdges
   const action = next.navigation?.serial !== previous.navigation?.serial
     ? next.navigation : undefined
-  // Selected concepts can add one-hop neighbors to the same leaf view.
-  // That changes the node list but is NOT a hierarchy navigation.
-  const hierarchyChanged = layerChanged && Boolean(action)
+  // Only explicit entry/back operations switch map LOD.
+  const hierarchyChanged = layerChanged && Boolean(action) &&
+    (action?.mode === 'enter' || action?.mode === 'back')
   let returnCamera: CameraSnapshot | null = null
+  const nextSceneFrame = hierarchyChanged && action?.mode === 'back'
+    ? sceneFrames.get(afterKey) : undefined
+  if (layerChanged && positions.size) {
+    sceneFrames.set(beforeKey, new Map([...positions].map(([id, p]) => [id, p.clone()])))
+    if (sceneFrames.size > 16) sceneFrames.delete(sceneFrames.keys().next().value!)
+  }
   if (hierarchyChanged) {
     transitionMode = action?.mode ?? 'jump'
     if (transitionMode === 'enter' && camera && controls) {
       cameraHistory.push({
         sceneKey: beforeKey,
-        position: camera.position.clone(),
-        target: controls.target.clone(),
+        position: (tween ? desiredPosition : camera.position).clone(),
+        target: (tween ? desiredTarget : controls.target).clone(),
       })
       if (cameraHistory.length > 12) cameraHistory.shift()
       transitionOrigin.copy(
@@ -1694,7 +1667,11 @@ watch(() => ({
       new THREE.Box3().setFromPoints(oldPositions).getCenter(outgoingCenter)
     else outgoingCenter.set(0, 0, 0)
   }
-  rebuild(hierarchyChanged)
+  rebuild(hierarchyChanged, hierarchyChanged ? {
+    mode: transitionMode,
+    anchorId: action?.nodeId,
+    restore: nextSceneFrame,
+  } : undefined)
   if (hierarchyChanged && transitionMode === 'back') {
     transitionReturnAnchor.copy(
       (action?.nodeId && positions.get(action.nodeId)) ||
@@ -1745,6 +1722,7 @@ onBeforeUnmount(() => {
   cachedCoords.clear()
   cachedChapterTotals.clear()
   cameraHistory.length = 0
+  sceneFrames.clear()
 })
 </script>
 
