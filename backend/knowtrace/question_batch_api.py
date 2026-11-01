@@ -459,6 +459,11 @@ def register_question_batch_routes(app: FastAPI, database: Path, resolve_provide
             data=detail(db,batch_id)
             if data["status"] not in ("interrupted","stopped"):
                 raise HTTPException(409,"Only interrupted or stopped runs can resume")
+            other = db.execute("""SELECT 1 FROM question_generation_batches
+                WHERE course_id=? AND id<>? AND status IN ('queued','running','stopping')
+                LIMIT 1""", (data["course_id"],batch_id)).fetchone()
+            if other:
+                raise HTTPException(409,"Another question batch is running for this course")
             db.execute("""UPDATE question_generation_units SET status='pending'
                 WHERE batch_id=? AND status IN ('running','failed')""",(batch_id,))
             db.execute("UPDATE question_generation_batches SET status='running',last_error=NULL WHERE id=?",
