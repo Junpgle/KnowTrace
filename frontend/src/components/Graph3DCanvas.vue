@@ -1988,6 +1988,77 @@ function placeLabel(anchor: LabelAnchor) {
   )
 }
 
+// Orbit captions are little map labels, not separate satellites. Keep the
+// base offset from placeLabel() FIXED above each moving planet; never feed
+// them into the regular solver that jumps between 15 unrelated positions on
+// every frame. When two moving captions cross, gently fade the lower-priority
+// one instead of teleporting it to the other side of the screen.
+function arrangeStableOrbitCaptions() {
+  if(!camera||!renderer||!orbitingPlanets.length)return
+  const safe=safeViewport()
+  const overlays=overlayBoxes()
+  const height=renderer.domElement.clientHeight
+  const tanHalf=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2)
+  const sprites=labelAnchors.filter(a=>a.nodeId&&a.screen)
+  const ranked=sprites.sort((a,b)=>{
+    const score=(label:LabelAnchor)=>{
+      const node=props.nodes.find(n=>n.id===label.nodeId)
+      return (node?.id===hoveredNodeId?100000:0)+
+        (node?.id===props.selectedId?90000:0)+
+        (node?.kind==='course'?80000:0)+
+        (node?.kind==='chapter'
+          ? (cachedChapterTotals.get(node.id)??node.source_count)
+          : node?.source_count??0)
+    }
+    return score(b)-score(a)||
+      (a.nodeId??'').localeCompare(b.nodeId??'')
+  })
+  const planetBoxes:{id:string;box:ScreenBox}[]=[]
+  for(const marker of orbitMarkers){
+    const p=screenPosition(marker.planet.getWorldPosition(new THREE.Vector3()))
+    if(!p.visible)continue
+    const world=marker.planet.getWorldPosition(new THREE.Vector3())
+    const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
+    const depth=Math.max(1,world.sub(camera.position).dot(forward))
+    const radius=Math.min(92,Math.max(6,
+      (orbitMarkerRadii.get(marker.id)??8)*height/(2*tanHalf*depth)))
+    planetBoxes.push({id:marker.id,box:{
+      left:p.x-radius-3,right:p.x+radius+3,
+      top:p.y-radius-3,bottom:p.y+radius+3,
+    }})
+  }
+  const placed:ScreenBox[]=[]
+  for(const anchor of ranked){
+    const id=anchor.nodeId!
+    const sprite=anchor.sprite
+    const point=screenPosition(sprite.getWorldPosition(new THREE.Vector3()))
+    const w=anchor.screen!.width
+    const h=anchor.screen!.height
+    const box:ScreenBox={
+      left:point.x-w/2-5,right:point.x+w/2+5,
+      top:point.y-h/2-4,bottom:point.y+h/2+4,
+    }
+    // The caption's own planet is intentionally nearby; other planets,
+    // title/toolbar/drawer overlays and other visible captions are reserved.
+    const fits=point.visible &&
+      box.left>=safe.left && box.right<=safe.right &&
+      box.top>=safe.top && box.bottom<=safe.bottom &&
+      !overlays.some(o=>overlaps(box,o,3)) &&
+      !placed.some(o=>overlaps(box,o,5)) &&
+      !planetBoxes.some(p=>p.id!==id && overlaps(box,p.box,2))
+    const pinned=id===hoveredNodeId || id===props.selectedId
+    if(fits||pinned)placed.push(box)
+    // No instantaneous visibility flip during conjunctions. The tooltip
+    // remains available on hover even when this static caption fades.
+    const target=fits||pinned ? .96 : 0
+    const prev=stableOrbitCaptionOpacity.get(id)??.96
+    const alpha=prev+(target-prev)*.12
+    stableOrbitCaptionOpacity.set(id,alpha)
+    ;(sprite.material as THREE.SpriteMaterial).opacity=alpha
+    sprite.visible=alpha>.025
+  }
+}
+
 // Adaptive screen-space label solver. It runs AFTER the camera transform and
 // label pixel-size scaling, so a user can orbit/zoom without labels covering
 // one another, important planets, the detail drawer or the toolbar.
@@ -1995,6 +2066,10 @@ function placeLabel(anchor: LabelAnchor) {
 // fallback for nonselected captions. Hover always exposes the FULL name.
 function arrangeScreenLabels() {
   if (!camera || !renderer || !labelAnchors.length) return
+  if (orbitingPlanets.length) {
+    arrangeStableOrbitCaptions()
+    return
+  }
   const safe = safeViewport()
   const reserved = overlayBoxes()
   const width = renderer.domElement.clientWidth
