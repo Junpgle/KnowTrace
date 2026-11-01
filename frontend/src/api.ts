@@ -199,6 +199,53 @@ export interface Course {
   created_at: string
 }
 
+export interface QuestionBatchPreview {
+  eligible: number
+  approved_covered: number
+  pending_covered: number
+  uncovered: number
+  excluded: number
+  estimated_groups: number
+  preview_groups: { bucket: string; ids: string[]; names: string[] }[]
+  note: string
+}
+export type QuestionBatchStatus =
+  'queued' | 'running' | 'stopping' | 'stopped' | 'interrupted' | 'succeeded'
+export interface QuestionBatch {
+  id: string
+  course_id: string
+  status: QuestionBatchStatus
+  last_error: string | null
+  created_at: string
+  options: {
+    provider: AIProviderId
+    chapter_id: string | null
+    group_size: number
+    max_groups: number
+    questions_per_group: number
+    question_types: ('single_choice' | 'true_false')[]
+  }
+  total_groups: number
+  completed_groups: number
+  created_questions: number
+  warning_count: number
+  progress: number
+  units: {
+    id: string; ordinal: number; status: 'pending' | 'running' | 'failed' | 'succeeded'
+    knowledge_point_ids: string[]; created_questions: number
+    warning_count: number; last_error: string | null
+  }[]
+}
+export interface QuestionBatchRequest {
+  provider: AIProviderId
+  chapter_id: string | null
+  group_size: number
+  max_groups: number
+  questions_per_group: number
+  question_types: ('single_choice' | 'true_false')[]
+  confirmed: boolean
+}
+
 export interface QuestionSummary {
   version_id: string
   question_id: string
@@ -811,6 +858,21 @@ export const api = {
       '/api/knowledge-points/' + encodeURIComponent(id) + '/review',
       { method: 'POST', body: JSON.stringify({ decision }) }),
   aiProviders: () => request<AIProviderStatus>('/api/ai/providers'),
+  questionBatchPreview: (courseId: string, groupSize: number, chapterId: string | null) =>
+    request<QuestionBatchPreview>('/api/courses/' + encodeURIComponent(courseId) +
+      '/question-batches/preview?group_size=' + groupSize +
+      (chapterId ? '&chapter_id=' + encodeURIComponent(chapterId) : '')),
+  questionBatches: (courseId: string) =>
+    request<QuestionBatch[]>('/api/courses/' + encodeURIComponent(courseId) + '/question-batches'),
+  startQuestionBatch: (courseId: string, options: QuestionBatchRequest) =>
+    request<QuestionBatch>('/api/courses/' + encodeURIComponent(courseId) + '/question-batches',
+      { method: 'POST', body: JSON.stringify(options) }),
+  stopQuestionBatch: (batchId: string) =>
+    request<QuestionBatch>('/api/question-batches/' + encodeURIComponent(batchId) + '/stop',
+      { method: 'POST' }),
+  resumeQuestionBatch: (batchId: string) =>
+    request<QuestionBatch>('/api/question-batches/' + encodeURIComponent(batchId) + '/resume',
+      { method: 'POST' }),
   generateQuestions: (id: string, options: { count: number; question_types: ('single_choice' | 'true_false')[]; provider?: AIProviderId }) =>
     request<GenerationResult>('/api/knowledge-points/' + encodeURIComponent(id) + '/generate-questions',
       { method: 'POST', body: JSON.stringify(options) }),
