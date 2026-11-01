@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, StrictBool, StrictStr
 
 from .bkt import BKTParameters, update_mastery
@@ -26,10 +26,15 @@ BLIND_REASON = "blind_pending_v1"
 BKT = BKTParameters()
 
 
+QuestionType = Literal['single_choice', 'multiple_choice', 'true_false', 'short_answer']
+
+
 class QuizStart(BaseModel):
     count: int = Field(default=5, ge=1, le=20)
     mode: Literal["normal", "adaptive"] = "normal"
     source: Literal["approved", "pending"] = "approved"
+    question_types: list[QuestionType] | None = Field(default=None, min_length=1, max_length=4)
+    unanswered_only: bool = False
 
 
 class SubmitAnswer(BaseModel):
@@ -143,108 +148,158 @@ def _answer_result(db: sqlite3.Connection, answer_id: str) -> dict:
             "answered_at": row["answered_at"]}
 
 
+
+def _eligible_quiz_rows(db: sqlite3.Connection, course_id: str, mode: str,
+                        source: str, question_types: list[QuestionType] | None,
+                        unanswered_only: bool) -> list[dict]:
+    """Use identical eligibility rules for the available count and session creation.
+
+    A question is 'unanswered' until a saved answer exists for ANY of its
+    versions, regardless of whether an earlier session merely displayed it.
+    """
+    if source == "pending" and mode != "normal":
+        raise HTTPException(422, "Blind pending questions cannot use adaptive BKT mode")
+
+    filter_sql = ""
+    filter_params: list[str] = []
+    if question_types is not None:
+        if not question_types:
+            return []
+        placeholders = ",".join("?" for _ in question_types)
+        filter_sql += f" AND v.question_type IN ({placeholders})"
+        filter_params.extend(question_types)
+    if unanswered_only:
+        filter_sql += """ AND NOT EXISTS (
+            SELECT 1 FROM answer_records previous_answer
+            JOIN quiz_items previous_item ON previous_item.id=previous_answer.quiz_item_id
+            JOIN question_versions previous_version ON previous_version.id=previous_item.question_version_id
+            JOIN quiz_sessions previous_session ON previous_session.id=previous_item.session_id
+            WHERE previous_version.question_id=q.id AND previous_session.user_id=?
+        )"""
+        filter_params.append(USER_ID)
+
+    rows = _rows(db.execute("""SELECT v.id AS version_id,k.knowledge_point_id,v.question_type
+        FROM question_versions v
+        JOIN questions q ON q.id=v.question_id
+        JOIN question_knowledge_points k ON k.question_version_id=v.id AND k.is_primary=1
+        JOIN knowledge_points kp ON kp.id=k.knowledge_point_id
+        WHERE q.course_id=? AND q.archived_at IS NULL AND v.review_status=?
+        AND kp.review_status='approved' AND kp.archived_at IS NULL
+        AND v.version_no=(SELECT MAX(v2.version_no)
+                           FROM question_versions v2 WHERE v2.question_id=q.id)
+        """ + filter_sql + """ ORDER BY v.created_at,v.id""",
+        (course_id,source,*filter_params)))
+    if source == "pending":
+        # Prefer previously untouched candidates. Once all have been
+        # attempted, older blind attempts may be repeated for practice.
+        # Among equally fresh candidates show newly generated items
+        # first, so browsing an older admin item need not dominate.
+        prior_attempts = {
+            row["question_version_id"]: row["attempts"]
+            for row in db.execute("""SELECT i.question_version_id,
+                COUNT(a.id) AS attempts
+                FROM quiz_items i JOIN quiz_sessions s ON s.id=i.session_id
+                JOIN answer_records a ON a.quiz_item_id=i.id
+                WHERE s.course_id=? AND s.user_id=?
+                AND i.selection_reason=?
+                GROUP BY i.question_version_id""",
+                (course_id, USER_ID, BLIND_REASON))
+        }
+        rows.reverse()
+        rows.sort(key=lambda item: prior_attempts.get(item["version_id"], 0))
+    if mode == "adaptive":
+        # Reliable adaptive diagnosis only uses questions that measure
+        # exactly one reviewed concept. A compound answer is not a
+        # valid independent BKT observation for every Q-matrix entry.
+        eligible = _rows(db.execute("""SELECT v.id AS version_id,
+            k.knowledge_point_id,v.question_type,
+            COALESCE(m.p_mastery, ?) AS mastery,
+            COALESCE(m.observations,0) AS observations,
+            COUNT(a.id) AS attempts,
+            MAX(a.answered_at) AS last_answered,
+            v.difficulty
+            FROM question_versions v
+            JOIN questions q ON q.id=v.question_id
+            JOIN question_knowledge_points k ON k.question_version_id=v.id
+               AND k.is_primary=1
+            JOIN knowledge_points kp ON kp.id=k.knowledge_point_id
+            LEFT JOIN mastery_states m ON m.knowledge_point_id=k.knowledge_point_id
+               AND m.user_id=? AND m.model_key=?
+            LEFT JOIN quiz_items i ON i.question_version_id=v.id
+            LEFT JOIN answer_records a ON a.quiz_item_id=i.id
+            WHERE q.course_id=? AND q.archived_at IS NULL
+            AND v.review_status='approved'
+            AND v.question_type IN ('single_choice','true_false')
+            AND kp.review_status='approved' AND kp.archived_at IS NULL
+            AND v.version_no=(SELECT MAX(v2.version_no)
+                             FROM question_versions v2 WHERE v2.question_id=q.id)
+            AND (SELECT COUNT(*) FROM question_knowledge_points
+                 WHERE question_version_id=v.id)=1
+            """ + filter_sql + """
+            GROUP BY v.id,k.knowledge_point_id,m.p_mastery,m.observations,v.difficulty
+            """, (BKT.p_initial,USER_ID,MODEL_KEY,course_id,*filter_params)))
+        evidence = evidence_by_knowledge_point(db, USER_ID, course_id, MODEL_KEY)
+        def priority(item):
+            # Before there is a diverse cross-day observation history,
+            # rank by evidence gap / question novelty, not the raw
+            # uncalibrated BKT probability (e.g. first correct = 58%).
+            observed = evidence.get(item["knowledge_point_id"], {})
+            level = evidence_level(
+                observations=observed.get("observations",0),
+                distinct_questions=observed.get("distinct_questions",0),
+                practice_days=observed.get("practice_days",0))
+            retry_penalty = min(item["attempts"],8)*.18
+            if level != "repeated":
+                progress = min(observed.get("observations",0), 5)
+                target_difficulty = 1 if progress == 0 else 2
+                return (3.0 - progress*.22 - retry_penalty -
+                        abs(item["difficulty"]-target_difficulty)*.06)
+            # Repeated evidence is still only a *tentative* model
+            # result; it can be used to rank practice, not grade skill.
+            target_difficulty = 1 if item["mastery"] < .4 else (
+                2 if item["mastery"] < .75 else 3)
+            return (2*(1-item["mastery"]) - retry_penalty -
+                    abs(item["difficulty"]-target_difficulty)*.06)
+        ranked = sorted(eligible, key=lambda item:
+            (-priority(item), item["last_answered"] or "", item["version_id"]))
+        # Pass 1 ensures breadth across weak concepts. Pass 2 fills
+        # any remaining slots with other diagnostic questions.
+        chosen, seen_points = [], set()
+        for item in ranked:
+            if item["knowledge_point_id"] not in seen_points:
+                chosen.append(item)
+                seen_points.add(item["knowledge_point_id"])
+        selected_ids = {x["version_id"] for x in chosen}
+        chosen += [x for x in ranked if x["version_id"] not in selected_ids]
+        rows = chosen
+    return rows
+
+
 def register_quiz_routes(app: FastAPI, database: Path) -> None:
+    @app.get("/api/courses/{course_id}/quiz-availability")
+    def quiz_availability(
+        course_id: str,
+        mode: Literal["normal", "adaptive"] = "normal",
+        source: Literal["approved", "pending"] = "approved",
+        question_types: list[QuestionType] | None = Query(default=None),
+        unanswered_only: bool = False,
+    ):
+        with transaction(database) as db:
+            if db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'",
+                          (course_id,)).fetchone() is None:
+                raise HTTPException(404, "Course not found")
+            rows = _eligible_quiz_rows(db, course_id, mode, source,
+                                       question_types, unanswered_only)
+            return {"available": len(rows)}
+
     @app.post("/api/courses/{course_id}/quiz-sessions", status_code=201)
     def start_quiz(course_id: str, payload: QuizStart):
         with transaction(database) as db:
             if db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'",
                           (course_id,)).fetchone() is None:
                 raise HTTPException(404, "Course not found")
-            if payload.source == "pending" and payload.mode != "normal":
-                raise HTTPException(422, "Blind pending questions cannot use adaptive BKT mode")
-            rows = _rows(db.execute("""SELECT v.id AS version_id,k.knowledge_point_id
-                FROM question_versions v
-                JOIN questions q ON q.id=v.question_id
-                JOIN question_knowledge_points k ON k.question_version_id=v.id AND k.is_primary=1
-                JOIN knowledge_points kp ON kp.id=k.knowledge_point_id
-                WHERE q.course_id=? AND q.archived_at IS NULL AND v.review_status=?
-                AND kp.review_status='approved' AND kp.archived_at IS NULL
-                AND v.version_no=(SELECT MAX(v2.version_no)
-                                   FROM question_versions v2 WHERE v2.question_id=q.id)
-                ORDER BY v.created_at,v.id""", (course_id,payload.source)))
-            if payload.source == "pending":
-                # Prefer previously untouched candidates. Once all have been
-                # attempted, older blind attempts may be repeated for practice.
-                # Among equally fresh candidates show newly generated items
-                # first, so browsing an older admin item need not dominate.
-                prior_attempts = {
-                    row["question_version_id"]: row["attempts"]
-                    for row in db.execute("""SELECT i.question_version_id,
-                        COUNT(a.id) AS attempts
-                        FROM quiz_items i JOIN quiz_sessions s ON s.id=i.session_id
-                        JOIN answer_records a ON a.quiz_item_id=i.id
-                        WHERE s.course_id=? AND s.user_id=?
-                        AND i.selection_reason=?
-                        GROUP BY i.question_version_id""",
-                        (course_id, USER_ID, BLIND_REASON))
-                }
-                rows.reverse()
-                rows.sort(key=lambda item: prior_attempts.get(item["version_id"], 0))
-            if payload.mode == "adaptive":
-                # Reliable adaptive diagnosis only uses questions that measure
-                # exactly one reviewed concept. A compound answer is not a
-                # valid independent BKT observation for every Q-matrix entry.
-                eligible = _rows(db.execute("""SELECT v.id AS version_id,
-                    k.knowledge_point_id,
-                    COALESCE(m.p_mastery, ?) AS mastery,
-                    COALESCE(m.observations,0) AS observations,
-                    COUNT(a.id) AS attempts,
-                    MAX(a.answered_at) AS last_answered,
-                    v.difficulty
-                    FROM question_versions v
-                    JOIN questions q ON q.id=v.question_id
-                    JOIN question_knowledge_points k ON k.question_version_id=v.id
-                       AND k.is_primary=1
-                    JOIN knowledge_points kp ON kp.id=k.knowledge_point_id
-                    LEFT JOIN mastery_states m ON m.knowledge_point_id=k.knowledge_point_id
-                       AND m.user_id=? AND m.model_key=?
-                    LEFT JOIN quiz_items i ON i.question_version_id=v.id
-                    LEFT JOIN answer_records a ON a.quiz_item_id=i.id
-                    WHERE q.course_id=? AND q.archived_at IS NULL
-                    AND v.review_status='approved'
-                    AND v.question_type IN ('single_choice','true_false')
-                    AND kp.review_status='approved' AND kp.archived_at IS NULL
-                    AND v.version_no=(SELECT MAX(v2.version_no)
-                                     FROM question_versions v2 WHERE v2.question_id=q.id)
-                    AND (SELECT COUNT(*) FROM question_knowledge_points
-                         WHERE question_version_id=v.id)=1
-                    GROUP BY v.id,k.knowledge_point_id,m.p_mastery,m.observations,v.difficulty
-                    """, (BKT.p_initial,USER_ID,MODEL_KEY,course_id)))
-                evidence = evidence_by_knowledge_point(db, USER_ID, course_id, MODEL_KEY)
-                def priority(item):
-                    # Before there is a diverse cross-day observation history,
-                    # rank by evidence gap / question novelty, not the raw
-                    # uncalibrated BKT probability (e.g. first correct = 58%).
-                    observed = evidence.get(item["knowledge_point_id"], {})
-                    level = evidence_level(
-                        observations=observed.get("observations",0),
-                        distinct_questions=observed.get("distinct_questions",0),
-                        practice_days=observed.get("practice_days",0))
-                    retry_penalty = min(item["attempts"],8)*.18
-                    if level != "repeated":
-                        progress = min(observed.get("observations",0), 5)
-                        target_difficulty = 1 if progress == 0 else 2
-                        return (3.0 - progress*.22 - retry_penalty -
-                                abs(item["difficulty"]-target_difficulty)*.06)
-                    # Repeated evidence is still only a *tentative* model
-                    # result; it can be used to rank practice, not grade skill.
-                    target_difficulty = 1 if item["mastery"] < .4 else (
-                        2 if item["mastery"] < .75 else 3)
-                    return (2*(1-item["mastery"]) - retry_penalty -
-                            abs(item["difficulty"]-target_difficulty)*.06)
-                ranked = sorted(eligible, key=lambda item:
-                    (-priority(item), item["last_answered"] or "", item["version_id"]))
-                # Pass 1 ensures breadth across weak concepts. Pass 2 fills
-                # any remaining slots with other diagnostic questions.
-                chosen, seen_points = [], set()
-                for item in ranked:
-                    if item["knowledge_point_id"] not in seen_points:
-                        chosen.append(item)
-                        seen_points.add(item["knowledge_point_id"])
-                if len(chosen) < payload.count:
-                    selected_ids = {x["version_id"] for x in chosen}
-                    chosen += [x for x in ranked if x["version_id"] not in selected_ids]
-                rows = chosen
+            rows = _eligible_quiz_rows(db, course_id, payload.mode, payload.source,
+                                       payload.question_types, payload.unanswered_only)
             if len(rows) < payload.count:
                 raise HTTPException(409, f"Only {len(rows)} eligible {payload.mode} questions available; requested {payload.count}")
             session_id = _uuid()
