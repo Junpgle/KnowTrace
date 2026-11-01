@@ -97,6 +97,25 @@ const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[]
 // when chapter-level camera zoom brings the group atlas into view.
 const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string }[] = []
 const groupMarkerRadii = new Map<string, number>()
+type OrbitingPlanet = {
+  id: string
+  world: THREE.Vector3
+  center: THREE.Vector3
+  axisX: THREE.Vector3
+  axisY: THREE.Vector3
+  major: number
+  minor: number
+  phase: number
+  radiansPerSecond: number
+  startedAt: number
+  objects: {object: THREE.Object3D; start: THREE.Vector3}[]
+}
+const orbitingPlanets: OrbitingPlanet[] = []
+const movingLines: {
+  geometry: THREE.BufferGeometry
+  edges: {source:string;target:string}[]
+}[] = []
+let orbitFrozenAt = 0
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
@@ -559,56 +578,36 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     byChapter.get(owner)!.push(node)
   }
 
-  // Two staggered orbital belts use the four quadrants, not rigid radial
-  // spokes. Their centers are repelled in projection to avoid collisions.
+  // Whole-course overview uses the SAME elliptical design language as
+  // the chapter browse-group overview. Chapters orbit the course core in
+  // the XZ plane; concept counts determine their visual weight/speed.
   const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
+    .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
-  top.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
-  const total = top.length
-  const sizes = top.map(c => byChapter.get(c.id)?.length ?? 0)
-  const large = Math.max(1, ...sizes)
-  const orbit = Math.max(105, 74 + Math.sqrt(large) * 7 + total * 3.4)
-  const innerCount = total >= 7 ? Math.max(3, Math.round(total * .40)) : 0
-  const outerCount = total - innerCount
-  const chapterCoords: THREE.Vector3[] = []
-  top.forEach((ch, i) => {
-    const inner = i < innerCount
-    const index = inner ? i : i - innerCount
-    const count = inner ? innerCount : outerCount
-    const angle = -Math.PI / 2 + (index + (inner ? 0 : .48)) * 2 * Math.PI / Math.max(1, count)
-      + (ordinalHash(ch.id + ':angle') - .5) * .12
-    const radius = orbit * (inner ? .60 : 1.02) *
-      (.96 + ordinalHash(ch.id + ':radius') * .08)
-    chapterCoords.push(new THREE.Vector3(
-      Math.cos(angle) * radius,
-      (ordinalHash(ch.id + ':elevation') - .5) * 10,
-      Math.sin(angle) * radius,
-    ))
+  const count=top.length
+  const large=Math.max(1,...top.map(ch=>byChapter.get(ch.id)?.length ?? 0))
+  const viewport=safeViewport()
+  const aspect=THREE.MathUtils.clamp(
+    (viewport.right-viewport.left)/Math.max(1,viewport.bottom-viewport.top),
+    1.30, 2.30)
+  const orbit = Math.max(128, 125 + Math.sqrt(large)*2.8 + count*3)
+  const chapterBands=browseOrbitBands(top)
+  chapterBands.forEach((band,ring)=>{
+    const fraction=chapterBands.length===1 ? 1 :
+      .56+.44*ring/Math.max(1,chapterBands.length-1)
+    const a=orbit*fraction*aspect*.82
+    const b=orbit*fraction*.76
+    const at=ellipseArcAngles(a,b)
+    const phase=ring*.37+.09
+    band.forEach((ch,i)=>{
+      const angle=at((i+phase)/band.length)
+      pos.set(ch.id,new THREE.Vector3(
+        Math.cos(angle)*a,
+        (ordinalHash(ch.id+':altitude')-.5)*4,
+        Math.sin(angle)*b,
+      ))
+    })
   })
-  for (let pass = 0; pass < 22; pass++) {
-    for (let i = 0; i < chapterCoords.length; i++) {
-      for (let j = i + 1; j < chapterCoords.length; j++) {
-        const a = chapterCoords[i], b = chapterCoords[j]
-        const dx = b.x - a.x, dz = b.z - a.z
-        const d = Math.hypot(dx, dz)
-        if (d >= 54) continue
-        const theta = (i + 1) * G + j
-        const ux = d > .001 ? dx / d : Math.cos(theta)
-        const uz = d > .001 ? dz / d : Math.sin(theta)
-        const shift = (54 - d) * .30
-        a.x -= ux * shift; a.z -= uz * shift
-        b.x += ux * shift; b.z += uz * shift
-      }
-    }
-    for (const point of chapterCoords) {
-      const d = Math.hypot(point.x, point.z)
-      if (d < 55 && d > .001) {
-        point.x *= 55 / d
-        point.z *= 55 / d
-      }
-    }
-  }
-  top.forEach((ch, i) => pos.set(ch.id, chapterCoords[i]))
   // Nested chapters stay near their real parent but get their own system.
   const pending = new Map(nested.map(c => [c.id, c]))
   for (let pass = 0; pending.size && pass <= nested.length; pass++) {
@@ -733,6 +732,8 @@ function clearGraph(animate = false) {
   orbitTracks.splice(0)
   groupMarkers.splice(0)
   groupMarkerRadii.clear()
+  orbitingPlanets.splice(0)
+  movingLines.splice(0)
   hoveredNodeId = null
   hoveredName.value = ''
   positions.clear()
@@ -1263,7 +1264,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
         : 6.8)
       : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
-          ? 11.7 + Math.min(4.1, Math.log2(count + 1) * .53)
+          ? 7.3 + Math.min(17, 2.65 * Math.sqrt(Math.max(1,count)/10))
           : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
         * (chapterSelected ? 1.12 : 1)
     // Front and back stars get different brightness and actual projected
