@@ -916,8 +916,15 @@ function initializeOrbitingPlanets() {
       const objects=orbitVisuals.get(node.id)
       if(!position||!objects?.length)return
       const delta=position.clone().sub(center)
-      const phase=Math.atan2(delta.dot(axisY)/yRadius,
-        delta.dot(axisX)/xRadius)
+      const x=delta.dot(axisX), y=delta.dot(axisY)
+      const phase=Math.atan2(y/yRadius,x/xRadius)
+      const ellipticalScale=Math.hypot(x/xRadius,y/yRadius)
+      // Recover the EXACT initial point, including tiny depth offsets.
+      // Without this the first animation frame snaps every planet onto an
+      // approximate common ellipse and ruins the continuous-map feeling.
+      const residual=delta.clone().addScaledVector(axisX,-x)
+        .addScaledVector(axisY,-y)
+      const individualCenter=center.clone().add(residual)
       const amount=node.kind==='group'?node.source_count:
         (cachedChapterTotals.get(node.id)??node.source_count)
       // Stable pseudorandom differences avoid everyone moving in lockstep.
@@ -925,9 +932,9 @@ function initializeOrbitingPlanets() {
       const periodSeconds=(48+6.8*Math.sqrt(Math.max(1,amount)))*
         (.91+.18*ordinalHash(node.id+':orbital-speed'))
       orbitingPlanets.push({
-        id:node.id, world:position, center:center.clone(),
+        id:node.id, world:position, center:individualCenter,
         axisX:axisX.clone(), axisY:axisY.clone(),
-        major:xRadius, minor:yRadius, phase,
+        major:xRadius*ellipticalScale, minor:yRadius*ellipticalScale, phase,
         radiansPerSecond:2*Math.PI/periodSeconds,
         startedAt:0,
         objects,
@@ -1272,6 +1279,11 @@ function rebuild(animate = false, transition?: SceneTransition) {
           ? makeFocusLabel(node.name, center)
           : smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
         if (label) {
+          if (focusState.active && props.preservePositionsOnSelect &&
+              !center && !neighbor) {
+            label.material.opacity = .23
+            label.material.transparent = true
+          }
           label.position.copy(position)
           label.userData.nodeId = node.id
           const width = focusState.active
