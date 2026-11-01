@@ -70,6 +70,13 @@ type SceneTransition = {
 }
 const meshes: THREE.Mesh[] = []
 const contextMeshes: THREE.Mesh[] = []
+type ScreenBox = { left: number; right: number; top: number; bottom: number }
+type BackdropPoint = { position: THREE.Vector3; color: THREE.Color; local: boolean }
+let backdropCloud: THREE.InstancedMesh | null = null
+const backdropPoints: BackdropPoint[] = []
+let lastBackdropLayout = 0
+const projectedPoint = new THREE.Vector3()
+const cameraFacing = new THREE.Vector3()
 let hoveredNodeId: string | null = null
 const hoveredName = ref('')
 const hoveredPoint = ref({ x: 0, y: 0 })
@@ -654,6 +661,8 @@ function clearGraph(animate = false) {
   incoming = null
   meshes.splice(0)
   contextMeshes.splice(0)
+  backdropCloud = null
+  backdropPoints.splice(0)
   labelAnchors.splice(0)
   hoveredNodeId = null
   hoveredName.value = ''
@@ -691,6 +700,75 @@ function resolveLayout() {
 // Keep the global atlas coordinates independent from the currently opened
 // chapter/subgroup. Groups in the fullscreen explorer are synthetic browse
 // markers; they orbit their actual chapter without replacing the real graph.
+// Screen-space safe area is computed from real DOM overlays, not a fixed
+// 365px sidebar guess. It also handles the navigation drawer and narrow
+// screens; the 3D camera fits the active constellation inside this rectangle.
+function overlayBoxes(): ScreenBox[] {
+  const mount = mountPoint.value
+  if (!mount) return []
+  const host = mount.closest('.gx-body')
+  if (!host) return []
+  const canvasBounds = mount.getBoundingClientRect()
+  const occluders = host.querySelectorAll<HTMLElement>(
+    '.gx-detail, .gx-nav, .gx-stage-nav, .gx-view-switch, .gx-counter, .gx-zoom-controls')
+  const boxes: ScreenBox[] = []
+  for (const el of occluders) {
+    const rect = el.getBoundingClientRect()
+    if (rect.width < 2 || rect.height < 2) continue
+    const left = Math.max(0, rect.left - canvasBounds.left - 9)
+    const right = Math.min(canvasBounds.width, rect.right - canvasBounds.left + 9)
+    const top = Math.max(0, rect.top - canvasBounds.top - 9)
+    const bottom = Math.min(canvasBounds.height, rect.bottom - canvasBounds.top + 9)
+    if (right > left && bottom > top) boxes.push({left, right, top, bottom})
+  }
+  return boxes
+}
+function overlaps(a: ScreenBox, b: ScreenBox, padding = 0) {
+  return a.left < b.right + padding && a.right > b.left - padding &&
+    a.top < b.bottom + padding && a.bottom > b.top - padding
+}
+function safeViewport() {
+  const width = Math.max(1, mountPoint.value?.clientWidth ?? 1)
+  const height = Math.max(1, mountPoint.value?.clientHeight ?? 1)
+  const inset = Math.min(22, Math.max(10, width * .015))
+  let safe: ScreenBox = {left:inset, right:width-inset, top:inset, bottom:height-inset}
+  for (const block of overlayBoxes()) {
+    // Long vertical drawers reserve horizontal space; floating stage
+    // overlays reserve top/bottom space but not the whole canvas width.
+    if (block.bottom - block.top > height * .48) {
+      if (block.left < width * .5) safe.left = Math.max(safe.left, block.right + 12)
+      else safe.right = Math.min(safe.right, block.left - 12)
+    } else if (block.top < height * .40) {
+      safe.top = Math.max(safe.top, block.bottom + 12)
+    } else if (block.bottom > height * .66) {
+      safe.bottom = Math.min(safe.bottom, block.top - 12)
+    }
+  }
+  // Even with multiple open drawers, preserve a nonempty viewport for a
+  // selected concept and its closest neighbors.
+  if (safe.right - safe.left < 140) {
+    safe.left = inset
+    safe.right = Math.max(inset + 80, width - inset)
+  }
+  if (safe.bottom - safe.top < 160) {
+    safe.top = inset
+    safe.bottom = Math.max(inset + 80, height - inset)
+  }
+  return safe
+}
+function screenPosition(world: THREE.Vector3): {x:number;y:number;visible:boolean} {
+  if (!camera || !renderer) return {x:0,y:0,visible:false}
+  projectedPoint.copy(world).project(camera)
+  const w = renderer.domElement.clientWidth
+  const h = renderer.domElement.clientHeight
+  return {
+    x:(projectedPoint.x+1)*w/2,
+    y:(1-projectedPoint.y)*h/2,
+    visible: projectedPoint.z > -1 && projectedPoint.z < 1 &&
+      Math.abs(projectedPoint.x) < 1.2 && Math.abs(projectedPoint.y) < 1.2,
+  }
+}
+
 function resolveContextLayout() {
   const nodes = props.contextNodes
   const edges = props.contextEdges ?? props.layoutEdges ?? props.edges
@@ -825,6 +903,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
   // location. Small spheres are instanced: thousands of dim points remain
   // cheap to draw. Only active nodes get labels, rings and bright halos.
   contextMeshes.splice(0)
+  backdropCloud = null
+  backdropPoints.splice(0)
+  lastBackdropLayout = 0
   const background = (props.contextNodes ?? []).filter(n =>
     !activeIds.has(n.id))
   const backdrop = resolveContextLayout()
@@ -835,6 +916,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     })
     const sphere = new THREE.SphereGeometry(1, 10, 8)
     const cloud = new THREE.InstancedMesh(sphere, material, backKnowledge.length)
+    backdropCloud = cloud
     const matrix = new THREE.Matrix4()
     const scale = new THREE.Vector3()
     const rotation = new THREE.Quaternion()
@@ -846,7 +928,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
       scale.setScalar(size)
       matrix.compose(backdrop.get(node.id)!, rotation, scale)
       cloud.setMatrixAt(index, matrix)
-      cloud.setColorAt(index, new THREE.Color(statusColor(node)).multiplyScalar(brightness))
+      const tint = new THREE.Color(statusColor(node))
+      backdropPoints.push({position: backdrop.get(node.id)!.clone(), color:tint, local:onChapter})
+      cloud.setColorAt(index, tint.clone().multiplyScalar(brightness))
       ids.push(node.id)
     })
     cloud.instanceMatrix.needsUpdate = true
