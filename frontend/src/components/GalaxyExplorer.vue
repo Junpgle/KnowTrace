@@ -271,7 +271,8 @@ function switchLevel(value: 'clusters' | 'groups' | 'knowledge') {
     backToGroups()
     return
   }
-  markNavigation('jump')
+  markNavigation(value === 'knowledge' && chapterChoice.value !== 'all'
+    ? 'enter' : 'jump', chapterChoice.value !== 'all' ? chapterChoice.value : undefined)
   activeGroup.value = null
   selectedId.value = null
   level.value = value
@@ -299,26 +300,36 @@ function selectCanvasNode(id: string | null) {
   selectedId.value = id
 }
 function focusKnowledge(id: string) {
-  markNavigation('jump')
-  // Navigate into the concept's actual chapter instead of unexpectedly
-  // expanding the entire course from a collapsed overview.
+  // Preserve a visible map anchor when opening a concept from the directory:
+  // before expansion the concept may not yet have a rendered world position.
+  const wasVisible = nodes.value.some(n => n.id === id)
+  const previousGroup = activeGroup.value
+  const previousChapter = chapterChoice.value
   const chapter = parent.value.get(id)
-  chapterChoice.value = chapter && byId.value.get(chapter)?.kind === 'chapter'
+  const destination = chapter && byId.value.get(chapter)?.kind === 'chapter'
     ? chapter : 'all'
+  chapterChoice.value = destination
   term.value = ''
   level.value = 'knowledge'
   activeGroup.value = browseGroups.value.find(g=>g.members.includes(id))?.id??null
+  markNavigation('enter', wasVisible ? id :
+    previousGroup ?? (previousChapter !== 'all' ? previousChapter :
+      destination !== 'all' ? destination : id))
   selectedId.value = id
 }
 function focusRelated(id: string) {
   focusKnowledge(id)
 }
 function selectChapter(id: string, fromCanvas = false) {
-  if (fromCanvas && id !== 'all') markNavigation('enter', id)
-  else if (id === 'all' && chapterChoice.value !== 'all') {
+  if (id === 'all' && chapterChoice.value !== 'all') {
     backToAtlas()
     return
-  } else markNavigation('jump')
+  }
+  // Entering a chapter from the directory should use the same smooth zoom as
+  // clicking its planet. 'jump' used to replace the entire scene instantly.
+  if (id !== 'all' && (fromCanvas || chapterChoice.value !== id))
+    markNavigation('enter', id)
+  else markNavigation('jump')
   chapterChoice.value = id
   level.value = id === 'all' ? 'clusters' : 'groups'
   activeGroup.value = null

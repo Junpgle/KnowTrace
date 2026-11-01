@@ -205,8 +205,11 @@ async function select(id: string | null) {
     return
   }
   if (node?.kind === 'chapter') {
+    // A concept is entered *from* its chapter; clicking the breadcrumb or
+    // empty sky must zoom OUT and restore the saved parent camera.
+    markNavigation(previous?.kind === 'knowledge' && selectedChapter.value === node.id
+      ? 'back' : 'enter', node.id)
     selectedChapter.value = node.id
-    markNavigation('enter', node.id)
   } else if (node?.kind === 'knowledge') {
     markNavigation(previous?.kind === 'knowledge' ? 'jump' : 'enter', node.id)
   } else if (previous?.kind === 'knowledge') {
