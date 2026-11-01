@@ -366,3 +366,31 @@ CREATE TABLE IF NOT EXISTS mastery_events (
 );
 CREATE INDEX IF NOT EXISTS idx_mastery_events_user_kp_time
     ON mastery_events(user_id, knowledge_point_id, created_at);
+-- Resumable, user-confirmed bulk question generation. Existing databases are
+-- extended additively; completed question versions are never overwritten.
+CREATE TABLE IF NOT EXISTS question_generation_batches (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    options_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('queued','running','stopping','stopped','interrupted','succeeded')),
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_question_generation_course
+    ON question_generation_batches(course_id, created_at);
+
+CREATE TABLE IF NOT EXISTS question_generation_units (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL REFERENCES question_generation_batches(id) ON DELETE RESTRICT,
+    ordinal INTEGER NOT NULL,
+    knowledge_ids_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','running','succeeded','failed')),
+    created_questions INTEGER NOT NULL DEFAULT 0,
+    warning_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    UNIQUE(batch_id,ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_question_generation_unit_batch
+    ON question_generation_units(batch_id,ordinal);
