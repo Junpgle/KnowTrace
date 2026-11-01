@@ -300,15 +300,21 @@ function selectCanvasNode(id: string | null) {
   selectedId.value = id
 }
 function focusKnowledge(id: string) {
-  markNavigation('enter', id)
-  // Navigate into the concept's actual chapter instead of unexpectedly
-  // expanding the entire course from a collapsed overview.
+  // Preserve a visible map anchor when opening a concept from the directory:
+  // before expansion the concept may not yet have a rendered world position.
+  const wasVisible = nodes.value.some(n => n.id === id)
+  const previousGroup = activeGroup.value
+  const previousChapter = chapterChoice.value
   const chapter = parent.value.get(id)
-  chapterChoice.value = chapter && byId.value.get(chapter)?.kind === 'chapter'
+  const destination = chapter && byId.value.get(chapter)?.kind === 'chapter'
     ? chapter : 'all'
+  chapterChoice.value = destination
   term.value = ''
   level.value = 'knowledge'
   activeGroup.value = browseGroups.value.find(g=>g.members.includes(id))?.id??null
+  markNavigation('enter', wasVisible ? id :
+    previousGroup ?? (previousChapter !== 'all' ? previousChapter :
+      destination !== 'all' ? destination : id))
   selectedId.value = id
 }
 function focusRelated(id: string) {
