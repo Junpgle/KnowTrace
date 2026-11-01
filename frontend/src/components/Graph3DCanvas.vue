@@ -310,26 +310,22 @@ function glowTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas)
 }
 
+// Projectable sunflower disk: sparse points circle their real chapter in
+// the XZ atlas plane instead of forming an overlapping miniature 3D ball.
 function organicOffsets(count: number, seed: string): THREE.Vector3[] {
-  const points: THREE.Vector3[] = []
-  if (!count) return points
-  const angle = Math.PI * (3 - Math.sqrt(5))
+  const offsets: THREE.Vector3[] = []
   const twist = ordinalHash(seed + ':twist') * Math.PI * 2
-  // Volume, rather than just the surface: sample by cubed radius.
+  const step = count < 20 ? 8.1 : 9.4
   for (let i = 0; i < count; i++) {
-    const u = (i + .5) / count
-    const jitter = (ordinalHash(seed + ':j:' + i) - .5) * .22
-    const y = 1 - 2 * ((i * .6180339887498949 + .5) % 1)
-    const radial = Math.sqrt(Math.max(0, 1 - y * y))
-    const theta = i * angle + twist + jitter
-    const radius = 5 + 2.3 * Math.cbrt(count) * Math.cbrt(.1 + .9 * u)
-    points.push(new THREE.Vector3(
-      Math.cos(theta) * radial * radius,
-      y * radius * .82,
-      Math.sin(theta) * radial * radius,
+    const theta = twist + i * G
+    const radius = 15 + step * Math.sqrt(i + .6)
+    offsets.push(new THREE.Vector3(
+      Math.cos(theta) * radius,
+      (ordinalHash(seed + ':elev:' + i) - .5) * 10,
+      Math.sin(theta) * radius,
     ))
   }
-  return points
+  return offsets
 }
 
 function layout(nodes: GraphNode[], edges: GraphEdge[]) {
@@ -456,28 +452,56 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     byChapter.get(owner)!.push(node)
   }
 
-  // Use a balanced course-centered orbit, not sequential collision packing.
-  // Ordering and placement are stable across selection and filtering.
+  // Two staggered orbital belts use the four quadrants, not rigid radial
+  // spokes. Their centers are repelled in projection to avoid collisions.
   const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
   top.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
   const total = top.length
   const sizes = top.map(c => byChapter.get(c.id)?.length ?? 0)
   const large = Math.max(1, ...sizes)
-  const orbit = Math.max(52, 34 + total * 4.8 + Math.cbrt(large) * 3.2)
-  // Radial constellation instead of box/rectangle columns. Small angular
-  // jitter and alternating orbit distance break the grid-like alignment while
-  // preserving a clear course-centered star structure.
+  const orbit = Math.max(105, 74 + Math.sqrt(large) * 7 + total * 3.4)
+  const innerCount = total >= 7 ? Math.max(3, Math.round(total * .40)) : 0
+  const outerCount = total - innerCount
+  const chapterCoords: THREE.Vector3[] = []
   top.forEach((ch, i) => {
-    const angle = -Math.PI / 2 + 2 * Math.PI * i / Math.max(1, total)
-      + (ordinalHash(ch.id + ':angle') - .5) * .20
-    const radius = orbit * (.94 + ordinalHash(ch.id + ':orbit') * .20)
-    pos.set(ch.id, new THREE.Vector3(
+    const inner = i < innerCount
+    const index = inner ? i : i - innerCount
+    const count = inner ? innerCount : outerCount
+    const angle = -Math.PI / 2 + (index + (inner ? 0 : .48)) * 2 * Math.PI / Math.max(1, count)
+      + (ordinalHash(ch.id + ':angle') - .5) * .12
+    const radius = orbit * (inner ? .60 : 1.02) *
+      (.96 + ordinalHash(ch.id + ':radius') * .08)
+    chapterCoords.push(new THREE.Vector3(
       Math.cos(angle) * radius,
-      (ordinalHash(ch.id + ':elevation') - .5) * 9,
+      (ordinalHash(ch.id + ':elevation') - .5) * 10,
       Math.sin(angle) * radius,
     ))
   })
+  for (let pass = 0; pass < 22; pass++) {
+    for (let i = 0; i < chapterCoords.length; i++) {
+      for (let j = i + 1; j < chapterCoords.length; j++) {
+        const a = chapterCoords[i], b = chapterCoords[j]
+        const dx = b.x - a.x, dz = b.z - a.z
+        const d = Math.hypot(dx, dz)
+        if (d >= 54) continue
+        const theta = (i + 1) * G + j
+        const ux = d > .001 ? dx / d : Math.cos(theta)
+        const uz = d > .001 ? dz / d : Math.sin(theta)
+        const shift = (54 - d) * .30
+        a.x -= ux * shift; a.z -= uz * shift
+        b.x += ux * shift; b.z += uz * shift
+      }
+    }
+    for (const point of chapterCoords) {
+      const d = Math.hypot(point.x, point.z)
+      if (d < 55 && d > .001) {
+        point.x *= 55 / d
+        point.z *= 55 / d
+      }
+    }
+  }
+  top.forEach((ch, i) => pos.set(ch.id, chapterCoords[i]))
   // Nested chapters stay near their real parent but get their own system.
   const pending = new Map(nested.map(c => [c.id, c]))
   for (let pass = 0; pending.size && pass <= nested.length; pass++) {
@@ -636,7 +660,31 @@ function rebuild(animate = false) {
   const g = new THREE.Group()
   group = g
   scene.add(g)
-  const coords = resolveLayout()
+  let coords = resolveLayout()
+  // Center a concept and its actual approved neighbors in a local XY orbit.
+  // The visual distance does not imply an inferred semantic relationship.
+  const selectedConcept = props.nodes.find(n => n.kind === 'knowledge' && n.id === props.selectedId)
+  const localConcepts = props.nodes.every(n => n.kind === 'knowledge')
+    && !!selectedConcept && props.nodes.length <= 26
+  if (localConcepts) {
+    coords = new Map(coords)
+    coords.set(selectedConcept!.id, new THREE.Vector3(0, 0, 0))
+    const neighbors = props.nodes.filter(n => n.kind === 'knowledge' && n.id !== selectedConcept!.id)
+      .sort((a, b) => a.id.localeCompare(b.id))
+    const inner = neighbors.length <= 8 ? neighbors.length : Math.min(7, Math.ceil(neighbors.length * .42))
+    neighbors.forEach((node, index) => {
+      const outer = index >= inner
+      const i = outer ? index - inner : index
+      const count = outer ? neighbors.length - inner : inner
+      const theta = -Math.PI / 2 + (i + (outer ? .45 : 0)) * 2 * Math.PI / Math.max(1, count)
+      const radius = outer ? Math.max(92, count * 12) : Math.max(46, count * 7.3)
+      coords.set(node.id, new THREE.Vector3(
+        Math.cos(theta) * radius * 1.17,
+        Math.sin(theta) * radius * .88,
+        (ordinalHash(node.id + ':focus-depth') - .5) * 6,
+      ))
+    })
+  }
   // Fit the camera to visible nodes while preserving whole-course coordinates.
   for (const node of props.nodes) {
     const position = coords.get(node.id)
@@ -681,7 +729,9 @@ function rebuild(animate = false) {
       cluster.setColorAt(index, color)
       ids.push(node.id)
 
-      if ((smallGroup && !focusState.active) || center || (neighbor && neighborLabels < 12)) {
+      if ((smallGroup && !focusState.active) ||
+          (!focusState.active && !smallGroup && index < 32) ||
+          center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
         const label = focusState.active
           ? makeFocusLabel(node.name, center)
@@ -689,17 +739,20 @@ function rebuild(animate = false) {
         if (label) {
           label.position.copy(position)
           label.userData.nodeId = node.id
-          const width = center ? 274 : 242
+          const width = focusState.active
+            ? (center ? 208 : knowledge.length > 9 ? 148 : 178)
+            : 154
           labelAnchors.push({
             sprite: label, center: position, nodeId: node.id,
             distance: radius + (smallGroup ? 6.5 : 4.5),
             focused: focusState.active,
             priority: center ? 10000 : 1000,
+            declutter: !focusState.active && !smallGroup,
             screen: focusState.active
-              ? {width, height: width * 180 / 640, radius, gap: 14}
+              ? {width, height: width * 180 / 640, radius, gap: 12}
               : smallGroup
                 ? {width: 218, height: 218 * 150 / 520, radius, gap: 12}
-                : undefined,
+                : {width: 154, height: 39, radius, gap: 11},
           })
           g.add(label)
         }
@@ -856,7 +909,10 @@ function rebuild(animate = false) {
           nodeId: node.id,
           priority: node.kind === 'group'
             ? count + (groupOrder >= 0 && groupOrder < 6 ? 7 : 0) : 100,
-          declutter: overview && node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 7,
+          declutter: overview && (
+            node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 7 ||
+            node.kind === 'chapter' && props.nodes.filter(n=>n.kind==='chapter').length > 5
+          ),
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
             radius, gap: node.kind === 'group' ? 8 : 12,
@@ -1030,17 +1086,26 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const relatedPoints = [...relatedIds].map(n => positions.get(n))
     .filter((p): p is THREE.Vector3 => Boolean(p))
   const relationFocus = !!coordinate && relatedPoints.length > 0
-  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints] : fitPoints
+  const chapterFocus = !!coordinate && selectedNode?.kind === 'chapter' && visibleKnowledge.length > 0
+  const focusConstellation = !!coordinate && selectedNode?.kind === 'knowledge' &&
+    props.nodes.every(n => n.kind === 'knowledge') && props.nodes.length <= 26
+  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints]
+    : chapterFocus ? [coordinate, ...visibleKnowledge] : fitPoints
   const bounds = new THREE.Box3().setFromPoints(focusedPoints)
   const overviewCenter = bounds.getCenter(new THREE.Vector3())
   // For a real relationship network use its center; for a single point,
   // retain the existing click-to-center behavior.
-  desiredTarget.copy(relationFocus ? overviewCenter : (coordinate ?? overviewCenter))
+  desiredTarget.copy(relationFocus || chapterFocus ? overviewCenter : (coordinate ?? overviewCenter))
 
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < .01) direction.set(.4, .8, 1)
-  if (!id && (resetAtlasAngle || overview)) {
+  if (focusConstellation) {
+    // In concept focus the orbit is near the XY plane, so view it face-on.
+    direction.set(.05, .14, 1)
+  } else if (chapterFocus) {
+    direction.set(0, 1, .30)
+  } else if (!id && (resetAtlasAngle || overview)) {
     if (localGroup) {
       // Browsing groups and leaf networks are laid out in the XY plane.
       // Show them face-on instead of projecting their rows onto each other.
@@ -1060,11 +1125,20 @@ function focus(id: string | null, resetAtlasAngle = false) {
       localGroup ? 86 : 110,
       projectedFitDistance(
         focusedPoints, overviewCenter, direction,
-        localGroup ? .49 : .54,
-        .64,
+        localGroup ? .70 : focusConstellation ? .80 : .60,
+        focusConstellation ? .78 : .69,
+        focusConstellation ? 26 : 11,
+        focusConstellation ? 29 : 16,
       ),
     )
     controls.maxDistance = Math.max(280, distance * 1.7)
+    camera.far = Math.max(1600, distance * 3)
+    camera.updateProjectionMatrix()
+  } else if (chapterFocus) {
+    distance = Math.max(98, projectedFitDistance(
+      focusedPoints, overviewCenter, direction, .77, .76, 20, 23,
+    ))
+    controls.maxDistance = Math.max(280, distance * 1.8)
     camera.far = Math.max(1600, distance * 3)
     camera.updateProjectionMatrix()
   } else if (!id) {
@@ -1233,7 +1307,7 @@ function declutterGroupLabels() {
     const forced = anchor.nodeId === hoveredNodeId
     const fits = screen.z > -1 && screen.z < 1 &&
       box.left >= 10 && box.right <= width - 10 &&
-      box.top >= 100 && box.bottom <= height - 25
+      box.top >= 12 && box.bottom <= height - 18
     const overlaps = boxes.some(other =>
       box.left < other.right && box.right > other.left &&
       box.top < other.bottom && box.bottom > other.top)
@@ -1263,8 +1337,9 @@ function arrangeFocusedLabels() {
   const viewportWidth = renderer.domElement.clientWidth
   const viewportHeight = renderer.domElement.clientHeight
   const minX = 18
-  const maxX = Math.max(minX + 180, viewportWidth - (props.selectedId ? 365 : 20))
-  const minY = 132
+  // The detail drawer is already outside the regular WebGL canvas.
+  const maxX = Math.max(minX + 160, viewportWidth - 18)
+  const minY = 26
   const maxY = Math.max(minY + 90, viewportHeight - 66)
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
   const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)

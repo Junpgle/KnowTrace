@@ -28,6 +28,10 @@ const showRelations = ref(false)
 const display = ref<'3d' | 'list'>('3d')
 const explorerOpen = ref(false)
 const canvas = ref<InstanceType<typeof Graph3DCanvas> | null>(null)
+const navigation = ref<{ serial: number; mode: 'enter' | 'back' | 'jump'; nodeId?: string }>({ serial: 0, mode: 'jump' })
+function markNavigation(mode: 'enter' | 'back' | 'jump', nodeId?: string) {
+  navigation.value = { serial: navigation.value.serial + 1, mode, nodeId }
+}
 let requestToken = 0
 let detailToken = 0
 
@@ -70,37 +74,66 @@ const matching = computed(() => {
     return true
   })
 })
+// A course may have thousands of concepts. Show chapter anchors first, then
+// only the chosen chapter (or search results), and finally a local verified
+// relationship constellation. No graph facts are created by this view.
+const RENDER_LIMIT = 140
+const RELATION_LIMIT = 24
+const focusedConcept = computed(() => selectedNode.value?.kind === 'knowledge' ? selectedNode.value : null)
+const focusedChapter = computed(() => selectedNode.value?.kind === 'chapter'
+  ? selectedNode.value.id : selectedChapter.value === 'all' ? null : selectedChapter.value)
+const approvedNeighbors = computed(() => {
+  if (!focusedConcept.value || !graph.value) return [] as GraphNode[]
+  const ids = new Set<string>()
+  for (const edge of graph.value.edges) {
+    if (edge.structural || !edge.verified) continue
+    if (edge.source === focusedConcept.value.id) ids.add(edge.target)
+    else if (edge.target === focusedConcept.value.id) ids.add(edge.source)
+  }
+  return allKnowledge.value.filter(node => ids.has(node.id))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
+})
+const displayKnowledge = computed(() => {
+  if (focusedConcept.value) return [focusedConcept.value, ...approvedNeighbors.value.slice(0, RELATION_LIMIT)]
+  if (focusedChapter.value) return matching.value.filter(n => inChapter(n, focusedChapter.value!))
+    .slice(0, RENDER_LIMIT)
+  if (query.value.trim() || filter.value !== 'all' || !includePending.value)
+    return matching.value.slice(0, RENDER_LIMIT)
+  return [] as GraphNode[]
+})
+const hiddenKnowledgeCount = computed(() => focusedConcept.value
+  ? Math.max(0, approvedNeighbors.value.length - RELATION_LIMIT)
+  : Math.max(0, (focusedChapter.value
+    ? matching.value.filter(n => inChapter(n, focusedChapter.value!)).length
+    : query.value.trim() || filter.value !== 'all' || !includePending.value ? matching.value.length : 0)
+    - displayKnowledge.value.length))
 const visibleIds = computed(() => {
   const ids = new Set<string>()
+  if (focusedConcept.value) {
+    displayKnowledge.value.forEach(n => ids.add(n.id))
+    return ids
+  }
+  const addParents = (id: string) => {
+    let cursor = id
+    const seen = new Set<string>()
+    while (cursor && !seen.has(cursor)) {
+      ids.add(cursor)
+      seen.add(cursor)
+      cursor = structuralParents.value.get(cursor) ?? ''
+    }
+  }
+  // The complete chapter skeleton stays available without the unreadable
+  // overlap of thousands of default-visible knowledge planets.
+  chapters.value.forEach(n => addParents(n.id))
   const root = graph.value?.nodes.find(n => n.kind === 'course')
   if (root) ids.add(root.id)
-  const addParents = (id: string) => {
-    let current = id
-    const seen = new Set<string>()
-    while (current && !seen.has(current)) {
-      ids.add(current)
-      seen.add(current)
-      current = structuralParents.value.get(current) ?? ''
-    }
-  }
-  if (selectedChapter.value === 'all' && filter.value === 'all' && !query.value.trim())
-    chapters.value.forEach(n => addParents(n.id))
-  matching.value.forEach(node => addParents(node.id))
-  if (selectedChapter.value !== 'all') addParents(selectedChapter.value)
-  // Keep approved one-hop neighbors visible across chapter/search filters.
-  if (selectedId.value && graph.value?.nodes.some(n => n.id === selectedId.value && n.kind === 'knowledge')) {
-    addParents(selectedId.value)
-    for (const edge of graph.value?.edges ?? []) {
-      if (edge.structural || !edge.verified) continue
-      if (edge.source === selectedId.value) addParents(edge.target)
-      else if (edge.target === selectedId.value) addParents(edge.source)
-    }
-  }
+  displayKnowledge.value.forEach(n => addParents(n.id))
   return ids
 })
 const visibleNodes = computed(() => (graph.value?.nodes ?? []).filter(n => visibleIds.value.has(n.id)))
-const visibleEdges = computed(() => (graph.value?.edges ?? [])
-  .filter(e => visibleIds.value.has(e.source) && visibleIds.value.has(e.target)))
+const visibleEdges = computed(() => (graph.value?.edges ?? []).filter(e =>
+  visibleIds.value.has(e.source) && visibleIds.value.has(e.target) &&
+  (focusedConcept.value ? !e.structural && e.verified : e.structural || showRelations.value && e.verified)))
 const visibleRelations = computed(() => visibleEdges.value.filter(e => !e.structural).length)
 const related = computed(() => relationship.value.map(edge => ({
   id: edge.source === selectedId.value ? edge.target : edge.source,
@@ -132,6 +165,14 @@ function relationName(type: GraphEdge['type']) {
   }
   return names[type]
 }
+function chooseChapter(value: string) {
+  if (value === 'all') {
+    markNavigation('back')
+    selectedId.value = null
+    selectedChapter.value = 'all'
+    detail.value = null
+  } else void select(value)
+}
 async function refresh() {
   const token = ++requestToken
   loading.value = true
@@ -147,10 +188,33 @@ async function refresh() {
   } finally { if (token === requestToken) loading.value = false }
 }
 async function select(id: string | null) {
+  const node = graph.value?.nodes.find(n => n.id === id)
+  const previous = selectedNode.value
+  if (node?.kind === 'course') {
+    await resetView()
+    return
+  }
+  // Clicking the empty sky backs out one level instead of leaving a
+  // partially expanded chapter with no sensible camera target.
+  if (!id && previous?.kind === 'knowledge' && selectedChapter.value !== 'all') {
+    await select(selectedChapter.value)
+    return
+  }
+  if (!id && previous?.kind === 'chapter') {
+    await resetView()
+    return
+  }
+  if (node?.kind === 'chapter') {
+    selectedChapter.value = node.id
+    markNavigation('enter', node.id)
+  } else if (node?.kind === 'knowledge') {
+    markNavigation(previous?.kind === 'knowledge' ? 'jump' : 'enter', node.id)
+  } else if (previous?.kind === 'knowledge') {
+    markNavigation('back', focusedChapter.value ?? undefined)
+  }
   const token = ++detailToken
   selectedId.value = id
   detail.value = null
-  const node = graph.value?.nodes.find(n => n.id === id)
   if (!id || node?.kind !== 'knowledge') { detailLoading.value = false; return }
   detailLoading.value = true
   try {
@@ -160,6 +224,7 @@ async function select(id: string | null) {
   finally { if (token === detailToken) detailLoading.value = false }
 }
 async function resetView() {
+  markNavigation('back')
   selectedId.value = null
   selectedChapter.value = 'all'
   filter.value = 'all'
@@ -175,6 +240,7 @@ watch(() => props.courseId, () => {
   filter.value = 'all'
   detail.value = null
   explorerOpen.value = false
+  markNavigation('jump')
   void refresh()
 }, { immediate: true })
 </script>
@@ -219,7 +285,7 @@ watch(() => props.courseId, () => {
             <input v-model="query" type="search" placeholder="搜索知识点名称…" />
           </label>
           <label class="kg-field"><span>章节</span>
-            <select v-model="selectedChapter">
+            <select :value="selectedChapter" @change="chooseChapter(($event.target as HTMLSelectElement).value)">
               <option value="all">全部章节</option>
               <option v-for="chapter in chapters" :key="chapter.id" :value="chapter.id">{{ chapter.name }}</option>
             </select>
@@ -233,7 +299,11 @@ watch(() => props.courseId, () => {
           </div>
           <label class="kg-check"><input v-model="includePending" type="checkbox" />显示未审核知识点</label>
           <label class="kg-check"><input v-model="showRelations" type="checkbox" />总览显示全部关系线</label>
-          <p class="kg-count">已筛选 {{ matching.length }} 个知识点 · {{ visibleRelations }} 条已审核关系</p>
+          <p class="kg-count">已筛选 {{ matching.length }} 个知识点 · 当前呈现 {{ displayKnowledge.length }} 个 · {{ visibleRelations }} 条已审核关系</p>
+          <p class="kg-muted">默认显示章节骨架；点击章节展开知识点，点击知识点聚焦已审核的关联簇。</p>
+          <p v-if="hiddenKnowledgeCount" class="kg-muted" role="status">
+            本层还有 {{ hiddenKnowledgeCount }} 个节点未同时绘制；可通过左侧搜索定位，避免缩小整张星系。
+          </p>
           <h2 class="kg-subtitle"><Network :size="17" /> 定位知识星球</h2>
           <div v-if="!matching.length" class="kg-muted">没有匹配的知识点，可调整筛选条件。</div>
           <div v-else class="kg-navigation">
@@ -247,8 +317,9 @@ watch(() => props.courseId, () => {
         </aside>
 
         <section class="kg-stage">
-          <div class="kg-stage-head"><span><Orbit :size="16" /> {{ display==='3d' ? '3D 宇宙视图' : '列表视图' }}</span>
+          <div class="kg-stage-head"><span><Orbit :size="16" /> {{ focusedConcept ? '知识关联簇' : focusedChapter ? '章节知识点' : '课程章节骨架' }}</span>
             <div>
+              <button v-if="selectedId || selectedChapter !== 'all'" type="button" @click="resetView"><RotateCcw :size="14" /> 返回全景</button>
               <button type="button" :class="{active:display==='3d'}" @click="display='3d'"><Orbit :size="14" /> 3D</button>
               <button type="button" :class="{active:display==='list'}" @click="display='list'"><List :size="14" /> 列表</button>
               <button type="button" aria-label="放大全屏知识星系" title="全屏探索" @click="explorerOpen=true"><Maximize2 :size="14" /> 全屏</button>
@@ -256,7 +327,8 @@ watch(() => props.courseId, () => {
           </div>
           <Graph3DCanvas v-if="display==='3d' && !explorerOpen" ref="canvas" :nodes="visibleNodes" :edges="visibleEdges"
             :layout-nodes="graph.nodes" :layout-edges="graph.edges" :relation-edges="graph.edges"
-            :selected-id="selectedId" :show-relations="showRelations || !!selectedId" @select="select" />
+            :selected-id="selectedId" :navigation="navigation" :show-structure="false"
+            :show-relations="showRelations || !!focusedConcept" @select="select" />
           <div v-else class="kg-list-mode">
             <p v-if="!matching.length" class="kg-muted">暂无匹配知识点。</p>
             <button v-for="node in matching" :key="node.id" type="button"
@@ -312,7 +384,7 @@ watch(() => props.courseId, () => {
             </template>
             <template v-else-if="selectedNode.kind==='chapter'">
               <p class="kg-muted">该章节包含 {{ allKnowledge.filter(n=>inChapter(n,selectedNode!.id)).length }} 个知识点。</p>
-              <button type="button" class="button button-primary" @click="selectedChapter=selectedNode.id">仅显示本章节</button>
+              <button type="button" class="button button-primary" @click="chooseChapter(selectedNode.id)">仅显示本章节</button>
             </template>
             <div class="kg-actions">
               <button type="button" class="button button-primary" @click="emit('openBank')"><BookOpen :size="16" /> 题库管理</button>
