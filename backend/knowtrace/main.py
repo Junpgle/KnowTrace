@@ -23,6 +23,7 @@ from .mimo import MimoProvider
 from .parser import ParseError, SUPPORTED_EXTENSIONS, extract_chunks
 from .questions import validate_generated_questions, validate_question_fields
 from .quiz_api import register_quiz_routes
+from .short_answer_review import register_short_answer_review
 from .question_batch_api import register_question_batch_routes
 from .question_quality_api import register_question_quality_routes
 from .manual_transfer import register_manual_routes
@@ -779,6 +780,7 @@ def create_app(*, db_path: str | Path | None = None,
     recover_question_batches = register_question_batch_routes(app, database, resolve_provider)
     register_question_quality_routes(app, database)
     register_quiz_routes(app, database)
+    register_short_answer_review(app, database, resolve_provider)
     def extract_batch_pages(document_id: str, start: int, end: int,
                             visual: bool, provider: str):
         return extract_document_knowledge(document_id, ExtractKnowledgeRequest(
