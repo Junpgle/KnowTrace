@@ -7,6 +7,7 @@ a learner. Batch checkpoints survive application restarts.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections import defaultdict, deque
 from pathlib import Path
@@ -141,8 +142,13 @@ def source_catalog(db, course_id: str, ids: list[str]) -> tuple[list[dict], dict
         if len(point_sources[r["knowledge_point_id"]]) >= 2:
             continue
         point_sources[r["knowledge_point_id"]].append(r["chunk_id"])
+        # Eight points x two 1400-character excerpts routinely exceeds the
+        # comfortable context window of local 3–4B models; keep quotes
+        # verifiable while reducing prompt size. Never silently synthesize a
+        # source from an unrelated point.
+        excerpt_limit = 900 if len(point_sources[r["knowledge_point_id"]]) == 1 else 450
         obj = chunks.setdefault(r["chunk_id"], {
-            "chunk_id": r["chunk_id"], "content_text": r["content_text"][:1400],
+            "chunk_id": r["chunk_id"], "content_text": r["content_text"][:excerpt_limit],
             "content_kind": r["content_kind"], "page": r["page_start"],
             "filename": r["original_filename"], "knowledge_point_ids": [],
         })
@@ -193,20 +199,52 @@ def propose_questions(provider, points: list[dict], chunks: list[dict],
     return model_reply(provider, prompt)
 
 
+def parse_batch_json(raw: str) -> dict:
+    """Accept common harmless LLM wrapping; never repair a truncated reply.
+
+    A trailing, partial JSON object is an unreliable answer and must be shown
+    as a model failure, not silently saved as a question.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise AIServiceError("模型返回空文本：请检查模型配置与输出长度")
+    body = raw.strip().lstrip("\ufeff")
+    if body.startswith("```"):
+        body = re.sub(r"^```(?:json)?\\s*", "", body, count=1, flags=re.I).strip()
+        body = re.sub(r"\\s*```$", "", body, count=1).strip()
+    # Some chat APIs return a brief preamble before the JSON object.
+    # The raw JSON decoder makes sure the extracted object is complete.
+    beginning = body.find("{")
+    if beginning < 0:
+        raise AIServiceError("模型没有返回 JSON 对象；请确认使用支持 JSON 输出的模型")
+    try:
+        result, consumed = json.JSONDecoder().raw_decode(body[beginning:])
+    except (ValueError, TypeError) as exc:
+        raise AIServiceError("模型返回的 JSON 不完整或格式错误；建议减小知识簇规模和每组题数") from exc
+    trailing = body[beginning + consumed:].strip().strip("```").strip()
+    if trailing and not trailing.startswith(("注：", "说明：", "备注：")):
+        raise AIServiceError("JSON 之后存在额外无法解析的输出，请缩小分组规模")
+    if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+        raise AIServiceError("模型缺少 items 数组，无法保存题目")
+    return result
+
+
 def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
                            chunks: dict, seen_stems: set[str], count: int,
                            types: set[str]) -> tuple[list[dict], list[str]]:
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise AIServiceError("Bulk question model did not return valid JSON") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
-        raise AIServiceError("Bulk question JSON needs an items array")
+    data = parse_batch_json(raw)
     accepted, warnings = [], []
     for index, item in enumerate(data["items"][:max(10, count*5)], start=1):
         if not isinstance(item, dict):
             warnings.append(f"#{index}: invalid candidate")
             continue
+        # Some small models serialise booleans as strings, despite an
+        # explicit JSON schema. Convert only unambiguous representations.
+        if item.get("question_type") == "true_false" and isinstance(item.get("correct_answer"), str):
+            answer_text = item["correct_answer"].strip().lower()
+            if answer_text in ("true", "false"):
+                item = {**item, "correct_answer": answer_text == "true"}
+        if item.get("question_type") == "single_choice" and isinstance(item.get("correct_answer"), str):
+            item = {**item, "correct_answer": item["correct_answer"].strip().upper()}
         err = validate_question_fields(item.get("question_type"), item.get("stem"),
                     item.get("options"), item.get("correct_answer"),
                     item.get("explanation"), item.get("difficulty"))
@@ -322,6 +360,8 @@ def register_question_batch_routes(app: FastAPI, database: Path, resolve_provide
                             allowed_ids=set(ids), chunks=by_chunk,seen_stems=existing,
                             count=batch["options"]["questions_per_group"],
                             types=set(batch["options"]["question_types"]))
+                        if not accepted:
+                            warnings.insert(0, "模型已响应但没有候选题通过审核前的自动校验；本组未生成题目")
                         with transaction(database) as db:
                             for item in accepted:
                                 # Recheck sources and approvals immediately before insertion.
