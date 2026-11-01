@@ -55,6 +55,8 @@ let cachedNodes: GraphNode[] | null = null
 let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
+let lastViewportWidth = 0
+let lastViewportHeight = 0
 let contextCacheNodes: GraphNode[] | undefined
 let contextCacheEdges: GraphEdge[] | undefined
 let contextCacheCoordinates = new Map<string, THREE.Vector3>()
@@ -1619,7 +1621,13 @@ function arrangeScreenLabels() {
   // The cap adapts to available real-estate; crowded layers only label key
   // nodes until hovered, instead of printing 20 unreadable overlapping cards.
   const available = Math.max(1,(safe.right-safe.left)*(safe.bottom-safe.top))
-  const maxLabels = Math.max(2,Math.min(22,Math.floor(available / 32000)))
+  const groupOverviewLabels = props.nodes.length > 0 &&
+    props.nodes.every(n => n.kind === 'group')
+  // Browse group captions are the navigation UI, not optional decoration.
+  // With the wider collision-safe group layout, show every caption that
+  // actually fits instead of limiting 26 groups to an arbitrary 22.
+  const maxLabels = groupOverviewLabels ? labels.length :
+    Math.max(2,Math.min(22,Math.floor(available / 32000)))
   let visibleLabels = 0
   for (const label of labels) {
     const center = label.sprite.getWorldPosition(new THREE.Vector3())
@@ -1633,15 +1641,22 @@ function arrangeScreenLabels() {
     const hovered = label.nodeId === hoveredNodeId
     label.sprite.visible = false
     if (!projected.visible || (visibleLabels >= maxLabels && !pinned && !hovered)) continue
-    const offsets: [number,number][] = [
-      [0,0], [w*.65,0],[-w*.65,0],
-      [0,-h-16],[0,h+16],
-      [w*.75,-h*.75],[-w*.75,-h*.75],
-      [w*.75,h*.95],[-w*.75,h*.95],
-      [w+16,0],[-w-16,0],
-      [0,-h*2-16],[0,h*2+16],
-      [w*1.4,-h*.6],[-w*1.4,-h*.6],
-    ]
+    // In the fullscreen browse atlas, a label belongs directly above its
+    // own planet. Never send it hundreds of pixels to an unrelated region
+    // merely to force it onto the screen. Hover still shows every full name.
+    const offsets: [number,number][] = groupOverviewLabels
+      ? [[0,0],[-w*.15,0],[w*.15,0],
+        [0,-h*.33],[0,h*.33],
+        [-w*.22,-h*.26],[w*.22,-h*.26]]
+      : [
+        [0,0], [w*.65,0],[-w*.65,0],
+        [0,-h-16],[0,h+16],
+        [w*.75,-h*.75],[-w*.75,-h*.75],
+        [w*.75,h*.95],[-w*.75,h*.95],
+        [w+16,0],[-w-16,0],
+        [0,-h*2-16],[0,h*2+16],
+        [w*1.4,-h*.6],[-w*1.4,-h*.6],
+      ]
     let chosen: {dx:number;dy:number;score:number;box:ScreenBox} | null = null
     for (const [dx,dy] of offsets) {
       const x=projected.x+dx,y=projected.y+dy
@@ -1846,9 +1861,23 @@ function resize() {
   if (!renderer || !camera || !mountPoint.value) return
   const width = Math.max(1, mountPoint.value.clientWidth)
   const height = Math.max(1, mountPoint.value.clientHeight)
+  const wasWidth = lastViewportWidth
+  const wasHeight = lastViewportHeight
+  lastViewportWidth = width
+  lastViewportHeight = height
   camera.aspect = width / height
   camera.updateProjectionMatrix()
   renderer.setSize(width, height, false)
+  // Reflow the group atlas when the window materially changes shape.
+  // Layout otherwise stays cached while the user pans, zooms or selects.
+  if (wasWidth && wasHeight && props.nodes.length > 0 &&
+    props.nodes.every(n => n.kind === 'group') &&
+    (Math.abs(width - wasWidth) > 42 || Math.abs(height - wasHeight) > 42)) {
+    cachedNodes = null
+    cachedEdges = null
+    rebuild()
+    focus(null, true)
+  }
 }
 function pickNode(clientX: number, clientY: number): string | null {
   if (!renderer || !camera) return null
