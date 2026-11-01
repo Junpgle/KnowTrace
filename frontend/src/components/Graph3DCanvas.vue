@@ -8,6 +8,7 @@ import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
 import { sizeOrderedBrowseBands } from '../sizeOrderedBrowseBands'
+import { leafCaptionDimensions, shouldAnimateDetailFocus } from '../leafPresentation'
 import { canonicalGroupOrbitFrames } from '../groupOrbitGeometry'
 import { planCenteredCourseOrbits } from '../centeredCourseOrbits'
 import { placeOrbitCaptions } from '../orbitCaptionPlacement'
@@ -101,6 +102,9 @@ const hoveredName = ref('')
 const hoveredOrbitInfo = ref('')
 const hoveredPoint = ref({ x: 0, y: 0 })
 const labelAnchors: LabelAnchor[] = []
+let selectionHalo: THREE.Mesh | null = null
+let selectionRing: THREE.Mesh | null = null
+let selectionAnimationStart = 0
 // Visual tracks are intentionally browse-only and never become knowledge
 // graph edges. Hovering a group subtly illuminates its complete ellipse.
 const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[] = []
@@ -283,11 +287,11 @@ function makeLeafLabel(title: string): THREE.Sprite | null {
   canvas.height = 150
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
-  ctx.fillStyle = 'rgba(9, 32, 48, .91)'
+  ctx.fillStyle = 'rgba(9, 32, 48, .87)'
   ctx.beginPath()
   ctx.roundRect(3, 3, 514, 144, 19)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(113, 207, 207, .39)'
+  ctx.strokeStyle = 'rgba(113, 207, 207, .32)'
   ctx.lineWidth = 2
   ctx.stroke()
   const name = title.length > 24 ? title.slice(0, 23) + '…' : title
@@ -295,7 +299,7 @@ function makeLeafLabel(title: string): THREE.Sprite | null {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#e9fbfc'
-  ctx.font = '600 61px system-ui, sans-serif'
+  ctx.font = '600 52px system-ui, sans-serif'
   if (lines.length === 1) ctx.fillText(lines[0], 260, 75, 476)
   else {
     ctx.fillText(lines[0], 260, 51, 476)
@@ -306,7 +310,7 @@ function makeLeafLabel(title: string): THREE.Sprite | null {
   const label = new THREE.Sprite(new THREE.SpriteMaterial({
     map: texture, transparent: true, depthWrite: false, depthTest: false,
   }))
-  label.scale.set(44, 12.7, 1)
+  label.scale.set(32, 9.2, 1)
   return label
 }
 
@@ -334,7 +338,7 @@ function makeFocusLabel(name: string, selected: boolean): THREE.Sprite | null {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = selected ? '#f4fffc' : '#e7f6ff'
-  ctx.font = '700 58px system-ui, sans-serif'
+  ctx.font = '650 54px system-ui, sans-serif'
   if (lines.length === 1) {
     ctx.fillText(lines[0], 320, 90, 584)
   } else {
@@ -742,6 +746,8 @@ function clearGraph(animate = false) {
   backdropCloud = null
   backdropPoints.splice(0)
   labelAnchors.splice(0)
+  selectionHalo = null
+  selectionRing = null
   orbitTracks.splice(0)
   orbitMarkers.splice(0)
   orbitMarkerRadii.clear()
@@ -1373,21 +1379,23 @@ function rebuild(animate = false, transition?: SceneTransition) {
           }
           label.position.copy(position)
           label.userData.nodeId = node.id
-          const width = subdued ? 128 : focusState.active
-            ? (center ? 208 : knowledge.length > 9 ? 148 : 178)
-            : 154
+          const width = smallGroup
+            ? leafCaptionDimensions(center, neighbor, focusState.active).width
+            : subdued ? 128 : focusState.active
+              ? (center ? 180 : knowledge.length > 9 ? 144 : 162)
+              : 154
           labelAnchors.push({
             sprite: label, center: position, nodeId: node.id,
-            distance: radius + (smallGroup ? 6.5 : 4.5),
+            distance: radius + (smallGroup ? 4 : 4.5),
             focused: focusState.active,
             priority: center ? 10000 : neighbor ? 2000 : subdued ? 30 : 1000,
             declutter: !focusState.active && !smallGroup,
             screen: subdued
-              ? {width, height: width*150/520, radius, gap: 11}
+              ? {width, height: width*150/520, radius, gap: 7}
               : focusState.active
-                ? {width, height: width * 180 / 640, radius, gap: 12}
+                ? {width, height: width * 180 / 640, radius, gap: smallGroup ? 8 : 12}
               : smallGroup
-                ? {width: 218, height: 218 * 150 / 520, radius, gap: 12}
+                ? {width, height: width * 150 / 520, radius, gap: 8}
                 : {width: 154, height: 39, radius, gap: 11},
           })
           g.add(label)
@@ -1404,6 +1412,19 @@ function rebuild(animate = false, transition?: SceneTransition) {
         )
         halo.position.copy(position)
         g.add(halo)
+        selectionHalo = halo
+        // A short, camera-facing ripple makes the clicked concept visibly
+        // respond even though the entire neighborhood stays in place.
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(radius * 1.7, radius * 2.05, 64),
+          new THREE.MeshBasicMaterial({
+            color: 0x66ffe3, transparent: true, opacity: .0,
+            depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+          }),
+        )
+        ring.position.copy(position)
+        g.add(ring)
+        selectionRing = ring
       }
     })
     cluster.instanceMatrix.needsUpdate = true
@@ -1770,16 +1791,22 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const relatedPoints = [...relatedIds].map(n => positions.get(n))
     .filter((p): p is THREE.Vector3 => Boolean(p))
   const relationFocus = !!coordinate && relatedPoints.length > 0
+  const leafDetailFocus = !!coordinate && selectedNode?.kind === 'knowledge' &&
+    localGroup && !!props.preservePositionsOnSelect && visibleKnowledge.length <= 18
   const chapterFocus = !!coordinate && selectedNode?.kind === 'chapter' && visibleKnowledge.length > 0
   const focusConstellation = !!coordinate && selectedNode?.kind === 'knowledge' &&
     props.nodes.every(n => n.kind === 'knowledge') && props.nodes.length <= 26
-  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints]
+  const focusedPoints = leafDetailFocus
+    ? [...visibleKnowledge, ...groupPoints]
+    : relationFocus ? [coordinate, ...relatedPoints]
     : chapterFocus ? [coordinate, ...visibleKnowledge] : fitPoints
   const bounds = new THREE.Box3().setFromPoints(focusedPoints)
   const overviewCenter = bounds.getCenter(new THREE.Vector3())
   // For a real relationship network use its center; for a single point,
   // retain the existing click-to-center behavior.
-  desiredTarget.copy(relationFocus || chapterFocus ? overviewCenter : (coordinate ?? overviewCenter))
+  desiredTarget.copy(leafDetailFocus
+    ? overviewCenter.clone().lerp(coordinate, .18)
+    : relationFocus || chapterFocus ? overviewCenter : (coordinate ?? overviewCenter))
 
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
@@ -1804,7 +1831,15 @@ function focus(id: string | null, resetAtlasAngle = false) {
     }
   }
   let distance: number
-  if (relationFocus) {
+  if (leafDetailFocus) {
+    // Click-to-detail stays in the SAME map: retain all nine / fourteen
+    // knowledge points, pan toward the selected planet and adapt the
+    // available width as the drawer slides in. No isolated re-layout.
+    distance = Math.max(84, projectedFitDistance(
+      focusedPoints, desiredTarget, direction, .82, .76, 10, 12, 70,
+    ))
+    prepareFlightRange(distance)
+  } else if (relationFocus) {
     // Reserve the right-side detail drawer and the large readable labels.
     // The focus must be based on the actual neighbor positions rather than
     // the old fixed 92-unit zoom that cropped most related nodes.
@@ -1884,10 +1919,11 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const viewDirection = direction.clone().normalize()
   const screenTop = new THREE.Vector3()
     .crossVectors(viewDirection,screenRight).normalize()
-  const frameCenter = (relationFocus || chapterFocus) ? overviewCenter :
+  const frameCenter = leafDetailFocus ? desiredTarget.clone() :
+    (relationFocus || chapterFocus) ? overviewCenter :
     (coordinate ?? overviewCenter)
-  const framePoints = relationFocus || chapterFocus ? focusedPoints :
-    coordinate ? [coordinate] : fitPoints
+  const framePoints = leafDetailFocus || relationFocus || chapterFocus
+    ? focusedPoints : coordinate ? [coordinate] : fitPoints
   if (courseAtlasOverview) {
     // The previous generic pass reserved a full-width band for the
     // top-left title and added world-space padding TWICE. That made the
@@ -2406,6 +2442,18 @@ function draw() {
     if (travel >= 1) finishFade()
   }
   controls.update()
+  if (selectionHalo && selectionRing && camera) {
+    const progress = reducedMotion() ? 1 :
+      THREE.MathUtils.clamp((now - selectionAnimationStart) / 680, 0, 1)
+    const eased = progress * progress * (3 - 2 * progress)
+    selectionHalo.scale.setScalar(.83 + .22 * eased)
+    ;(selectionHalo.material as THREE.MeshBasicMaterial).opacity =
+      .11 + .11 * eased
+    selectionRing.quaternion.copy(camera.quaternion)
+    selectionRing.scale.setScalar(.72 + .75 * eased)
+    ;(selectionRing.material as THREE.MeshBasicMaterial).opacity =
+      (1 - eased) * .45
+  }
   animateOrbits(now)
   if (!outgoing.length) {
     for (const track of orbitTracks) {
@@ -2673,9 +2721,16 @@ watch(() => ({
   if (hierarchyChanged && transitionMode === 'back') {
     if (returnCamera) restoreCamera(returnCamera)
     else focus(next.selectedId, true)
-  } else if (layerChanged || next.selectedId !== previous.selectedId) {
-    if (!(props.preservePositionsOnSelect && !layerChanged && selectedChanged))
-      focus(next.selectedId, layerChanged)
+  } else if (layerChanged || selectedChanged) {
+    // Keeping world positions stable must NOT suppress camera motion.
+    // The selected planet and verified one-hop relations stay in place
+    // while the camera eases toward them and the detail drawer slides in.
+    // This also animates the return to the whole neighborhood on close.
+    focus(next.selectedId, layerChanged)
+  }
+  if (shouldAnimateDetailFocus(selectedChanged, layerChanged,
+      !!props.preservePositionsOnSelect)) {
+    selectionAnimationStart = performance.now()
   }
   if (!hierarchyChanged) commitInitialCamera()
 }, { flush: 'post' })

@@ -518,6 +518,7 @@ onBeforeUnmount(() => {
         <div class="gx-hint"><Compass :size="13" /> 其他层级保留暗色参照 · 悬停显示完整名称 · 点击聚焦</div>
       </main>
 
+      <Transition name="gx-detail-slide">
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
         <div class="gx-detail-head"><span>{{ selected.kind === 'knowledge' ? '节点详情 · 直接关联' : '章节 / 课程概览' }}</span>
           <button type="button" aria-label="关闭知识点详情" @click="selectedId=null"><X :size="18" /></button>
@@ -552,6 +553,7 @@ onBeforeUnmount(() => {
           <button type="button" class="gx-primary" @click="chooseChapter(selected)">仅查看本章节 <ArrowRight :size="15" /></button>
         </template>
       </aside>
+      </Transition>
     </div>
     <footer class="gx-footer">
       <span><CircleHelp :size="13" /> 浏览分组只是展示辅助；真实关联仅来自已审核关系，节点位置不代表先修。</span>
@@ -601,6 +603,15 @@ onBeforeUnmount(() => {
 .gx-panel{position:absolute;z-index:5;top:14px;bottom:14px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#305b6c transparent;background:#0b2335f2;border:1px solid #365668;box-shadow:0 25px 70px #0009;backdrop-filter:blur(16px);border-radius:16px;padding:20px}
 .gx-nav{left:18px;width:308px}
 .gx-detail{right:18px;width:330px}
+.gx-detail-slide-enter-active,.gx-detail-slide-leave-active{
+  transition:opacity .36s ease,transform .42s cubic-bezier(.18,.8,.2,1);
+}
+.gx-detail-slide-enter-from,.gx-detail-slide-leave-to{
+  opacity:0;transform:translateX(32px);
+}
+@media(prefers-reduced-motion:reduce){
+  .gx-detail-slide-enter-active,.gx-detail-slide-leave-active{transition:none}
+}
 .gx-body.gx-nav-open .gx-stage-nav,.gx-body.gx-nav-open .gx-counter{left:350px}
 .gx-body.gx-has-detail .gx-view-switch{right:370px}
 .gx-panel-title{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:17px;margin-bottom:21px;border-bottom:1px solid #28495b}
