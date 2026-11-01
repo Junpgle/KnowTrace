@@ -625,8 +625,8 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   }
   for (const [id, ch] of pending) {
     pos.set(id, new THREE.Vector3(
-      (ordinalHash(ch.id + 'x') - .5) * orbit,
-      18, (ordinalHash(ch.id + 'z') - .5) * orbit,
+      (ordinalHash(ch.id + 'x') - .5) * major,
+      18, (ordinalHash(ch.id + 'z') - .5) * minor,
     ))
   }
 
