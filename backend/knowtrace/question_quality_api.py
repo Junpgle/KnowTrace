@@ -70,7 +70,7 @@ def register_question_quality_routes(app: FastAPI, database: Path):
                 continue
             counters[q["review_status"]] += 1
             if q["concept_count"]>1: counters["composite"]+=1
-            if q["concept_count"]==1:
+            if q["concept_count"]==1 and q["question_type"] in ("single_choice","true_false"):
                 counters["diagnostic"]+=1
                 if q["review_status"]=="approved":
                     counters["approved_diagnostic"]+=1
