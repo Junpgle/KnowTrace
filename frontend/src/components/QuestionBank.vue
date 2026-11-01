@@ -463,8 +463,7 @@ function previewAvailable(source: SourceEvidence): boolean {
       <DirectBulkApproval v-if="knowledgeTool==='batch-review'" :course-id="props.courseId" @updated="reload();emit('updated')" />
       <KnowledgeAIReviewPanel v-else-if="knowledgeTool==='ai-review'" :course-id="props.courseId" :points="knowledge"
         :selected-id="selectedKpId" @updated="reload();emit('updated')" @select="selectKnowledge" />
-      <QuestionBulkApproval v-else-if="tab === 'questions' && showBatchReview" :course-id="props.courseId" @updated="reload();emit('updated')" />
-    <div v-else-if="tab === 'questions'" class="qb-columns">
+      <div v-else class="qb-columns">
       <aside class="qb-list panel">
         <div class="qb-list-head"><strong>课程知识点</strong><span>{{visibleKnowledge.length}} / {{knowledge.length}} 项</span></div>
         <div class="qb-list-search"><input v-model="knowledgeSearch" type="search" placeholder="搜索知识点名称…" aria-label="搜索知识点名称"/></div>
@@ -559,7 +558,8 @@ function previewAvailable(source: SourceEvidence): boolean {
       </div>
     </div>
 
-    <div v-else class="qb-columns">
+    <QuestionBulkApproval v-else-if="tab === 'questions' && showBatchReview" :course-id="props.courseId" @updated="reload();emit('updated')" />
+    <div v-else-if="tab === 'questions'" class="qb-columns">
       <aside class="qb-list panel">
         <div class="qb-list-head"><strong>课程题目</strong><span>{{visibleQuestions.length}} / {{questions.length}} 道</span></div>
         <div class="qb-list-search"><input v-model="questionSearch" type="search" placeholder="搜索题干关键词…" aria-label="搜索题干"/></div>
