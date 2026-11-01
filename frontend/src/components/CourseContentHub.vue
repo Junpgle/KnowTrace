@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { defineAsyncComponent, ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, ClipboardCheck, FileText, Network,
   Sparkles, Layers3, ShieldCheck,
 } from '@lucide/vue'
-import DocumentLibrary from './DocumentLibrary.vue'
-import QuestionBank from './QuestionBank.vue'
-import KnowledgeGalaxy from './KnowledgeGalaxy.vue'
+// Keep heavy PDF/graph modules out of the default learning bundle.
+const DocumentLibrary = defineAsyncComponent(() => import('./DocumentLibrary.vue'))
+const QuestionBank = defineAsyncComponent(() => import('./QuestionBank.vue'))
+const KnowledgeGalaxy = defineAsyncComponent(() => import('./KnowledgeGalaxy.vue'))
 
 type Section = 'materials' | 'knowledge' | 'relations' | 'questions'
 type QuestionMode = 'questions' | 'batch' | 'external'
