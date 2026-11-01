@@ -48,6 +48,15 @@ let cachedNodes: GraphNode[] | null = null
 let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
+// A map view has persistent world coordinates. Saving each drilled layer's
+// positions makes back navigation return to the SAME places rather than
+// rebuilding a constellation at the world origin.
+const sceneFrames = new Map<string, Map<string, THREE.Vector3>>()
+type SceneTransition = {
+  mode: 'enter' | 'back' | 'jump'
+  anchorId?: string
+  restore?: Map<string, THREE.Vector3>
+}
 const meshes: THREE.Mesh[] = []
 let hoveredNodeId: string | null = null
 const labelAnchors: LabelAnchor[] = []
@@ -80,8 +89,9 @@ const outgoingTargetOffset = new THREE.Vector3()
 const outgoingStartOffset = new THREE.Vector3()
 let outgoingStartScale = 1
 let outgoingEndScale = 1
-const LAYER_DURATION = 680
-const CAMERA_DURATION = 920
+const CAMERA_DURATION = 1120
+const LAYER_REVEAL_START = .24
+const LAYER_REVEAL_END = .86
 function reducedMotion() {
   return typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -608,10 +618,16 @@ function clearGraph(animate = false) {
     disposeGraph(outgoing.group)
     outgoing = null
   }
-  // A rapid second navigation can occur while the preceding scene is still
-  // fading in. Take that on-screen pose as the new transition start instead
-  // of snapping to the original full-size graph.
-  incoming = null
+  // A new click may interrupt an in-flight transition. Restore the visible
+  // current layer's own opacity before using it as the next outgoing layer.
+  if (incoming) {
+    for (const part of incoming.parts) {
+      part.material.opacity = part.opacity
+      part.material.transparent = part.transparent
+      part.material.depthWrite = part.depthWrite
+    }
+    incoming = null
+  }
   if (group && animate && !reducedMotion()) {
     outgoingStartOffset.copy(group.position)
     outgoingStartScale = group.scale.x
@@ -654,38 +670,81 @@ function resolveLayout() {
   return cachedCoords
 }
 
-function rebuild(animate = false) {
+function rebuild(animate = false, transition?: SceneTransition) {
   if (!scene) return
+  const previous = new Map([...positions].map(([id, p]) => [id, p.clone()]))
   clearGraph(animate)
   const g = new THREE.Group()
   group = g
   scene.add(g)
-  let coords = resolveLayout()
-  // Center a concept and its actual approved neighbors in a local XY orbit.
-  // The visual distance does not imply an inferred semantic relationship.
-  const selectedConcept = props.nodes.find(n => n.kind === 'knowledge' && n.id === props.selectedId)
-  const localConcepts = props.nodes.every(n => n.kind === 'knowledge')
-    && !!selectedConcept && props.nodes.length <= 26
-  if (localConcepts) {
-    coords = new Map(coords)
-    coords.set(selectedConcept!.id, new THREE.Vector3(0, 0, 0))
-    const neighbors = props.nodes.filter(n => n.kind === 'knowledge' && n.id !== selectedConcept!.id)
-      .sort((a, b) => a.id.localeCompare(b.id))
-    const inner = neighbors.length <= 8 ? neighbors.length : Math.min(7, Math.ceil(neighbors.length * .42))
-    neighbors.forEach((node, index) => {
-      const outer = index >= inner
-      const i = outer ? index - inner : index
-      const count = outer ? neighbors.length - inner : inner
-      const theta = -Math.PI / 2 + (i + (outer ? .45 : 0)) * 2 * Math.PI / Math.max(1, count)
-      const radius = outer ? Math.max(92, count * 12) : Math.max(46, count * 7.3)
-      coords.set(node.id, new THREE.Vector3(
-        Math.cos(theta) * radius * 1.17,
-        Math.sin(theta) * radius * .88,
-        (ordinalHash(node.id + ':focus-depth') - .5) * 6,
-      ))
-    })
+  let coords = new Map([...resolveLayout()].map(([id, p]) => [id, p.clone()]))
+
+  if (transition?.restore) {
+    // Backwards camera travel is possible because the previous layer is
+    // restored at exactly the original world positions.
+    for (const [id, position] of transition.restore) coords.set(id, position.clone())
+  } else {
+    const anchor = transition?.anchorId ? previous.get(transition.anchorId) : undefined
+    const groupNodes = props.nodes.filter(n => n.kind === 'group')
+    if (anchor && groupNodes.length) {
+      // Fullscreen browse groups have local layout coordinates. Translate and
+      // scale them INTO their clicked chapter / subgroup, like map tiles.
+      const parent = coords.get(transition!.anchorId!) ??
+        (groupNodes.length === 1 ? coords.get(groupNodes[0].id) : undefined)
+      const origin = parent?.clone() ?? new THREE.Box3().setFromPoints(
+        groupNodes.map(n => coords.get(n.id)!).filter(Boolean),
+      ).getCenter(new THREE.Vector3())
+      const scale = props.nodes.some(n => n.kind === 'knowledge') ? .29 : .30
+      for (const [id, position] of coords) {
+        if (!props.nodes.some(n => n.id === id)) continue
+        coords.set(id, position.sub(origin).multiplyScalar(scale).add(anchor))
+      }
+    }
+
+    // In the regular course atlas, chapter concepts already have an address
+    // in the chapter's coordinate system. Display them close to their
+    // chapter when zooming in instead of scattering them across the atlas.
+    const chapter = props.nodes.find(n => n.kind === 'chapter' && n.id === props.selectedId)
+    const chapterAnchor = chapter && (previous.get(chapter.id) ?? coords.get(chapter.id))
+    if (chapter && chapterAnchor && props.nodes.some(n => n.kind === 'knowledge')) {
+      const center = coords.get(chapter.id) ?? chapterAnchor
+      for (const point of props.nodes.filter(n => n.kind === 'knowledge')) {
+        const position = coords.get(point.id)
+        if (position) coords.set(point.id, chapterAnchor.clone()
+          .add(position.sub(center).multiplyScalar(.32)))
+      }
+      coords.set(chapter.id, chapterAnchor.clone())
+    }
+
+    // Related concepts inherit the selected planet's existing map address.
+    // Layout stays in the XZ atlas plane so the camera doesn't flip 90
+    // degrees when zooming from chapter to a one-hop relation cluster.
+    const selected = props.nodes.find(n => n.kind === 'knowledge' && n.id === props.selectedId)
+    const local = props.nodes.every(n => n.kind === 'knowledge') && !!selected &&
+      props.nodes.length <= 26
+    if (local && selected) {
+      const center = previous.get(selected.id) ?? coords.get(selected.id) ??
+        new THREE.Vector3()
+      coords.set(selected.id, center.clone())
+      const neighbors = props.nodes.filter(n => n.kind === 'knowledge' && n.id !== selected.id)
+        .sort((a, b) => a.id.localeCompare(b.id))
+      const inner = neighbors.length <= 8 ? neighbors.length :
+        Math.min(7, Math.ceil(neighbors.length * .42))
+      neighbors.forEach((node, index) => {
+        const outer = index >= inner
+        const i = outer ? index - inner : index
+        const count = outer ? neighbors.length - inner : inner
+        const theta = -Math.PI / 2 + (i + (outer ? .45 : 0)) *
+          2 * Math.PI / Math.max(1, count)
+        const radius = outer ? Math.max(92, count * 12) : Math.max(46, count * 7.3)
+        coords.set(node.id, center.clone().add(new THREE.Vector3(
+          Math.cos(theta) * radius * .36,
+          (ordinalHash(node.id + ':focus-depth') - .5) * 3,
+          Math.sin(theta) * radius * .36,
+        )))
+      })
+    }
   }
-  // Fit the camera to visible nodes while preserving whole-course coordinates.
   for (const node of props.nodes) {
     const position = coords.get(node.id)
     if (position) positions.set(node.id, position)
