@@ -420,7 +420,7 @@ onMounted(() => { void initialize() })
           <div class="topbar-avatar">学</div>
         </div>
       </header>
-      <main class="page-content">
+      <main class="page-content" :class="{ 'page-content-galaxy': view === 'galaxy' }">
         <div v-if="banner" class="notice" role="alert"><AlertCircle :size="19" /><span>{{ banner }}</span><button aria-label="关闭提示" @click="banner = ''"><X :size="17" /></button></div>
 
         <div v-if="loading" class="loading-screen"><LoaderCircle :size="32" class="spinning" /><strong>正在整理你的学习空间…</strong><span>从本地 KnowTrace 后端读取课程与学习记录</span></div>
