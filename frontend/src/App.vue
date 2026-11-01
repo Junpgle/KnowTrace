@@ -497,8 +497,8 @@ onMounted(() => { void initialize() })
                       <option value="blind">候选题盲测 · 无需提前查看答案</option>
                     </select>
                     <p class="qb-hint" v-if="quizMode === 'adaptive'">
-                      基于 BKT 掌握概率、历史练习次数和题目难度排序；只用单知识点题测评，
-                      防止综合题污染掌握度。可用诊断题 {{ quality?.latest_questions.approved_diagnostic ?? 0 }} 道。
+                      优先安排尚缺少多样化作答证据的知识点；积累跨天多题记录后才参考未校准的 BKT 概率排序。
+                      仅对已审核的单知识点单选/判断题建立 BKT 记录。可用诊断题 {{ quality?.latest_questions.approved_diagnostic ?? 0 }} 道。
                     </p>
                     <p class="qb-hint" v-if="quizMode === 'blind'">
                       无需逐题预审。所有题目提交完毕后才统一显示答案与解析；候选题未经人工确认，
