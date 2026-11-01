@@ -17,7 +17,7 @@ import {
 } from '../api'
 
 const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string }>()
-const emit = defineEmits<{ updated: [] }>()
+const emit = defineEmits<{ updated: []; 'blind-trial': [] }>()
 
 type Tab = 'knowledge' | 'questions' | 'external' | 'batch'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
@@ -37,6 +37,7 @@ const questionDetail = ref<QuestionVersion | null>(null)
 const selectedKpId = ref('')
 const selectedQuestionId = ref('')
 const reviewConfirmed = ref(false)
+const answerRevealed = ref(false)
 const kpName = ref('')
 const kpSummary = ref('')
 const kpDifficulty = ref(2)
@@ -168,6 +169,7 @@ async function selectKnowledge(id: string) {
 async function selectQuestion(id: string) {
   const token = ++questionToken
   selectedQuestionId.value = id
+  answerRevealed.value = false
   questionDetail.value = null
   editingQuestion.value = false
   reviewConfirmed.value = false
@@ -332,7 +334,7 @@ function previewAvailable(source: SourceEvidence): boolean {
       <div>
         <p class="eyebrow">AI QUESTION STUDIO</p>
         <h1>题库管理<span class="heading-dot">.</span></h1>
-        <p class="section-description">从知识点到 AI 出题，再到人工审核与正式练习。</p>
+        <p class="section-description">自动校验后可先盲测候选题，整套交卷才查看答案；人工审核仍可在需要时进行。</p>
       </div>
       <button class="button button-outline button-small" :disabled="loading || busy" @click="reload()">
         <RefreshCw :size="16" /> 刷新题库
@@ -341,8 +343,10 @@ function previewAvailable(source: SourceEvidence): boolean {
 
     <div class="qb-intro panel">
       <div class="qb-intro-icon"><Sparkles :size="26" /></div>
-      <div><strong>AI 协助创作，你负责最后把关。</strong><p>只有审核通过的知识点可以生成题目；只有审核通过的题目才能用于正式练习。</p></div>
+      <div><strong>先自测，不必提前看答案。</strong><p>待审核题可直接盲测（成绩不计 BKT），正式诊断仍只使用已审核题目。</p></div>
       <div class="qb-stats"><span>{{ knowledge.length }} <small>知识点</small></span><span>{{ questions.length }} <small>道题目</small></span></div>
+      <button type="button" class="button button-primary button-small" :disabled="pendingQuestions < 1"
+        @click="emit('blind-trial')"><FileQuestion :size="16"/> 不看答案直接盲测（{{ pendingQuestions }}）</button>
     </div>
 
     <div v-if="banner" class="qb-alert qb-error" role="alert"><AlertCircle :size="18" /> {{ banner }}</div>
@@ -514,18 +518,25 @@ function previewAvailable(source: SourceEvidence): boolean {
           <template v-else>
             <div class="qb-inline-meta"><span>{{ questionDetail.question_type === 'single_choice' ? '单选题' : '判断题' }}</span><span>难度 {{ questionDetail.difficulty }}/3</span></div>
             <h2>{{ questionDetail.stem }}</h2>
+            <div v-if="questionDetail.review_status === 'pending' && !answerRevealed" class="qb-warning">
+              <strong>候选题答案已遮盖，避免影响自测</strong>
+              <p>题目选项可以正常阅读。若你是准备人工核对，可主动揭晓；若要自测请用上方「不看答案直接盲测」。</p>
+              <button class="button button-outline button-small" type="button" @click="answerRevealed = true">
+                显示正确答案与解析（会剧透）
+              </button>
+            </div>
             <div class="qb-options" v-if="questionDetail.question_type === 'single_choice'">
               <div v-for="letter in ['A','B','C','D']" :key="letter"
-                :class="{ correct: questionDetail.correct_answer === letter }">
+                :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === letter }">
                 <strong>{{ letter }}</strong><span>{{ questionDetail.options[letter] }}</span>
-                <CheckCircle2 v-if="questionDetail.correct_answer === letter" :size="18" />
+                <CheckCircle2 v-if="(questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === letter" :size="18" />
               </div>
             </div>
             <div class="qb-options" v-else>
-              <div :class="{ correct: questionDetail.correct_answer === true }"><strong>A</strong><span>正确</span></div>
-              <div :class="{ correct: questionDetail.correct_answer === false }"><strong>B</strong><span>错误</span></div>
+              <div :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === true }"><strong>A</strong><span>正确</span></div>
+              <div :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === false }"><strong>B</strong><span>错误</span></div>
             </div>
-            <div class="qb-explanation"><strong>正确答案：{{ asAnswer(questionDetail.correct_answer) }}</strong><span>题目解析</span><p>{{ questionDetail.explanation || '暂无解析' }}</p></div>
+            <div v-if="questionDetail.review_status !== 'pending' || answerRevealed" class="qb-explanation"><strong>正确答案：{{ asAnswer(questionDetail.correct_answer) }}</strong><span>题目解析</span><p>{{ questionDetail.explanation || '暂无解析' }}</p></div>
             <div class="qb-actions"><button class="button button-outline button-small" :disabled="busy" @click="beginRevision"><Pencil :size="16" /> 修改并创建新版本</button></div>
           </template>
 
