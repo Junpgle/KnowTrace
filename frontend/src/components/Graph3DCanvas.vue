@@ -20,6 +20,11 @@ const props = defineProps<{
   // Use all course nodes for stable positions while filtering displayed nodes.
   layoutNodes?: GraphNode[]
   layoutEdges?: GraphEdge[]
+  // Real nodes outside the current zoom layer remain in the scene as a dim
+  // atlas. This is a visual context, never inferred knowledge relationships.
+  contextNodes?: GraphNode[]
+  contextEdges?: GraphEdge[]
+  contextChapterId?: string | null
   navigation?: { serial: number; mode: 'enter' | 'back' | 'jump'; nodeId?: string }
 }>()
 const emit = defineEmits<{ select: [id: string | null] }>()
@@ -50,6 +55,10 @@ let cachedNodes: GraphNode[] | null = null
 let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
+let contextCacheNodes: GraphNode[] | undefined
+let contextCacheEdges: GraphEdge[] | undefined
+let contextCacheCoordinates = new Map<string, THREE.Vector3>()
+let contextCacheParents = new Map<string, string>()
 // A map view has persistent world coordinates. Saving each drilled layer's
 // positions makes back navigation return to the SAME places rather than
 // rebuilding a constellation at the world origin.
@@ -60,7 +69,10 @@ type SceneTransition = {
   restore?: Map<string, THREE.Vector3>
 }
 const meshes: THREE.Mesh[] = []
+const contextMeshes: THREE.Mesh[] = []
 let hoveredNodeId: string | null = null
+const hoveredName = ref('')
+const hoveredPoint = ref({ x: 0, y: 0 })
 const labelAnchors: LabelAnchor[] = []
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
@@ -641,8 +653,10 @@ function clearGraph(animate = false) {
   }
   incoming = null
   meshes.splice(0)
+  contextMeshes.splice(0)
   labelAnchors.splice(0)
   hoveredNodeId = null
+  hoveredName.value = ''
   positions.clear()
   group = null
 }
@@ -672,6 +686,47 @@ function resolveLayout() {
     cachedEdges = allEdges
   }
   return cachedCoords
+}
+
+// Keep the global atlas coordinates independent from the currently opened
+// chapter/subgroup. Groups in the fullscreen explorer are synthetic browse
+// markers; they orbit their actual chapter without replacing the real graph.
+function resolveContextLayout() {
+  const nodes = props.contextNodes
+  const edges = props.contextEdges ?? props.layoutEdges ?? props.edges
+  if (!nodes?.length) return new Map<string, THREE.Vector3>()
+  if (nodes !== contextCacheNodes || edges !== contextCacheEdges) {
+    const real = nodes.filter(n => n.kind !== 'group')
+    contextCacheCoordinates = layout(real, edges)
+    contextCacheParents = new Map(edges.filter(e => e.structural && e.type === 'contains')
+      .map(e => [e.target, e.source]))
+    const groups = nodes.filter(n => n.kind === 'group')
+    if (groups.length) {
+      const localGroups = layout(groups, [])
+      const chapterCenter = contextCacheCoordinates.get(props.contextChapterId ?? '') ??
+        new THREE.Vector3()
+      for (const node of groups) {
+        const p = localGroups.get(node.id)
+        if (p) contextCacheCoordinates.set(node.id, chapterCenter.clone()
+          .add(p.clone().multiplyScalar(.30)))
+      }
+    }
+    contextCacheNodes = nodes
+    contextCacheEdges = edges
+  }
+  return contextCacheCoordinates
+}
+
+function belongsToContextChapter(node: GraphNode, chapterId: string | null | undefined) {
+  if (!chapterId) return false
+  let cursor: string | undefined = node.id
+  const visited = new Set<string>()
+  while (cursor && !visited.has(cursor)) {
+    if (cursor === chapterId) return true
+    visited.add(cursor)
+    cursor = contextCacheParents.get(cursor)
+  }
+  return node.chapter_id === chapterId
 }
 
 function rebuild(animate = false, transition?: SceneTransition) {
@@ -755,6 +810,60 @@ function rebuild(animate = false, transition?: SceneTransition) {
   }
   const focusState = focusRelations()
   const selectedId = props.selectedId
+  const activeIds = new Set(props.nodes.map(n => n.id))
+  // Render the rest of the map below the active layer, keeping its original
+  // location. Small spheres are instanced: thousands of dim points remain
+  // cheap to draw. Only active nodes get labels, rings and bright halos.
+  contextMeshes.splice(0)
+  const background = (props.contextNodes ?? []).filter(n =>
+    !activeIds.has(n.id))
+  const backdrop = resolveContextLayout()
+  const backKnowledge = background.filter(n => n.kind === 'knowledge' && backdrop.has(n.id))
+  if (backKnowledge.length) {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: .78, depthWrite: false,
+    })
+    const sphere = new THREE.SphereGeometry(1, 10, 8)
+    const cloud = new THREE.InstancedMesh(sphere, material, backKnowledge.length)
+    const matrix = new THREE.Matrix4()
+    const scale = new THREE.Vector3()
+    const rotation = new THREE.Quaternion()
+    const ids: string[] = []
+    backKnowledge.forEach((node, index) => {
+      const onChapter = belongsToContextChapter(node, props.contextChapterId)
+      const brightness = onChapter ? .52 : .30
+      const size = onChapter ? 1.95 : 1.5
+      scale.setScalar(size)
+      matrix.compose(backdrop.get(node.id)!, rotation, scale)
+      cloud.setMatrixAt(index, matrix)
+      cloud.setColorAt(index, new THREE.Color(statusColor(node)).multiplyScalar(brightness))
+      ids.push(node.id)
+    })
+    cloud.instanceMatrix.needsUpdate = true
+    if (cloud.instanceColor) cloud.instanceColor.needsUpdate = true
+    cloud.userData.instanceNodeIds = ids
+    cloud.computeBoundingSphere()
+    g.add(cloud)
+    contextMeshes.push(cloud)
+  }
+  for (const node of background.filter(n => n.kind !== 'knowledge')) {
+    const p = backdrop.get(node.id)
+    if (!p) continue
+    const inChapter = belongsToContextChapter(node, props.contextChapterId)
+    const base = node.kind === 'course' ? 0x62ecdf :
+      node.kind === 'group' ? 0x88aac5 : 0x80bce7
+    const tint = new THREE.Color(base).multiplyScalar(inChapter ? .62 : .32)
+    const radius = node.kind === 'chapter' ? 6.8 : node.kind === 'course' ? 5.5 : 4.8
+    const planet = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12),
+      new THREE.MeshBasicMaterial({
+        color: tint, transparent: true, opacity: inChapter ? .88 : .60,
+        depthWrite: false,
+      }))
+    planet.position.copy(p)
+    planet.userData.nodeId = node.id
+    g.add(planet)
+    contextMeshes.push(planet)
+  }
   // One InstancedMesh for all knowledge points, including dimmed ones:
   // preserve a single draw call for 1300+ nodes instead of per-node meshes.
   const sphere = new THREE.SphereGeometry(1, 12, 10)
@@ -1501,19 +1610,30 @@ function pickNode(clientX: number, clientY: number): string | null {
   raycaster.setFromCamera(pointer, camera)
   const clickableLabels = labelAnchors
     .filter(a => a.sprite.visible && !!a.nodeId).map(a => a.sprite)
-  const hits = raycaster.intersectObjects([...meshes, ...clickableLabels])
+  const hits = raycaster.intersectObjects([...meshes, ...clickableLabels, ...contextMeshes])
   const hit = hits[0]
   const instanceIds = hit?.object.userData.instanceNodeIds as string[] | undefined
   return (instanceIds && hit.instanceId !== undefined
     ? instanceIds[hit.instanceId] : hit?.object.userData.nodeId) ?? null
 }
 function pointerMove(event: PointerEvent) {
-  if (!renderer) return
+  if (!renderer || !mountPoint.value) return
   hoveredNodeId = pickNode(event.clientX, event.clientY)
+  const node = [...props.nodes, ...(props.contextNodes ?? [])]
+    .find(n => n.id === hoveredNodeId)
+  hoveredName.value = node?.name ?? ''
+  const bounds = mountPoint.value.getBoundingClientRect()
+  hoveredPoint.value = {
+    x: Math.min(Math.max(10, event.clientX - bounds.left + 18),
+      Math.max(10, bounds.width - 280)),
+    y: Math.min(Math.max(10, event.clientY - bounds.top + 18),
+      Math.max(10, bounds.height - 72)),
+  }
   renderer.domElement.style.cursor = hoveredNodeId ? 'pointer' : 'grab'
 }
 function pointerLeave() {
   hoveredNodeId = null
+  hoveredName.value = ''
   if (renderer) renderer.domElement.style.cursor = 'grab'
 }
 function pointerDown(event: PointerEvent) {
@@ -1615,6 +1735,9 @@ watch(() => ({
   navigation: props.navigation,
   showRelations: props.showRelations,
   showStructure: props.showStructure,
+  contextNodes: props.contextNodes,
+  contextEdges: props.contextEdges,
+  contextChapterId: props.contextChapterId,
 }), (next, previous) => {
   const beforeKey = sceneSignature(previous.nodes)
   const afterKey = sceneSignature(next.nodes)
@@ -1706,6 +1829,10 @@ onBeforeUnmount(() => {
   cachedEdges = null
   cachedCoords.clear()
   cachedChapterTotals.clear()
+  contextCacheCoordinates.clear()
+  contextCacheParents.clear()
+  contextCacheNodes = undefined
+  contextCacheEdges = undefined
   cameraHistory.length = 0
   sceneFrames.clear()
 })
@@ -1716,7 +1843,9 @@ onBeforeUnmount(() => {
     <div v-if="!supported" class="galaxy-unsupported" role="alert">
       <strong>无法使用 3D 加速</strong><p>{{ error }}</p>
     </div>
-    <span v-else class="galaxy-watermark">3D GALAXY · THREE.JS</span>
+    <div v-if="hoveredName" class="galaxy-hover-name" role="tooltip"
+      :style="{left: hoveredPoint.x + 'px', top: hoveredPoint.y + 'px'}">{{ hoveredName }}</div>
+    <span v-if="supported" class="galaxy-watermark">3D GALAXY · THREE.JS</span>
   </div>
 </template>
 
@@ -1724,6 +1853,7 @@ onBeforeUnmount(() => {
 .galaxy-canvas { position:relative;width:100%;height:100%;min-height:480px;overflow:hidden;touch-action:pan-y;background:radial-gradient(ellipse at 50% 43%,#133550 0%,#0b2138 43%,#05101f 100%) }
 .galaxy-canvas :deep(canvas) { display:block;width:100%;height:100%;outline:none;cursor:grab }
 .galaxy-canvas :deep(canvas):active { cursor:grabbing }
+.galaxy-hover-name {position:absolute;z-index:9;pointer-events:none;max-width:min(340px,calc(100% - 24px));padding:9px 13px;border:1px solid #83dccbab;border-radius:11px;background:#061c2ef2;color:#f1ffff;box-shadow:0 8px 24px #0008;font-size:14px;font-weight:650;line-height:1.55;overflow-wrap:anywhere}
 .galaxy-watermark { pointer-events:none;position:absolute;left:19px;bottom:17px;font-size:10px;letter-spacing:2px;color:#6687a8 }
 .galaxy-unsupported { color:#b4dce8;display:grid;place-content:center;text-align:center;height:100%;padding:26px;font-size:13px }
 .galaxy-unsupported p { max-width:270px;line-height:1.8 }
