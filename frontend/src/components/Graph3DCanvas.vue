@@ -1086,17 +1086,26 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const relatedPoints = [...relatedIds].map(n => positions.get(n))
     .filter((p): p is THREE.Vector3 => Boolean(p))
   const relationFocus = !!coordinate && relatedPoints.length > 0
-  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints] : fitPoints
+  const chapterFocus = !!coordinate && selectedNode?.kind === 'chapter' && visibleKnowledge.length > 0
+  const focusConstellation = !!coordinate && selectedNode?.kind === 'knowledge' &&
+    props.nodes.every(n => n.kind === 'knowledge') && props.nodes.length <= 26
+  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints]
+    : chapterFocus ? [coordinate, ...visibleKnowledge] : fitPoints
   const bounds = new THREE.Box3().setFromPoints(focusedPoints)
   const overviewCenter = bounds.getCenter(new THREE.Vector3())
   // For a real relationship network use its center; for a single point,
   // retain the existing click-to-center behavior.
-  desiredTarget.copy(relationFocus ? overviewCenter : (coordinate ?? overviewCenter))
+  desiredTarget.copy(relationFocus || chapterFocus ? overviewCenter : (coordinate ?? overviewCenter))
 
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
   if (direction.lengthSq() < .01) direction.set(.4, .8, 1)
-  if (!id && (resetAtlasAngle || overview)) {
+  if (focusConstellation) {
+    // In concept focus the orbit is near the XY plane, so view it face-on.
+    direction.set(.05, .14, 1)
+  } else if (chapterFocus) {
+    direction.set(0, 1, .30)
+  } else if (!id && (resetAtlasAngle || overview)) {
     if (localGroup) {
       // Browsing groups and leaf networks are laid out in the XY plane.
       // Show them face-on instead of projecting their rows onto each other.
@@ -1116,11 +1125,20 @@ function focus(id: string | null, resetAtlasAngle = false) {
       localGroup ? 86 : 110,
       projectedFitDistance(
         focusedPoints, overviewCenter, direction,
-        localGroup ? .49 : .54,
-        .64,
+        localGroup ? .70 : focusConstellation ? .80 : .60,
+        focusConstellation ? .78 : .69,
+        focusConstellation ? 26 : 11,
+        focusConstellation ? 29 : 16,
       ),
     )
     controls.maxDistance = Math.max(280, distance * 1.7)
+    camera.far = Math.max(1600, distance * 3)
+    camera.updateProjectionMatrix()
+  } else if (chapterFocus) {
+    distance = Math.max(98, projectedFitDistance(
+      focusedPoints, overviewCenter, direction, .77, .76, 20, 23,
+    ))
+    controls.maxDistance = Math.max(280, distance * 1.8)
     camera.far = Math.max(1600, distance * 3)
     camera.updateProjectionMatrix()
   } else if (!id) {
