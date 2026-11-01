@@ -605,7 +605,9 @@ onMounted(() => { void initialize() })
                   <p v-if="currentItem && currentItem.answered && latestMastery === null" class="qb-hint">
                     {{ quiz.blind_pending
                       ? '候选题尚未人工审核：作答记录独立保存，答案仅供对照，不写入正式正确率和 BKT。'
-                      : '综合题只记录作答结果，不将一次作答视为某个知识点的独立 BKT 证据。' }}
+                      : currentItem.question_type === 'short_answer'
+                        ? '简答题已经保存作答，可自主评估或选择 AI 评阅，但不直接更新 BKT。'
+                        : '综合题只记录作答结果，不将一次作答视为某个知识点的独立 BKT 证据。' }}
                   </p>
                   <div class="quiz-footnote"><Clock3 :size="15" /> 数据保存在你本机的 KnowTrace 数据库中，重复提交不会重复计算掌握度。</div>
                 </section>
