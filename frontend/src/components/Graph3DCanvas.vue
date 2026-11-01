@@ -794,7 +794,7 @@ function resolveContextLayout() {
       for (const node of groups) {
         const p = localGroups.get(node.id)
         if (p) contextCacheCoordinates.set(node.id, chapterCenter.clone()
-          .add(p.clone().multiplyScalar(.30)))
+          .add(p.clone()))
       }
     }
     contextCacheNodes = nodes
@@ -843,7 +843,10 @@ function rebuild(animate = false, transition?: SceneTransition) {
       const origin = parent?.clone() ?? new THREE.Box3().setFromPoints(
         groupNodes.map(n => coords.get(n.id)!).filter(Boolean),
       ).getCenter(new THREE.Vector3())
-      const scale = props.nodes.some(n => n.kind === 'knowledge') ? .29 : .30
+      // The tiny .30 group scale used for the old enter animation is NOT
+      // a valid final atlas scale: it shrinks 26 groups into the center.
+      // Camera zoom and crossfade handle navigation; preserve final span.
+      const scale = props.nodes.some(n => n.kind === 'knowledge') ? .29 : 1
       for (const [id, position] of coords) {
         if (!props.nodes.some(n => n.id === id)) continue
         coords.set(id, position.sub(origin).multiplyScalar(scale).add(anchor))
