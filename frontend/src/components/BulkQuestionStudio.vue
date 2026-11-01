@@ -199,8 +199,9 @@ onBeforeUnmount(()=>{if(poller)clearInterval(poller);version++})
         </div>
         <div class="bqs-meter"><div :style="{width: batch.progress+'%'}"/></div>
         <p>{{ batch.completed_groups }} / {{ batch.total_groups }} 组 · 已生成 {{ batch.created_questions }} 道待审核候选题 · 校验提醒 {{ batch.warning_count }} 条</p>
-        <p v-if="batch.last_error" class="bqs-error-text" role="alert">
-        失败原因：{{ batch.last_error }}
+        <p v-if="batch.last_error" :class="batch.status === 'succeeded' ? 'bqs-hint' : 'bqs-error-text'"
+        :role="batch.status === 'succeeded' ? 'status' : 'alert'">
+        {{ batch.status === 'succeeded' ? '候选题校验提醒（已通过的题目仍然保存）：' : '失败原因：' }}{{ batch.last_error }}
       </p>
       <p v-if="batch.status === 'interrupted'" class="bqs-hint">
         任务已停止，不会自动重复调用 AI。请先检查失败原因，再决定是否手动继续；
@@ -213,7 +214,9 @@ onBeforeUnmount(()=>{if(poller)clearInterval(poller);version++})
           <summary>检查点明细（最近 {{ batch.units.length }} 组）</summary>
           <div v-for="unit in batch.units" :key="unit.id" class="bqs-unit">
             <span>组 {{ unit.ordinal }} · {{ unit.status }} · {{ unit.knowledge_point_ids.length }} 点 · {{ unit.created_questions }} 题</span>
-            <small v-if="unit.last_error">{{ unit.last_error }}</small>
+            <small v-if="unit.last_error">
+              {{ unit.status === 'succeeded' ? '候选题校验提醒：' : '处理异常：' }}{{ unit.last_error }}
+            </small>
           </div>
         </details>
       </article>
