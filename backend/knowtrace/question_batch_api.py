@@ -29,8 +29,8 @@ class BatchOptions(BaseModel):
     group_size: int = Field(default=8, ge=2, le=12)
     max_groups: int = Field(default=10, ge=1, le=50)
     questions_per_group: int = Field(default=2, ge=1, le=4)
-    question_types: list[Literal["single_choice", "true_false"]] = Field(
-        default_factory=lambda: ["single_choice", "true_false"], min_length=1, max_length=2)
+    question_types: list[Literal["single_choice", "multiple_choice", "true_false", "short_answer"]] = Field(
+        default_factory=lambda: ["single_choice", "true_false"], min_length=1, max_length=4)
     confirmed: bool = False
 
 
@@ -191,7 +191,10 @@ def propose_questions(provider, points: list[dict], chunks: list[dict],
         "\"correct_answer\":\"A\",\"explanation\":\"解析\",\"difficulty\":2,"
         "\"primary_knowledge_point_id\":\"给定ID\",\"knowledge_point_ids\":[\"给定ID\"],"
         "\"evidence\":[{\"source_chunk_id\":\"来源ID\",\"quote\":\"原文\"}]}]}。"
-        "判断题使用 true_false，options={}，正确答案 true/false；不要生成重复题。"
+        "判断题使用 true_false，options={}，正确答案 true/false；"
+        "多选题使用 multiple_choice，options=A-D四个不同选项，correct_answer 为升序去重字母数组，例如 [\\\"A\\\",\\\"C\\\"]，至少两项；"
+        "简答题使用 short_answer，options={}，correct_answer 为8至2000字可核对的参考答案，explanation 说明关键得分要点；"
+        "不得要求模型根据简答题文本自动认定掌握度。不要生成重复题。"
         "只能生成题型：" + json.dumps(question_types, ensure_ascii=False) +
         f"；最多生成 {count} 道，无法可靠出题则 items=[]。"
         "课件图示描述尚未核实原图，相关题目仍需人工复核。"
@@ -248,6 +251,10 @@ def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
             answer_text = item["correct_answer"].strip().lower()
             if answer_text in ("true", "false"):
                 item = {**item, "correct_answer": answer_text == "true"}
+        if item.get("question_type") == "multiple_choice":
+            answer = item.get("correct_answer")
+            if isinstance(answer,list) and all(type(x) is str for x in answer):
+                item = {**item, "correct_answer": sorted(x.strip().upper() for x in answer)}
         if item.get("question_type") == "single_choice" and isinstance(item.get("correct_answer"), str):
             item = {**item, "correct_answer": item["correct_answer"].strip().upper()}
         err = validate_question_fields(item.get("question_type"), item.get("stem"),
@@ -311,7 +318,7 @@ def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
             warnings.append(f"#{index}: {mapping_note}")
         seen_stems.add(stem_key)
         accepted.append({"question_type":item["question_type"],
-            "stem":item["stem"].strip(), "options":item["options"] if item["question_type"]=="single_choice" else {"true":"正确","false":"错误"},
+            "stem":item["stem"].strip(), "options":item["options"] if item["question_type"] in ("single_choice","multiple_choice") else {"true":"正确","false":"错误"} if item["question_type"]=="true_false" else {},
             "correct_answer":item["correct_answer"],"explanation":item["explanation"].strip(),
             "difficulty":item["difficulty"],"primary":primary,"ids":ids,
             "mapping_note":mapping_note,
