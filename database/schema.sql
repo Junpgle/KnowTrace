@@ -394,3 +394,16 @@ CREATE TABLE IF NOT EXISTS question_generation_units (
 );
 CREATE INDEX IF NOT EXISTS idx_question_generation_unit_batch
     ON question_generation_units(batch_id,ordinal);
+
+-- Deliberate user-initiated approval of AI question candidates.
+-- Immutable audit log: a source quote match is not factual verification.
+CREATE TABLE IF NOT EXISTS question_bulk_review_events (
+    id TEXT PRIMARY KEY,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    question_version_id TEXT NOT NULL REFERENCES question_versions(id) ON DELETE RESTRICT,
+    action TEXT NOT NULL CHECK (action = 'approved'),
+    details_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_question_bulk_review_events_course
+    ON question_bulk_review_events(course_id,created_at);
