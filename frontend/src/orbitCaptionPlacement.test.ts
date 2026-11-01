@@ -37,9 +37,11 @@ test('a blocked top slot uses empty side space rather than hiding a label',()=>{
     id:'chapter',x:780,y:430,width:166,height:48,radius:32,priority:100,
   }]
   const topBlocked={left:650,right:920,top:280,bottom:398}
-  const placed=placeOrbitCaptions(lonely,bounds,[topBlocked])
+  const bottomBlocked={left:650,right:920,top:465,bottom:630}
+  const placed=placeOrbitCaptions(lonely,bounds,[topBlocked,bottomBlocked])
   assert.equal(placed.length,1)
   assert.ok(!boxesOverlap(placed[0].box,topBlocked))
+  assert.ok(!boxesOverlap(placed[0].box,bottomBlocked))
   assert.notEqual(placed[0].dx,0)
 })
 
