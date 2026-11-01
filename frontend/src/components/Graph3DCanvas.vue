@@ -95,7 +95,7 @@ const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[]
 // their radius is specified in SCREEN pixels, not permanent world units.
 // This prevents a 10-world-unit globe from covering neighboring orbit slots
 // when chapter-level camera zoom brings the group atlas into view.
-const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string }[] = []
+const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string; count: number }[] = []
 const groupMarkerRadii = new Map<string, number>()
 type OrbitingPlanet = {
   id: string
@@ -1416,7 +1416,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     g.add(aura)
     orbitDecorations.push(aura)
     if (overview && node.kind === 'group') {
-      groupMarkers.push({planet, aura, id:node.id})
+      groupMarkers.push({planet, aura, id:node.id, count})
     }
 
     if (!focusState.active && !(overview && node.kind === 'group')) {
@@ -1869,9 +1869,7 @@ function updateGroupMarkerSizes() {
     .applyQuaternion(camera.quaternion)
   const centers = groupMarkers.map(m => screenPosition(
     m.planet.getWorldPosition(new THREE.Vector3())))
-  const preferredRadius = groupMarkers.length > 28 ? 10 :
-    groupMarkers.length > 18 ? 12 : 14
-  groupMarkers.forEach(({planet,aura,id}, i) => {
+  groupMarkers.forEach(({planet,aura,id,count}, i) => {
     const here = centers[i]
     let closest = Infinity
     if (here.visible) {
@@ -1883,6 +1881,10 @@ function updateGroupMarkerSizes() {
     }
     // Leave a generous clearance for strokes and labels. A narrow projection
     // can shrink a marker, but can NEVER make adjacent planets overlap.
+    // Concept-heavy browsing groups are visibly larger; the nearest
+    // neighbor screen-space limit always wins to prevent overlaps.
+    const preferredRadius = THREE.MathUtils.clamp(
+      6.7+2.0*Math.sqrt(Math.max(1,count)), 8.8, 18)
     const radiusPixels = Math.max(3.8,Math.min(
       preferredRadius, closest * .28))
     const depth = Math.max(1, planet.getWorldPosition(new THREE.Vector3())
