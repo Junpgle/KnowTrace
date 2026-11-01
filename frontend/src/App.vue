@@ -25,7 +25,7 @@ const showCourseForm = ref(false)
 const newCourseName = ref('')
 const newCourseDescription = ref('')
 const creatingCourse = ref(false)
-const bankEntryTab = ref<'knowledge' | 'questions' | 'external'>('questions')
+const bankEntryTab = ref<'overview' | 'knowledge' | 'questions' | 'batch' | 'external'>('overview')
 const bankDocumentId = ref('')
 const loading = ref(true)
 const refreshing = ref(false)
@@ -114,7 +114,7 @@ function firstUnanswered() {
   chooseIndex(next >= 0 ? next : Math.max(quiz.value.items.length - 1, 0))
 }
 function navigate(destination: View) {
-  if (destination === 'bank') bankEntryTab.value = 'questions'
+  if (destination === 'bank') bankEntryTab.value = 'overview'
   view.value = destination
   mobileMenu.value = false
   banner.value = ''
@@ -133,7 +133,7 @@ function openDocumentExternal(documentId: string) {
   bankDocumentId.value = documentId
   openBankTab('external')
 }
-function openBankTab(tab: 'knowledge' | 'questions' | 'external') {
+function openBankTab(tab: 'overview' | 'knowledge' | 'questions' | 'batch' | 'external') {
   navigate('bank')
   bankEntryTab.value = tab
 }
