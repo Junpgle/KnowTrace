@@ -270,7 +270,7 @@ CREATE TABLE IF NOT EXISTS question_versions (
     id TEXT PRIMARY KEY,
     question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE RESTRICT,
     version_no INTEGER NOT NULL CHECK(version_no >= 1),
-    question_type TEXT NOT NULL CHECK (question_type IN ('single_choice','true_false')),
+    question_type TEXT NOT NULL CHECK (question_type IN ('single_choice','multiple_choice','true_false','short_answer')),
     stem TEXT NOT NULL,
     options_json TEXT NOT NULL DEFAULT '{}',
     correct_answer_json TEXT NOT NULL,
@@ -407,3 +407,14 @@ CREATE TABLE IF NOT EXISTS question_bulk_review_events (
 );
 CREATE INDEX IF NOT EXISTS idx_question_bulk_review_events_course
     ON question_bulk_review_events(course_id,created_at);
+
+-- User-reviewed open answers; do not infer BKT observations from these verdicts.
+CREATE TABLE IF NOT EXISTS short_answer_evaluations (
+    id TEXT PRIMARY KEY,
+    quiz_item_id TEXT NOT NULL UNIQUE REFERENCES quiz_items(id) ON DELETE RESTRICT,
+    mode TEXT NOT NULL CHECK (mode IN ('self','ai')),
+    verdict TEXT NOT NULL CHECK (verdict IN ('learned','not_learned','uncertain')),
+    feedback TEXT NOT NULL DEFAULT '',
+    provider TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
