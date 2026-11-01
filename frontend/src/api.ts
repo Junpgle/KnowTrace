@@ -199,6 +199,40 @@ export interface Course {
   created_at: string
 }
 
+export interface QuestionQuality {
+  course_id: string
+  chapter_id: string | null
+  approved_points: number
+  covered_points: number
+  diagnosable_points: number
+  pending_only_points: number
+  uncovered_points: number
+  coverage: number
+  latest_questions: {
+    total:number; approved:number;pending:number;draft:number;rejected:number
+    diagnostic:number;composite:number;without_source:number;visual_evidence:number
+    duplicate_stems:number
+  }
+  chapters: {
+    chapter_id:string|null; chapter:string;approved_points:number
+    covered_points:number;diagnosable_points:number;coverage:number
+  }[]
+  uncovered_sample: {
+    id:string;name:string;chapter_id:string|null
+    pending:number;approved:number;diagnostic:number
+  }[]
+  disclaimer:string
+}
+export interface QMatrixPage {
+  total:number;offset:number;limit:number;note:string
+  items: {
+    question_version_id:string
+    question_type:'single_choice'|'true_false'
+    difficulty:number;concept_count:number
+    knowledge_points:{knowledge_point_id:string;is_primary:boolean}[]
+  }[]
+}
+
 export interface QuestionBatchPreview {
   eligible: number
   approved_covered: number
@@ -272,6 +306,7 @@ export interface QuizItem {
   position: number
   question_version_id: string
   primary_knowledge_point_id: string
+  selection_reason?: string | null
   question_type: 'single_choice' | 'true_false'
   stem: string
   options: Record<string, string>
@@ -282,7 +317,7 @@ export interface QuizItem {
 export interface QuizSession {
   id: string
   course_id: string
-  mode: 'normal'
+  mode: 'normal' | 'adaptive'
   status: 'active' | 'completed' | 'cancelled'
   started_at: string
   finished_at: string | null
@@ -307,7 +342,8 @@ export interface AnswerFeedback {
   correct_answer: string | boolean
   explanation: string | null
   knowledge_point_id: string
-  mastery: MasterySnapshot
+  mastery: MasterySnapshot | null
+  diagnostic: boolean
   answered_at: string
 }
 
@@ -796,9 +832,9 @@ export const api = {
   report: (courseId: string) => request<LearningReport>(
     '/api/courses/' + encodeURIComponent(courseId) + '/learning-report',
   ),
-  startQuiz: (courseId: string, count: number) => request<QuizSession>(
+  startQuiz: (courseId: string, count: number, mode: 'normal' | 'adaptive' = 'normal') => request<QuizSession>(
     '/api/courses/' + encodeURIComponent(courseId) + '/quiz-sessions',
-    { method: 'POST', body: JSON.stringify({ count, mode: 'normal' }) },
+    { method: 'POST', body: JSON.stringify({ count, mode }) },
   ),
   quiz: (sessionId: string) => request<QuizSession>(
     '/api/quiz-sessions/' + encodeURIComponent(sessionId),
@@ -858,6 +894,13 @@ export const api = {
       '/api/knowledge-points/' + encodeURIComponent(id) + '/review',
       { method: 'POST', body: JSON.stringify({ decision }) }),
   aiProviders: () => request<AIProviderStatus>('/api/ai/providers'),
+  questionQuality: (courseId: string, chapterId: string | null = null) =>
+    request<QuestionQuality>('/api/courses/' + encodeURIComponent(courseId) +
+      '/question-quality' + (chapterId ? '?chapter_id=' + encodeURIComponent(chapterId) : '')),
+  qMatrix: (courseId: string, offset=0, limit=100, chapterId: string | null = null) =>
+    request<QMatrixPage>('/api/courses/' + encodeURIComponent(courseId) +
+      '/q-matrix?offset=' + offset + '&limit=' + limit +
+      (chapterId ? '&chapter_id=' + encodeURIComponent(chapterId) : '')),
   questionBatchPreview: (courseId: string, groupSize: number, chapterId: string | null) =>
     request<QuestionBatchPreview>('/api/courses/' + encodeURIComponent(courseId) +
       '/question-batches/preview?group_size=' + groupSize +
