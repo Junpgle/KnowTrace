@@ -884,6 +884,97 @@ function belongsToContextChapter(node: GraphNode, chapterId: string | null | und
   return node.chapter_id === chapterId
 }
 
+// Orbital paths apply to the two OVERVIEW maps, never to a knowledge
+// neighborhood. During a concept selection every planet keeps its position.
+function initializeOrbitingPlanets() {
+  orbitingPlanets.splice(0)
+  if (!camera || props.selectedId || props.nodes.some(n=>n.kind==='knowledge'))
+    return
+  const isGroup = props.nodes.length>0 &&
+    props.nodes.every(n=>n.kind==='group')
+  const bodies = isGroup ? props.nodes :
+    props.nodes.filter(n=>n.kind==='chapter')
+  if (bodies.length < 2) return
+  const groupAxis = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion)
+  const groupVertical = new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion)
+  const axisX = isGroup ? groupAxis : new THREE.Vector3(1,0,0)
+  const axisY = isGroup ? groupVertical : new THREE.Vector3(0,0,1)
+  const bands=browseOrbitBands(bodies)
+  bands.forEach(band=>{
+    const points=band.map(n=>positions.get(n.id))
+      .filter((p):p is THREE.Vector3 => Boolean(p))
+    if(points.length<2)return
+    const center=new THREE.Vector3()
+    points.forEach(p=>center.add(p))
+    center.multiplyScalar(1/points.length)
+    const xRadius=Math.max(5,...points.map(p=>
+      Math.abs(p.clone().sub(center).dot(axisX))))
+    const yRadius=Math.max(5,...points.map(p=>
+      Math.abs(p.clone().sub(center).dot(axisY))))
+    band.forEach(node=>{
+      const position=positions.get(node.id)
+      const objects=orbitVisuals.get(node.id)
+      if(!position||!objects?.length)return
+      const delta=position.clone().sub(center)
+      const phase=Math.atan2(delta.dot(axisY)/yRadius,
+        delta.dot(axisX)/xRadius)
+      const amount=node.kind==='group'?node.source_count:
+        (cachedChapterTotals.get(node.id)??node.source_count)
+      // Stable pseudorandom differences avoid everyone moving in lockstep.
+      // A planet carrying more knowledge orbits measurably more slowly.
+      const periodSeconds=(48+6.8*Math.sqrt(Math.max(1,amount)))*
+        (.91+.18*ordinalHash(node.id+':orbital-speed'))
+      orbitingPlanets.push({
+        id:node.id, world:position, center:center.clone(),
+        axisX:axisX.clone(), axisY:axisY.clone(),
+        major:xRadius, minor:yRadius, phase,
+        radiansPerSecond:2*Math.PI/periodSeconds,
+        startedAt:0,
+        objects,
+      })
+    })
+  })
+}
+
+// This is an actual position update: moving planets remain pickable, labels
+// track the same shared Vector3, and course-contains edges remain connected.
+// Motion stops on hover and respects reduced-motion preference.
+function animateOrbits(now:number) {
+  if (!orbitingPlanets.length) return
+  if (!lastOrbitFrame) lastOrbitFrame=now
+  const dt=Math.min(.05,Math.max(0,(now-lastOrbitFrame)/1000))
+  lastOrbitFrame=now
+  if (reducedMotion() || hoveredNodeId || props.selectedId ||
+      outgoing.length || tween) return
+  orbitalSeconds+=dt
+  for(const planet of orbitingPlanets){
+    const angle=planet.phase+planet.radiansPerSecond*orbitalSeconds
+    const destination=planet.center.clone()
+      .addScaledVector(planet.axisX,planet.major*Math.cos(angle))
+      .addScaledVector(planet.axisY,planet.minor*Math.sin(angle))
+    const shift=destination.clone().sub(planet.world)
+    planet.world.copy(destination)
+    for(const item of planet.objects)
+      item.object.position.copy(item.start).add(shift)
+    if(planet.id.startsWith('view-group:')){
+      browseWorldPositions.set(planet.id,destination.clone())
+      contextCacheCoordinates.set(planet.id,destination.clone())
+    }
+  }
+  for(const lines of movingLines){
+    const attr=lines.geometry.getAttribute('position') as THREE.BufferAttribute
+    if(!attr)continue
+    lines.edges.forEach((edge,i)=>{
+      const a=positions.get(edge.source),b=positions.get(edge.target)
+      if(!a||!b)return
+      attr.setXYZ(i*2,a.x,a.y,a.z)
+      attr.setXYZ(i*2+1,b.x,b.y,b.z)
+    })
+    attr.needsUpdate=true
+    lines.geometry.computeBoundingSphere()
+  }
+}
+
 function rebuild(animate = false, transition?: SceneTransition) {
   if (!scene) return
   // Clicks on dimmed chapters / concepts are valid navigation too. Their
@@ -1221,10 +1312,13 @@ function rebuild(animate = false, transition?: SceneTransition) {
     g.add(cluster)
     meshes.push(cluster)
   }
-  // One faint CONTINUOUS track per elliptical belt is a clearer orbital
-  // cue than a separate miniature Saturn ring around every group planet.
-  if (props.nodes.length && props.nodes.every(n => n.kind === 'group')) {
-    const bands = browseOrbitBands(props.nodes)
+  // Both course chapters and local browse groups inhabit faint elliptical
+  // belts. Lines are navigational decoration, not artificial knowledge edges.
+  const orbitBodies = props.nodes.every(n=>n.kind==='group') ? props.nodes :
+    props.nodes.some(n=>n.kind==='knowledge') ? [] :
+      props.nodes.filter(n=>n.kind==='chapter')
+  if (orbitBodies.length >= 3) {
+    const bands = browseOrbitBands(orbitBodies)
     bands.forEach((band,index) => {
       const points = band.map(n=>positions.get(n.id))
         .filter((p):p is THREE.Vector3 => Boolean(p))
@@ -2068,6 +2162,7 @@ function draw() {
     if (travel >= 1) finishFade()
   }
   controls.update()
+  animateOrbits(now)
   if (!outgoing.length) {
     for (const track of orbitTracks) {
       const hovered = !!hoveredNodeId && track.ids.has(hoveredNodeId)
