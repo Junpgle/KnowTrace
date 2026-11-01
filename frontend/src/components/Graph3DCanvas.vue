@@ -37,6 +37,8 @@ let visible = true
 let disposed = false
 let tween = false
 let cameraAnimationStart = 0
+let fogStartDensity = .0015
+let fogDesiredDensity = .0015
 const cameraStartPosition = new THREE.Vector3()
 const cameraStartTarget = new THREE.Vector3()
 const desiredTarget = new THREE.Vector3()
@@ -85,6 +87,26 @@ const LAYER_REVEAL_END = .86
 function reducedMotion() {
   return typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+// Never impose the DESTINATION's zoom bounds on the CURRENT camera before
+// the flight begins: OrbitControls.update() would instantly clamp the start
+// distance and cause an unmistakable one-frame jump.
+function prepareFlightRange(destinationDistance: number) {
+  if (!camera || !controls) return
+  const startDistance = camera.position.distanceTo(controls.target)
+  const inFlightDistance = tween ? desiredPosition.distanceTo(desiredTarget) : 0
+  const farthest = Math.max(startDistance, destinationDistance, inFlightDistance)
+  controls.maxDistance = Math.max(280, farthest * 1.35)
+  camera.far = Math.max(1600, farthest * 3.5)
+  camera.updateProjectionMatrix()
+}
+
+function prepareFlightFog(destinationDistance: number) {
+  if (!(scene?.fog instanceof THREE.FogExp2)) return
+  fogStartDensity = scene.fog.density
+  fogDesiredDensity = Math.min(.0015, .35 / Math.max(72, destinationDistance))
+  if (reducedMotion()) scene.fog.density = fogDesiredDensity
 }
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
@@ -1149,16 +1171,12 @@ function focus(id: string | null, resetAtlasAngle = false) {
         focusConstellation ? 29 : 16,
       ),
     )
-    controls.maxDistance = Math.max(280, distance * 1.7)
-    camera.far = Math.max(1600, distance * 3)
-    camera.updateProjectionMatrix()
+    prepareFlightRange(distance)
   } else if (chapterFocus) {
     distance = Math.max(98, projectedFitDistance(
       focusedPoints, overviewCenter, direction, .77, .76, 20, 23,
     ))
-    controls.maxDistance = Math.max(280, distance * 1.8)
-    camera.far = Math.max(1600, distance * 3)
-    camera.updateProjectionMatrix()
+    prepareFlightRange(distance)
   } else if (!id) {
     const extent = Math.max(1, ...fitPoints.map(p=>p.distanceTo(overviewCenter)))
     const vFov = THREE.MathUtils.degToRad(camera.fov)
@@ -1198,17 +1216,17 @@ function focus(id: string | null, resetAtlasAngle = false) {
     } else {
       distance = Math.max(68, (extent + 12) / Math.sin(halfAngle) * .97)
     }
-    controls.maxDistance = Math.max(280, distance * 1.8)
-    camera.far = Math.max(1600, distance * 3)
-    camera.updateProjectionMatrix()
+    prepareFlightRange(distance)
   } else {
     const selected = props.nodes.find(n => n.id === id)
     if (localGroup && visibleKnowledge.length <= 18)
       distance = selected?.kind === 'knowledge' ? 92 : 112
     else distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
   }
-  if (scene?.fog instanceof THREE.FogExp2)
-    scene.fog.density = Math.min(0.0015, .35 / Math.max(72,distance))
+  // A visible fog pop before the camera starts moving looks like a jump
+  // even if the camera transform itself is continuous.
+  prepareFlightRange(distance)
+  prepareFlightFog(distance)
   if (direction.lengthSq() < 0.01) direction.set(.4, .8, 1)
   desiredPosition.copy(desiredTarget).add(direction.normalize().multiplyScalar(distance))
   if (reducedMotion()) {
@@ -1227,11 +1245,8 @@ function restoreCamera(snapshot: CameraSnapshot) {
   desiredTarget.copy(snapshot.target)
   desiredPosition.copy(snapshot.position)
   const distance = snapshot.position.distanceTo(snapshot.target)
-  controls.maxDistance = Math.max(280, distance * 1.8)
-  camera.far = Math.max(1600, distance * 3)
-  camera.updateProjectionMatrix()
-  if (scene?.fog instanceof THREE.FogExp2)
-    scene.fog.density = Math.min(.0015, .35 / Math.max(72, distance))
+  prepareFlightRange(distance)
+  prepareFlightFog(distance)
   if (reducedMotion()) {
     camera.position.copy(desiredPosition)
     controls.target.copy(desiredTarget)
@@ -1429,6 +1444,8 @@ function draw() {
     // camera interpolation used to pass through the graph and made
     // chapter-to-group transitions look like a sudden jump.
     const eased = raw * raw * (3 - 2 * raw)
+    if (scene.fog instanceof THREE.FogExp2)
+      scene.fog.density = THREE.MathUtils.lerp(fogStartDensity, fogDesiredDensity, eased)
     controls.target.lerpVectors(cameraStartTarget, desiredTarget, eased)
     const fromOffset = cameraStartPosition.clone().sub(cameraStartTarget)
     const toOffset = desiredPosition.clone().sub(desiredTarget)
@@ -1626,8 +1643,10 @@ watch(() => ({
     if (transitionMode === 'enter' && camera && controls) {
       cameraHistory.push({
         sceneKey: beforeKey,
-        position: (tween ? desiredPosition : camera.position).clone(),
-        target: (tween ? desiredTarget : controls.target).clone(),
+        // Save the last ACTUALLY RENDERED pose. An in-flight destination
+        // has not been shown and would make the return path snap.
+        position: camera.position.clone(),
+        target: controls.target.clone(),
       })
       if (cameraHistory.length > 12) cameraHistory.shift()
     } else if (transitionMode === 'back') {
