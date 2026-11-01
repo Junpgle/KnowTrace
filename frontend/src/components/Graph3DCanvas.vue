@@ -55,6 +55,8 @@ let cachedNodes: GraphNode[] | null = null
 let cachedEdges: GraphEdge[] | null = null
 let cachedCoords = new Map<string, THREE.Vector3>()
 let cachedChapterTotals = new Map<string, number>()
+let lastViewportWidth = 0
+let lastViewportHeight = 0
 let contextCacheNodes: GraphNode[] | undefined
 let contextCacheEdges: GraphEdge[] | undefined
 let contextCacheCoordinates = new Map<string, THREE.Vector3>()
@@ -410,65 +412,71 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // Diffuse annular star field, NOT spokes and NOT rows of perfect rings.
-    // Golden-angle azimuth and an independent low-discrepancy radial sequence
-    // create an irregular but balanced cloud around a softly empty center.
-    // No semantic/learning relationship is encoded by this visual position.
+    // The group atlas occupies the usable VIEWPORT, not a small 250-unit
+    // orbit in the middle of a 1500px-wide scene. Use a staggered, jittered
+    // honeycomb so caption-sized clearances survive projection. Positions
+    // reflect presentation only; group ordering has no semantic meaning.
     const groups = [...groupNodes].sort((a, b) =>
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
     const count = groups.length
-    const width = mountPoint.value?.clientWidth ?? 1440
-    const height = mountPoint.value?.clientHeight ?? 820
-    const aspect = width / Math.max(1, height)
-    // Gently use a wider canvas, never flatten the galaxy into a rectangle.
-    const spreadX = THREE.MathUtils.clamp(1 + (aspect - 1) * .68, 1, 1.60)
-    const innerRadius = count < 4 ? 0 : count <= 12 ? 78 : 102
-    const outerRadius = count <= 4 ? 125 : count <= 12 ? 200
-      : count <= 22 ? 255 : 345 + Math.max(0, count - 34) * 1.8
-    const rotation = ordinalHash('annulus:' + count) * Math.PI * 2
-    const goldenRatioFraction = .7548776662466927
+    const viewport = safeViewport()
+    const usableWidth = Math.max(300, viewport.right - viewport.left)
+    const usableHeight = Math.max(240, viewport.bottom - viewport.top)
+    const aspect = THREE.MathUtils.clamp(usableWidth / usableHeight, 1, 3.5)
+    // Balance text-card widths against the vertical space. On a typical
+    // desktop, 26 groups use five spacious, staggered rows instead of a
+    // tightly packed ring with eleven labels scattered outside the planets.
+    const rows = count <= 2 ? 1 : Math.min(count,
+      Math.max(2, Math.ceil(Math.sqrt(count / (aspect * .40)))))
+    const basePerRow = Math.floor(count / rows)
+    const extra = count % rows
+    const lengths = Array.from({length:rows}, (_, i) =>
+      basePerRow + (i < extra ? 1 : 0))
+    const maximumCols = Math.max(...lengths)
+    const worldHalfY = rows < 2 ? 0 : Math.max(136, (rows - 1) * 57)
+    const worldHalfX = count < 2 ? 0
+      : Math.max(195, worldHalfY * aspect * 1.02)
+    const xStep = maximumCols <= 1 ? 0
+      : worldHalfX * 2 / (maximumCols - 1)
+    const yStep = rows <= 1 ? 0 : worldHalfY * 2 / (rows - 1)
     const points: THREE.Vector3[] = []
-    for (let i = 0; i < count; i++) {
-      const node = groups[i]
-      const radialUnit = (i * goldenRatioFraction + .37) % 1
-      const theta = i * G + rotation +
-        (ordinalHash(node.id + ':theta') - .5) * .17
-      const radius = count === 1 ? 0
-        : innerRadius + (outerRadius - innerRadius)
-          * Math.sqrt(.08 + radialUnit * .92)
-      const x = Math.cos(theta) * radius * spreadX
-      const y = Math.sin(theta) * radius
-      const z = ((ordinalHash(node.id + ':depth') - .5) * 36)
-        + 9 * Math.sin(theta * 2.3)
-      points.push(new THREE.Vector3(x, y, z))
-    }
-    // Mild collision relaxation in the projection plane for small/medium
-    // group counts. Keep a soft annulus instead of pushing points into
-    // either a six-armed structure or a rigid lattice.
-    const clearance = count <= 12 ? 73 : count <= 24 ? 67 : 54
-    for (let pass = 0; pass < 16; pass++) {
-      for (let i = 0; i < count; i++) {
-        for (let j = i + 1; j < count; j++) {
-          const dx = points[j].x - points[i].x
-          const dy = points[j].y - points[i].y
-          const distance = Math.hypot(dx, dy)
-          if (distance >= clearance) continue
-          const fallbackAngle = (i + j * 2.399) * G
-          const ux = distance > .0001 ? dx / distance : Math.cos(fallbackAngle)
-          const uy = distance > .0001 ? dy / distance : Math.sin(fallbackAngle)
-          const shift = (clearance - distance) * .29
-          points[i].x -= ux * shift
-          points[i].y -= uy * shift
-          points[j].x += ux * shift
-          points[j].y += uy * shift
-        }
+    let index = 0
+    for (let row = 0; row < rows; row++) {
+      const rowCount = lengths[row]
+      const rowWidth = (rowCount - 1) * xStep
+      const rowOffset = row % 2 === 0 ? -.035 : .035
+      for (let col = 0; col < rowCount; col++) {
+        const node = groups[index++]
+        const dx = (ordinalHash(node.id + ':jitter-x') - .5) *
+          Math.min(20, xStep * .15)
+        const dy = (ordinalHash(node.id + ':jitter-y') - .5) *
+          Math.min(14, yStep * .13)
+        points.push(new THREE.Vector3(
+          -rowWidth / 2 + col * xStep + rowOffset * xStep + dx,
+          (row - (rows - 1) / 2) * yStep + dy,
+          (ordinalHash(node.id + ':depth') - .5) * 12,
+        ))
       }
-      for (const point of points) {
-        const radius = Math.hypot(point.x / spreadX, point.y)
-        if (radius < innerRadius * .75 && radius > .0001) {
-          const boost = innerRadius * .75 / radius
-          point.x *= boost
-          point.y *= boost
+    }
+    // Any slight projection conflict is resolved in the XY plane, without
+    // moving labels away from the planets or regularizing into square tiles.
+    const clearX = Math.min(150, Math.max(70, xStep * .80))
+    const clearY = Math.min(94, Math.max(46, yStep * .77))
+    for (let pass = 0; pass < 12; pass++) {
+      for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+          const a = points[i], b = points[j]
+          const dx = b.x-a.x, dy = b.y-a.y
+          const d = Math.hypot(dx / clearX, dy / clearY)
+          if (d >= 1) continue
+          const angle = (i + 1) * G + j
+          const ux = d > .0001 ? dx / (d * clearX) : Math.cos(angle)
+          const uy = d > .0001 ? dy / (d * clearY) : Math.sin(angle)
+          const force = (1 - d) * .32
+          a.x -= ux * clearX * force
+          a.y -= uy * clearY * force
+          b.x += ux * clearX * force
+          b.y += uy * clearY * force
         }
       }
     }
@@ -786,7 +794,7 @@ function resolveContextLayout() {
       for (const node of groups) {
         const p = localGroups.get(node.id)
         if (p) contextCacheCoordinates.set(node.id, chapterCenter.clone()
-          .add(p.clone().multiplyScalar(.30)))
+          .add(p.clone()))
       }
     }
     contextCacheNodes = nodes
@@ -835,7 +843,10 @@ function rebuild(animate = false, transition?: SceneTransition) {
       const origin = parent?.clone() ?? new THREE.Box3().setFromPoints(
         groupNodes.map(n => coords.get(n.id)!).filter(Boolean),
       ).getCenter(new THREE.Vector3())
-      const scale = props.nodes.some(n => n.kind === 'knowledge') ? .29 : .30
+      // The tiny .30 group scale used for the old enter animation is NOT
+      // a valid final atlas scale: it shrinks 26 groups into the center.
+      // Camera zoom and crossfade handle navigation; preserve final span.
+      const scale = props.nodes.some(n => n.kind === 'knowledge') ? .29 : 1
       for (const [id, position] of coords) {
         if (!props.nodes.some(n => n.id === id)) continue
         coords.set(id, position.sub(origin).multiplyScalar(scale).add(anchor))
@@ -1613,7 +1624,13 @@ function arrangeScreenLabels() {
   // The cap adapts to available real-estate; crowded layers only label key
   // nodes until hovered, instead of printing 20 unreadable overlapping cards.
   const available = Math.max(1,(safe.right-safe.left)*(safe.bottom-safe.top))
-  const maxLabels = Math.max(2,Math.min(22,Math.floor(available / 32000)))
+  const groupOverviewLabels = props.nodes.length > 0 &&
+    props.nodes.every(n => n.kind === 'group')
+  // Browse group captions are the navigation UI, not optional decoration.
+  // With the wider collision-safe group layout, show every caption that
+  // actually fits instead of limiting 26 groups to an arbitrary 22.
+  const maxLabels = groupOverviewLabels ? labels.length :
+    Math.max(2,Math.min(22,Math.floor(available / 32000)))
   let visibleLabels = 0
   for (const label of labels) {
     const center = label.sprite.getWorldPosition(new THREE.Vector3())
@@ -1627,15 +1644,22 @@ function arrangeScreenLabels() {
     const hovered = label.nodeId === hoveredNodeId
     label.sprite.visible = false
     if (!projected.visible || (visibleLabels >= maxLabels && !pinned && !hovered)) continue
-    const offsets: [number,number][] = [
-      [0,0], [w*.65,0],[-w*.65,0],
-      [0,-h-16],[0,h+16],
-      [w*.75,-h*.75],[-w*.75,-h*.75],
-      [w*.75,h*.95],[-w*.75,h*.95],
-      [w+16,0],[-w-16,0],
-      [0,-h*2-16],[0,h*2+16],
-      [w*1.4,-h*.6],[-w*1.4,-h*.6],
-    ]
+    // In the fullscreen browse atlas, a label belongs directly above its
+    // own planet. Never send it hundreds of pixels to an unrelated region
+    // merely to force it onto the screen. Hover still shows every full name.
+    const offsets: [number,number][] = groupOverviewLabels
+      ? [[0,0],[-w*.15,0],[w*.15,0],
+        [0,-h*.33],[0,h*.33],
+        [-w*.22,-h*.26],[w*.22,-h*.26]]
+      : [
+        [0,0], [w*.65,0],[-w*.65,0],
+        [0,-h-16],[0,h+16],
+        [w*.75,-h*.75],[-w*.75,-h*.75],
+        [w*.75,h*.95],[-w*.75,h*.95],
+        [w+16,0],[-w-16,0],
+        [0,-h*2-16],[0,h*2+16],
+        [w*1.4,-h*.6],[-w*1.4,-h*.6],
+      ]
     let chosen: {dx:number;dy:number;score:number;box:ScreenBox} | null = null
     for (const [dx,dy] of offsets) {
       const x=projected.x+dx,y=projected.y+dy
@@ -1840,9 +1864,23 @@ function resize() {
   if (!renderer || !camera || !mountPoint.value) return
   const width = Math.max(1, mountPoint.value.clientWidth)
   const height = Math.max(1, mountPoint.value.clientHeight)
+  const wasWidth = lastViewportWidth
+  const wasHeight = lastViewportHeight
+  lastViewportWidth = width
+  lastViewportHeight = height
   camera.aspect = width / height
   camera.updateProjectionMatrix()
   renderer.setSize(width, height, false)
+  // Reflow the group atlas when the window materially changes shape.
+  // Layout otherwise stays cached while the user pans, zooms or selects.
+  if (wasWidth && wasHeight && props.nodes.length > 0 &&
+    props.nodes.every(n => n.kind === 'group') &&
+    (Math.abs(width - wasWidth) > 42 || Math.abs(height - wasHeight) > 42)) {
+    cachedNodes = null
+    cachedEdges = null
+    rebuild()
+    focus(null, true)
+  }
 }
 function pickNode(clientX: number, clientY: number): string | null {
   if (!renderer || !camera) return null
