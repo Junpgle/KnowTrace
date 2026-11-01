@@ -280,6 +280,29 @@ export interface QuestionBatchRequest {
   confirmed: boolean
 }
 
+export interface QuestionBulkApprovalCandidate {
+  id: string
+  stem: string
+  version_no: number
+  question_type: 'single_choice' | 'true_false'
+  chapter_id: string | null
+  knowledge_count: number
+  source_count: number
+  eligible: boolean
+  issues: string[]
+}
+export interface QuestionBulkApprovalPreview {
+  total: number
+  eligible: number
+  flagged: number
+  questions: QuestionBulkApprovalCandidate[]
+  warning: string
+}
+export interface QuestionBulkApprovalResult {
+  applied: string[]
+  skipped: {id: string; reason: string}[]
+}
+
 export interface QuestionSummary {
   version_id: string
   question_id: string
@@ -930,6 +953,14 @@ export const api = {
   questionVersion: (id: string) => request<QuestionVersion>(
     '/api/question-versions/' + encodeURIComponent(id),
   ),
+  questionBulkApprovalPreview: (courseId: string) =>
+    request<QuestionBulkApprovalPreview>('/api/courses/'+encodeURIComponent(courseId)+
+      '/questions/bulk-approval-preview'),
+  approveQuestionsBulk: (courseId: string, ids: string[]) =>
+    request<QuestionBulkApprovalResult>('/api/courses/'+encodeURIComponent(courseId)+
+      '/questions/bulk-approve', {method:'POST',body:JSON.stringify({
+        question_version_ids:ids, confirmed:true, accept_unverified_answers:true,
+      })}),
   reviewQuestion: (id: string, decision: 'approved' | 'rejected') =>
     request<{ id: string; review_status: ReviewStatus }>(
       '/api/question-versions/' + encodeURIComponent(id) + '/review',
