@@ -1995,6 +1995,9 @@ function placeLabel(anchor: LabelAnchor) {
 // one instead of teleporting it to the other side of the screen.
 function arrangeStableOrbitCaptions() {
   if(!camera||!renderer||!orbitingPlanets.length)return
+  // The transition crossfade owns sprite opacity until the flight ends.
+  // Overriding it here would make the next level flash into view early.
+  if(outgoing.length||incoming)return
   const safe=safeViewport()
   const overlays=overlayBoxes()
   const height=renderer.domElement.clientHeight
