@@ -410,65 +410,71 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // Diffuse annular star field, NOT spokes and NOT rows of perfect rings.
-    // Golden-angle azimuth and an independent low-discrepancy radial sequence
-    // create an irregular but balanced cloud around a softly empty center.
-    // No semantic/learning relationship is encoded by this visual position.
+    // The group atlas occupies the usable VIEWPORT, not a small 250-unit
+    // orbit in the middle of a 1500px-wide scene. Use a staggered, jittered
+    // honeycomb so caption-sized clearances survive projection. Positions
+    // reflect presentation only; group ordering has no semantic meaning.
     const groups = [...groupNodes].sort((a, b) =>
       a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
     const count = groups.length
-    const width = mountPoint.value?.clientWidth ?? 1440
-    const height = mountPoint.value?.clientHeight ?? 820
-    const aspect = width / Math.max(1, height)
-    // Gently use a wider canvas, never flatten the galaxy into a rectangle.
-    const spreadX = THREE.MathUtils.clamp(1 + (aspect - 1) * .68, 1, 1.60)
-    const innerRadius = count < 4 ? 0 : count <= 12 ? 78 : 102
-    const outerRadius = count <= 4 ? 125 : count <= 12 ? 200
-      : count <= 22 ? 255 : 345 + Math.max(0, count - 34) * 1.8
-    const rotation = ordinalHash('annulus:' + count) * Math.PI * 2
-    const goldenRatioFraction = .7548776662466927
+    const viewport = safeViewport()
+    const usableWidth = Math.max(300, viewport.right - viewport.left)
+    const usableHeight = Math.max(240, viewport.bottom - viewport.top)
+    const aspect = THREE.MathUtils.clamp(usableWidth / usableHeight, 1, 3.5)
+    // Balance text-card widths against the vertical space. On a typical
+    // desktop, 26 groups use five spacious, staggered rows instead of a
+    // tightly packed ring with eleven labels scattered outside the planets.
+    const rows = count <= 2 ? 1 : Math.min(count,
+      Math.max(2, Math.ceil(Math.sqrt(count / (aspect * .40)))))
+    const basePerRow = Math.floor(count / rows)
+    const extra = count % rows
+    const lengths = Array.from({length:rows}, (_, i) =>
+      basePerRow + (i < extra ? 1 : 0))
+    const maximumCols = Math.max(...lengths)
+    const worldHalfY = rows < 2 ? 0 : Math.max(136, (rows - 1) * 57)
+    const worldHalfX = count < 2 ? 0
+      : Math.max(195, worldHalfY * aspect * 1.02)
+    const xStep = maximumCols <= 1 ? 0
+      : worldHalfX * 2 / (maximumCols - 1)
+    const yStep = rows <= 1 ? 0 : worldHalfY * 2 / (rows - 1)
     const points: THREE.Vector3[] = []
-    for (let i = 0; i < count; i++) {
-      const node = groups[i]
-      const radialUnit = (i * goldenRatioFraction + .37) % 1
-      const theta = i * G + rotation +
-        (ordinalHash(node.id + ':theta') - .5) * .17
-      const radius = count === 1 ? 0
-        : innerRadius + (outerRadius - innerRadius)
-          * Math.sqrt(.08 + radialUnit * .92)
-      const x = Math.cos(theta) * radius * spreadX
-      const y = Math.sin(theta) * radius
-      const z = ((ordinalHash(node.id + ':depth') - .5) * 36)
-        + 9 * Math.sin(theta * 2.3)
-      points.push(new THREE.Vector3(x, y, z))
-    }
-    // Mild collision relaxation in the projection plane for small/medium
-    // group counts. Keep a soft annulus instead of pushing points into
-    // either a six-armed structure or a rigid lattice.
-    const clearance = count <= 12 ? 73 : count <= 24 ? 67 : 54
-    for (let pass = 0; pass < 16; pass++) {
-      for (let i = 0; i < count; i++) {
-        for (let j = i + 1; j < count; j++) {
-          const dx = points[j].x - points[i].x
-          const dy = points[j].y - points[i].y
-          const distance = Math.hypot(dx, dy)
-          if (distance >= clearance) continue
-          const fallbackAngle = (i + j * 2.399) * G
-          const ux = distance > .0001 ? dx / distance : Math.cos(fallbackAngle)
-          const uy = distance > .0001 ? dy / distance : Math.sin(fallbackAngle)
-          const shift = (clearance - distance) * .29
-          points[i].x -= ux * shift
-          points[i].y -= uy * shift
-          points[j].x += ux * shift
-          points[j].y += uy * shift
-        }
+    let index = 0
+    for (let row = 0; row < rows; row++) {
+      const rowCount = lengths[row]
+      const rowWidth = (rowCount - 1) * xStep
+      const rowOffset = row % 2 === 0 ? -.035 : .035
+      for (let col = 0; col < rowCount; col++) {
+        const node = groups[index++]
+        const dx = (ordinalHash(node.id + ':jitter-x') - .5) *
+          Math.min(20, xStep * .15)
+        const dy = (ordinalHash(node.id + ':jitter-y') - .5) *
+          Math.min(14, yStep * .13)
+        points.push(new THREE.Vector3(
+          -rowWidth / 2 + col * xStep + rowOffset * xStep + dx,
+          (row - (rows - 1) / 2) * yStep + dy,
+          (ordinalHash(node.id + ':depth') - .5) * 12,
+        ))
       }
-      for (const point of points) {
-        const radius = Math.hypot(point.x / spreadX, point.y)
-        if (radius < innerRadius * .75 && radius > .0001) {
-          const boost = innerRadius * .75 / radius
-          point.x *= boost
-          point.y *= boost
+    }
+    // Any slight projection conflict is resolved in the XY plane, without
+    // moving labels away from the planets or regularizing into square tiles.
+    const clearX = Math.min(150, Math.max(70, xStep * .80))
+    const clearY = Math.min(94, Math.max(46, yStep * .77))
+    for (let pass = 0; pass < 12; pass++) {
+      for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+          const a = points[i], b = points[j]
+          const dx = b.x-a.x, dy = b.y-a.y
+          const d = Math.hypot(dx / clearX, dy / clearY)
+          if (d >= 1) continue
+          const angle = (i + 1) * G + j
+          const ux = d > .0001 ? dx / (d * clearX) : Math.cos(angle)
+          const uy = d > .0001 ? dy / (d * clearY) : Math.sin(angle)
+          const force = (1 - d) * .32
+          a.x -= ux * clearX * force
+          a.y -= uy * clearY * force
+          b.x += ux * clearX * force
+          b.y += uy * clearY * force
         }
       }
     }
