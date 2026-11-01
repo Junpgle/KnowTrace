@@ -123,6 +123,7 @@ const movingLines: {
   edges: {source:string;target:string}[]
 }[] = []
 let lastOrbitFrame = 0
+let chapterOrbitPixelScale = 1
 const orbitVisuals = new Map<string, {object:THREE.Object3D;start:THREE.Vector3}[]>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
@@ -592,10 +593,24 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
   const viewport=safeViewport()
+  const chapterCount=(id:string)=>{
+    let total=0
+    for(const node of nodes){
+      if(node.kind!=='knowledge')continue
+      let cursor=parent.get(node.id)
+      const seen=new Set<string>()
+      while(cursor&&!seen.has(cursor)){
+        if(cursor===id){total++;break}
+        seen.add(cursor)
+        cursor=parent.get(cursor)
+      }
+    }
+    return total
+  }
   const orbitPlan=planCenteredCourseOrbits(
     top.map(ch=>({
       id:ch.id,
-      knowledgeCount:byChapter.get(ch.id)?.length ?? ch.source_count,
+      knowledgeCount:chapterCount(ch.id),
     })),
     (viewport.right-viewport.left)/Math.max(1,viewport.bottom-viewport.top),
     viewport.right-viewport.left,viewport.bottom-viewport.top)
@@ -736,6 +751,7 @@ function clearGraph(animate = false) {
   movingLines.splice(0)
   orbitVisuals.clear()
   lastOrbitFrame = 0
+  chapterOrbitPixelScale = 1
   hoveredNodeId = null
   hoveredName.value = ''
   hoveredOrbitInfo.value = ''
@@ -942,9 +958,10 @@ function initializeOrbitingPlanets() {
   if(!top.length)return
   const safe=safeViewport()
   const plan=planCenteredCourseOrbits(top.map(node=>({
-    id:node.id,knowledgeCount:cachedChapterTotals.get(node.id)??node.source_count,
+    id:node.id,knowledgeCount:cachedChapterTotals.get(node.id)??0,
   })),(safe.right-safe.left)/Math.max(1,safe.bottom-safe.top),
   safe.right-safe.left,safe.bottom-safe.top)
+  chapterOrbitPixelScale=plan.pixelScale
   for(const lane of plan.orbits){
     const pos=positions.get(lane.id)
     const objects=orbitVisuals.get(lane.id)
@@ -1516,12 +1533,26 @@ function rebuild(animate = false, transition?: SceneTransition) {
     })))
   }
   initializeOrbitingPlanets()
-  // Independent visual orbital tracks. These do not encode any new semantic
-  // relationship and never force larger planets to share a circumference.
+  // Draw ONE visible ellipse per orbit. Course lanes share the same
+  // course-center focus; browsing groups share a few coherent belts.
+  const isGroupTracks=props.nodes.length>0 &&
+    props.nodes.every(n=>n.kind==='group')
+  const trackMap=new Map<string,{
+    body: OrbitingPlanet; ids:Set<string>
+  }>()
   orbitingPlanets.forEach((body,index)=>{
-    if(body.major<.0001)return
-    const points=Array.from({length:120},(_,i)=>{
-      const angle=i*Math.PI*2/120
+    if(body.major<.001)return
+    const key=isGroupTracks
+      ? `${body.major.toFixed(4)}:${body.minor.toFixed(4)}`
+      : body.id
+    const existing=trackMap.get(key)
+    if(existing){existing.ids.add(body.id);return}
+    trackMap.set(key,{body,ids:new Set([body.id])})
+  })
+  let trackIndex=0
+  for(const {body,ids} of trackMap.values()){
+    const points=Array.from({length:160},(_,i)=>{
+      const angle=i*Math.PI*2/160
       return body.center.clone()
         .addScaledVector(body.axisX,body.major*Math.cos(angle))
         .addScaledVector(body.axisY,body.minor*Math.sin(angle))
@@ -1529,13 +1560,13 @@ function rebuild(animate = false, transition?: SceneTransition) {
     const track=new THREE.LineLoop(
       new THREE.BufferGeometry().setFromPoints(points),
       new THREE.LineBasicMaterial({
-        color:[0x6fc6c8,0x729fbf,0x7ea6bf,0x64b6c7][index%4],
-        transparent:true,opacity:.12,depthWrite:false,depthTest:false,
+        color:[0x6fc6c8,0x729fbf,0x7ea6bf,0x64b6c7][trackIndex++%4],
+        transparent:true,opacity:.20,depthWrite:false,depthTest:false,
       }),
     )
     g.add(track)
-    orbitTracks.push({line:track,ids:new Set([body.id]),baseOpacity:.12})
-  })
+    orbitTracks.push({line:track,ids,baseOpacity:.20})
+  }
 
   const structural: number[] = []
   const ordinary: number[] = []
@@ -1896,7 +1927,11 @@ function updateOrbitMarkerSizes() {
     // Each body has an individual clearance-planned orbit. Collision
     // avoidance belongs to the LANE PLANNER, never in this size function:
     // a 303-point chapter must not suddenly shrink when a neighbor passes.
-    const radiusPx=orbitMetrics(kind,count,id).idealRadiusPx
+    // All chapters share ONE viewport fit factor. Their sizes remain
+    // proportional and never change just because planets pass nearby.
+    const radiusPx=orbitMetrics(kind,count,id).idealRadiusPx *
+      (kind==='chapter'&&orbitingPlanets.some(p=>p.id===id)
+        ? chapterOrbitPixelScale : 1)
     const position=planet.getWorldPosition(new THREE.Vector3())
     const depth=Math.max(1,position.sub(camera!.position).dot(forward))
     const worldRadius=radiusPx*2*tanHalf*depth/height
