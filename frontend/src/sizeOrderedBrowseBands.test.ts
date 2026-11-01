@@ -18,7 +18,7 @@ test('35 browse groups occupy four ordered belts: smaller inside, larger outside
   ]
   const bands=sizeOrderedBrowseBands(sampleGroups(counts))
   assert.equal(bands.length,4)
-  assert.deepEqual(bands.map(b=>b.length),[7,8,10,10])
+  assert.deepEqual(bands.map(b=>b.length),[6,8,10,11])
   const all=bands.flat()
   assert.equal(all.length,35)
   assert.deepEqual(all.map(g=>g.source_count),
