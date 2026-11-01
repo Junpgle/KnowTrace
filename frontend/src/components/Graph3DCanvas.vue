@@ -1280,7 +1280,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
           (!focusState.active && !smallGroup && index < 32) ||
           center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
-        const label = focusState.active
+        const subdued = props.preservePositionsOnSelect &&
+          focusState.active && !center && !neighbor
+        const label = focusState.active && !subdued
           ? makeFocusLabel(node.name, center)
           : smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
         if (label) {
@@ -1291,17 +1293,19 @@ function rebuild(animate = false, transition?: SceneTransition) {
           }
           label.position.copy(position)
           label.userData.nodeId = node.id
-          const width = focusState.active
+          const width = subdued ? 128 : focusState.active
             ? (center ? 208 : knowledge.length > 9 ? 148 : 178)
             : 154
           labelAnchors.push({
             sprite: label, center: position, nodeId: node.id,
             distance: radius + (smallGroup ? 6.5 : 4.5),
             focused: focusState.active,
-            priority: center ? 10000 : 1000,
+            priority: center ? 10000 : neighbor ? 2000 : subdued ? 30 : 1000,
             declutter: !focusState.active && !smallGroup,
-            screen: focusState.active
-              ? {width, height: width * 180 / 640, radius, gap: 12}
+            screen: subdued
+              ? {width, height: width*150/520, radius, gap: 11}
+              : focusState.active
+                ? {width, height: width * 180 / 640, radius, gap: 12}
               : smallGroup
                 ? {width: 218, height: 218 * 150 / 520, radius, gap: 12}
                 : {width: 154, height: 39, radius, gap: 11},
