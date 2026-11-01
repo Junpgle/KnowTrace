@@ -14,7 +14,7 @@ import {
   type PDFSourceChapterMapping, type PDFSourceChapterPreview,
 } from '../api'
 
-const props = defineProps<{ courseId: string; courseName: string }>()
+const props = defineProps<{ courseId: string; courseName: string; embedded?: boolean }>()
 const emit = defineEmits<{ openBank: []; openPractice: [] }>()
 const graph = ref<KnowledgeGraph | null>(null)
 const detail = ref<KnowledgePointDetail | null>(null)
@@ -298,7 +298,7 @@ watch(() => props.courseId, () => {
 <template>
   <div class="kg-page">
     <header class="kg-heading">
-      <div><p class="eyebrow">KNOWLEDGE UNIVERSE</p>
+      <div v-if="!props.embedded"><p class="eyebrow">KNOWLEDGE UNIVERSE</p>
         <h1>知识星系<span class="heading-dot">.</span></h1>
         <p class="section-description">以真实知识为星球，以经过审核的关联为星际航路。</p>
       </div>
