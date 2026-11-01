@@ -305,13 +305,13 @@ function selectCanvasNode(id: string | null) {
   }
   if (node?.kind === 'knowledge' && !nodes.value.some(n => n.id === id)) {
     // A dim concept from another chapter can also be hovered and opened.
-    focusKnowledge(id)
+    focusKnowledge(id, true)
     return
   }
   if (node?.kind === 'knowledge') level.value = 'knowledge'
   selectedId.value = id
 }
-function focusKnowledge(id: string) {
+function focusKnowledge(id: string, fromCanvas = false) {
   // Preserve a visible map anchor when opening a concept from the directory:
   // before expansion the concept may not yet have a rendered world position.
   const wasVisible = nodes.value.some(n => n.id === id)
@@ -324,7 +324,7 @@ function focusKnowledge(id: string) {
   term.value = ''
   level.value = 'knowledge'
   activeGroup.value = browseGroups.value.find(g=>g.members.includes(id))?.id??null
-  markNavigation('enter', wasVisible ? id :
+  markNavigation('enter', (fromCanvas || wasVisible) ? id :
     previousGroup ?? (previousChapter !== 'all' ? previousChapter :
       destination !== 'all' ? destination : id))
   selectedId.value = id
