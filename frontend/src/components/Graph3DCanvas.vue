@@ -947,7 +947,10 @@ function initializeOrbitingPlanets(saved?: ReadonlyMap<string, SavedOrbit>) {
       const major=Math.max(1,...vectors.map(v=>Math.abs(v.x)))
       const minor=Math.max(1,...vectors.map(v=>Math.abs(v.y)))
       const average=present.reduce((sum,n)=>sum+n.source_count,0)/present.length
-      const seconds=orbitMetrics('group',average,present[0].id).periodSeconds
+      // Consistent seed across bands ensures a larger/outer belt can never
+      // rotate faster merely due to a different random group ID. Same-count
+      // bands intentionally match speeds to avoid visual overtaking.
+      const seconds=orbitMetrics('group',average,'browse-orbit-belt').periodSeconds
       for(const node of present){
         const position=positions.get(node.id)!
         const delta=position.clone().sub(center)
