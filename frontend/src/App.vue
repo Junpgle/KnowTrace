@@ -37,6 +37,19 @@ const report = ref<LearningReport | null>(null)
 const quiz = ref<QuizSession | null>(null)
 const count = ref(1)
 const quizMode = ref<'normal' | 'adaptive' | 'blind'>('normal')
+const quizUnansweredOnly = ref(false)
+const quizQuestionTypes = ref<QuizItem['question_type'][]>([
+  'single_choice', 'multiple_choice', 'true_false', 'short_answer',
+])
+const questionTypeOptions: { value: QuizItem['question_type']; label: string }[] = [
+  { value: 'single_choice', label: '单选题' },
+  { value: 'multiple_choice', label: '多选题' },
+  { value: 'true_false', label: '判断题' },
+  { value: 'short_answer', label: '简答题' },
+]
+const quizAvailable = ref<number | null>(null)
+const availabilityLoading = ref(false)
+const questionTypeFilterKey = computed(() => quizQuestionTypes.value.join(','))
 const quality = ref<QuestionQuality | null>(null)
 const index = ref(0)
 const selected = ref<Choice>(null)
@@ -54,9 +67,7 @@ const approvedCount = computed(() => {
     q.primary_knowledge_point_id !== null && approvedIds.has(q.primary_knowledge_point_id)).length
 })
 const pendingCount = computed(() => questions.value.filter(q => q.review_status === 'pending').length)
-const maxCount = computed(() => Math.min(20,
-  quizMode.value === 'adaptive' ? (quality.value?.latest_questions.approved_diagnostic ?? 0)
-    : quizMode.value === 'blind' ? pendingCount.value : approvedCount.value))
+const maxCount = computed(() => Math.min(20, quizAvailable.value ?? 0))
 const countOptions = computed(() => Array.from({ length: maxCount.value }, (_, i) => i + 1))
 const currentItem = computed<QuizItem | null>(() => quiz.value?.items[index.value] ?? null)
 const currentResult = computed<QuizAnswerResult | undefined>(() => currentItem.value?.result)
@@ -108,6 +119,47 @@ function showError(error: unknown) {
   banner.value = error instanceof Error ? error.message : '操作失败，请稍后再试。'
 }
 function sessionKey(id: string) { return 'knowtrace:last-session:' + id }
+
+let availabilityRequestVersion = 0
+async function loadQuizAvailability() {
+  const version = ++availabilityRequestVersion
+  quizAvailable.value = null
+  if (!courseId.value || quizQuestionTypes.value.length === 0) {
+    availabilityLoading.value = false
+    return
+  }
+  availabilityLoading.value = true
+  try {
+    const result = await api.quizAvailability(courseId.value, {
+      mode: quizMode.value,
+      questionTypes: quizQuestionTypes.value,
+      unansweredOnly: quizUnansweredOnly.value,
+    })
+    if (version !== availabilityRequestVersion) return
+    quizAvailable.value = result.available
+    count.value = Math.max(1, Math.min(count.value, Math.max(1, maxCount.value)))
+  } catch (error) {
+    if (version === availabilityRequestVersion) showError(error)
+  } finally {
+    if (version === availabilityRequestVersion) availabilityLoading.value = false
+  }
+}
+watch(quizMode, (mode) => {
+  if (mode !== 'adaptive') return
+  const supported = quizQuestionTypes.value.filter(t => t === 'single_choice' || t === 'true_false')
+  quizQuestionTypes.value = supported.length ? supported : ['single_choice', 'true_false']
+})
+watch([courseId, quizMode, quizUnansweredOnly, questionTypeFilterKey],
+  () => { void loadQuizAvailability() }, { immediate: true })
+function selectAllQuestionTypes() {
+  quizQuestionTypes.value = (quizMode.value === 'adaptive'
+    ? ['single_choice', 'true_false']
+    : questionTypeOptions.map(type => type.value)) as QuizItem['question_type'][]
+}
+function openQuizSettings() {
+  quiz.value = null
+  void loadQuizAvailability()
+}
 function chooseIndex(value: number) {
   if (!quiz.value?.items[value]) return
   index.value = value
@@ -244,7 +296,8 @@ async function startQuiz() {
   starting.value = true
   banner.value = ''
   try {
-    quiz.value = await api.startQuiz(courseId.value, Math.min(count.value, maxCount.value), quizMode.value)
+    quiz.value = await api.startQuiz(courseId.value, Math.min(count.value, maxCount.value),
+      quizMode.value, { questionTypes: quizQuestionTypes.value, unansweredOnly: quizUnansweredOnly.value })
     localStorage.setItem(sessionKey(courseId.value), quiz.value.id)
     latestMastery.value = null
     chooseIndex(0)
@@ -256,6 +309,7 @@ async function startQuiz() {
           ? '没有足够的待审核候选题（或关联的知识点尚未审核）。请降低题量或先生成候选题。'
           : '可用题目不足，或题目所属知识点尚未审核。请检查题库及知识点的审核状态。'))
     else showError(error)
+    void loadQuizAvailability()
   } finally { starting.value = false }
 }
 function selectChoice(choice: string | boolean) {
@@ -481,17 +535,17 @@ onMounted(() => { void initialize() })
           </div>
 
           <div v-else-if="view === 'practice'" class="view-stack">
-            <div class="section-heading"><div><p class="eyebrow">PRACTICE STUDIO</p><h1>专项练习<span class="heading-dot">.</span></h1><p class="section-description">{{ quiz ? '专注于眼前这一题，让每次作答都有收获。' : '选择题量，开始一次有迹可循的练习。' }}</p></div>
-              <button v-if="quiz" class="button button-outline button-small" @click="quiz = null"><RotateCcw :size="16" /> 新测评设置</button>
+            <div class="section-heading"><div><p class="eyebrow">PRACTICE STUDIO</p><h1>专项练习<span class="heading-dot">.</span></h1><p class="section-description">{{ quiz ? '专注于眼前这一题，让每次作答都有收获。' : '筛选题型和未做题目，创建更适合自己的练习。' }}</p></div>
+              <button v-if="quiz" class="button button-outline button-small" @click="openQuizSettings"><RotateCcw :size="16" /> 新测评设置</button>
             </div>
             <template v-if="!quiz">
               <div class="setup-layout">
                 <section class="panel setup-panel">
                   <div class="setup-eyebrow"><div class="setup-icon"><BookOpen :size="24" /></div><span>创建一场新的测评</span></div>
-                  <h2>今天想练习多少道题？</h2><p>我们会从 <strong>{{ currentCourse?.title }}</strong> 的{{ quizMode === 'blind' ? '待审核候选题' : '最新已审核题目' }}中选取练习。</p>
+                  <h2>按你的节奏，定制这轮练习</h2><p>我们会从 <strong>{{ currentCourse?.title }}</strong> 的{{ quizMode === 'blind' ? '待审核候选题' : '最新已审核题目' }}中，按下方条件抽取题目。</p>
                   <div class="setup-field">
                     <label for="quiz-mode">练习模式</label>
-                    <select id="quiz-mode" v-model="quizMode" @change="count = Math.max(1,Math.min(count,maxCount))">
+                    <select id="quiz-mode" v-model="quizMode">
                       <option value="normal">普通练习 · 所有已审核题</option>
                       <option value="adaptive">薄弱点优先 · 单知识点诊断题</option>
                       <option value="blind">候选题盲测 · 无需提前查看答案</option>
@@ -506,15 +560,43 @@ onMounted(() => { void initialize() })
                       当前待审核题目 {{ pendingCount }} 道。
                     </p>
                   </div>
-                  <div class="setup-field"><label for="question-count">练习题量</label>
-                    <div v-if="maxCount" class="count-control"><button aria-label="减少一道题" :disabled="count <= 1" @click="count--">−</button>
+                  <div class="setup-field">
+                    <label>题目范围</label>
+                    <div class="setup-filter-switch" role="group" aria-label="题目范围">
+                      <button type="button" :class="{ active: !quizUnansweredOnly }" :aria-pressed="!quizUnansweredOnly" @click="quizUnansweredOnly = false">全部题目</button>
+                      <button type="button" :class="{ active: quizUnansweredOnly }" :aria-pressed="quizUnansweredOnly" @click="quizUnansweredOnly = true">仅未做题</button>
+                    </div>
+                    <p class="qb-hint">“未做题”指从未提交过答案的题目。之前打开但没有作答的题目仍会保留。</p>
+                  </div>
+                  <div class="setup-field">
+                    <div class="setup-filter-header">
+                      <label>题型筛选</label>
+                      <button type="button" class="text-link" @click="selectAllQuestionTypes">全选</button>
+                    </div>
+                    <div class="setup-type-grid">
+                      <label v-for="type in questionTypeOptions" :key="type.value"
+                        :class="{ disabled: quizMode === 'adaptive' && (type.value === 'multiple_choice' || type.value === 'short_answer') }">
+                        <input v-model="quizQuestionTypes" type="checkbox" :value="type.value"
+                          :disabled="quizMode === 'adaptive' && (type.value === 'multiple_choice' || type.value === 'short_answer')" />
+                        <span>{{ type.label }}</span>
+                      </label>
+                    </div>
+                    <p class="qb-hint" v-if="quizMode === 'adaptive'">薄弱点诊断只支持单选题和判断题，其他题型在此模式不可选。</p>
+                    <p class="qb-hint" v-else>可以组合选择，例如只练单选和多选题。至少选择一种题型。</p>
+                  </div>
+                  <div class="setup-field"><label for="question-count">练习题量 <span class="setup-available" v-if="quizAvailable !== null">· 符合条件 {{ quizAvailable }} 道</span></label>
+                    <p class="qb-hint" v-if="availabilityLoading">正在统计符合条件的题目…</p>
+                    <p class="qb-hint" v-else-if="quizQuestionTypes.length === 0">请至少选择一种题型。</p>
+                    <p class="qb-hint" v-else-if="quizAvailable === 0">当前筛选条件没有符合要求的题目，可放宽题型或题目范围。</p>
+
+                    <div v-if="!availabilityLoading && maxCount" class="count-control"><button aria-label="减少一道题" :disabled="count <= 1" @click="count--">−</button>
                       <select id="question-count" v-model.number="count"><option v-for="number in countOptions" :key="number" :value="number">{{ number }} 道题</option></select>
                       <button aria-label="增加一道题" :disabled="count >= maxCount" @click="count++">+</button></div>
-                    <div v-else class="empty-count">{{ quizMode === 'blind' ? '暂无待审核候选题' : '暂无可供练习的已审核题目' }}</div>
+                    <div v-else class="empty-count">{{ availabilityLoading ? '正在查询题目…' : '当前条件下暂无可练习题目' }}</div>
                   </div>
                   <div class="setup-points"><span><CheckCircle2 :size="17" /> {{ quizMode === 'blind' ? '整套提交后公布解析' : '作答后即时反馈' }}</span><span><Activity :size="17" /> {{ quizMode === 'blind' ? '不更新 BKT 掌握度' : '单知识点题更新掌握度' }}</span><span><Clock3 :size="17" /> 自动保存学习记录</span></div>
-                  <button class="button button-primary start-button" :disabled="maxCount < 1 || starting" @click="startQuiz"><LoaderCircle v-if="starting" :size="18" class="spinning" /><Play v-else :size="18" fill="currentColor" />{{ starting ? '正在创建测评…' : '开始练习' }} <ArrowRight :size="18" /></button>
-                  <div class="setup-footer">当前模式：<strong>{{ quizMode === 'blind' ? '待审核题盲测' : quizMode === 'adaptive' ? '薄弱点优先诊断' : '普通顺序练习' }}</strong> · {{ quizMode === 'blind' ? '仅自测，不作正式掌握度判定' : '已审核综合题不单独更新 BKT' }}</div>
+                  <button class="button button-primary start-button" :disabled="maxCount < 1 || availabilityLoading || quizQuestionTypes.length === 0 || starting" @click="startQuiz"><LoaderCircle v-if="starting" :size="18" class="spinning" /><Play v-else :size="18" fill="currentColor" />{{ starting ? '正在创建测评…' : '开始练习' }} <ArrowRight :size="18" /></button>
+                  <div class="setup-footer">筛选结果：{{ quizAvailable ?? '—' }} 道符合条件的题目，单轮最多 20 道。<span v-if="quizUnansweredOnly">仅未做题 · </span>当前模式：<strong>{{ quizMode === 'blind' ? '待审核题盲测' : quizMode === 'adaptive' ? '薄弱点优先诊断' : '普通顺序练习' }}</strong> · {{ quizMode === 'blind' ? '仅自测，不作正式掌握度判定' : '已审核综合题不单独更新 BKT' }}</div>
                 </section>
                 <aside class="panel setup-aside"><div class="setup-aside-graphic"><div class="abstract-ring ring-one"></div><div class="abstract-ring ring-two"></div><Target :size="60" :stroke-width="1.5" /></div>
                   <h3>用练习发现真正的薄弱点</h3><p>已审核单知识点题可用于 BKT 诊断；候选题盲测不会提前泄露答案，也不会计入正式掌握度。</p>
