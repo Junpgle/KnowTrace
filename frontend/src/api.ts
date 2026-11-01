@@ -392,6 +392,13 @@ export interface KnowledgeReport {
   answered: number
   correct: number
   accuracy: number | null
+  review_status?: 'pending' | 'approved' | 'rejected'
+  distinct_questions: number
+  practice_days: number
+  practice_sessions: number
+  last_practiced_at: string | null
+  evidence_level: 'unobserved' | 'limited' | 'repeated'
+  display_mastery: number | null
 }
 
 export interface LearningReport {
@@ -402,6 +409,15 @@ export interface LearningReport {
   correct: number
   accuracy: number | null
   mastery_model: string
+  evidence_summary?: {
+    approved_points: number
+    observed_points: number
+    repeated_evidence_points: number
+    unobserved_points: number
+    observation_coverage: number | null
+    minimum_evidence: {observations: number; distinct_questions: number; practice_days: number}
+    note: string
+  }
   provisional_answers?: number
   bkt_warning: string
   knowledge_points: KnowledgeReport[]
