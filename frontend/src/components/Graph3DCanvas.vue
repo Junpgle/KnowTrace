@@ -310,26 +310,22 @@ function glowTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas)
 }
 
+// Projectable sunflower disk: sparse points circle their real chapter in
+// the XZ atlas plane instead of forming an overlapping miniature 3D ball.
 function organicOffsets(count: number, seed: string): THREE.Vector3[] {
-  const points: THREE.Vector3[] = []
-  if (!count) return points
-  const angle = Math.PI * (3 - Math.sqrt(5))
+  const offsets: THREE.Vector3[] = []
   const twist = ordinalHash(seed + ':twist') * Math.PI * 2
-  // Volume, rather than just the surface: sample by cubed radius.
+  const step = count < 20 ? 8.1 : 9.4
   for (let i = 0; i < count; i++) {
-    const u = (i + .5) / count
-    const jitter = (ordinalHash(seed + ':j:' + i) - .5) * .22
-    const y = 1 - 2 * ((i * .6180339887498949 + .5) % 1)
-    const radial = Math.sqrt(Math.max(0, 1 - y * y))
-    const theta = i * angle + twist + jitter
-    const radius = 5 + 2.3 * Math.cbrt(count) * Math.cbrt(.1 + .9 * u)
-    points.push(new THREE.Vector3(
-      Math.cos(theta) * radial * radius,
-      y * radius * .82,
-      Math.sin(theta) * radial * radius,
+    const theta = twist + i * G
+    const radius = 15 + step * Math.sqrt(i + .6)
+    offsets.push(new THREE.Vector3(
+      Math.cos(theta) * radius,
+      (ordinalHash(seed + ':elev:' + i) - .5) * 10,
+      Math.sin(theta) * radius,
     ))
   }
-  return points
+  return offsets
 }
 
 function layout(nodes: GraphNode[], edges: GraphEdge[]) {
@@ -456,28 +452,56 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     byChapter.get(owner)!.push(node)
   }
 
-  // Use a balanced course-centered orbit, not sequential collision packing.
-  // Ordering and placement are stable across selection and filtering.
+  // Two staggered orbital belts use the four quadrants, not rigid radial
+  // spokes. Their centers are repelled in projection to avoid collisions.
   const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
   top.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
   const total = top.length
   const sizes = top.map(c => byChapter.get(c.id)?.length ?? 0)
   const large = Math.max(1, ...sizes)
-  const orbit = Math.max(52, 34 + total * 4.8 + Math.cbrt(large) * 3.2)
-  // Radial constellation instead of box/rectangle columns. Small angular
-  // jitter and alternating orbit distance break the grid-like alignment while
-  // preserving a clear course-centered star structure.
+  const orbit = Math.max(105, 74 + Math.sqrt(large) * 7 + total * 3.4)
+  const innerCount = total >= 7 ? Math.max(3, Math.round(total * .40)) : 0
+  const outerCount = total - innerCount
+  const chapterCoords: THREE.Vector3[] = []
   top.forEach((ch, i) => {
-    const angle = -Math.PI / 2 + 2 * Math.PI * i / Math.max(1, total)
-      + (ordinalHash(ch.id + ':angle') - .5) * .20
-    const radius = orbit * (.94 + ordinalHash(ch.id + ':orbit') * .20)
-    pos.set(ch.id, new THREE.Vector3(
+    const inner = i < innerCount
+    const index = inner ? i : i - innerCount
+    const count = inner ? innerCount : outerCount
+    const angle = -Math.PI / 2 + (index + (inner ? 0 : .48)) * 2 * Math.PI / Math.max(1, count)
+      + (ordinalHash(ch.id + ':angle') - .5) * .12
+    const radius = orbit * (inner ? .60 : 1.02) *
+      (.96 + ordinalHash(ch.id + ':radius') * .08)
+    chapterCoords.push(new THREE.Vector3(
       Math.cos(angle) * radius,
-      (ordinalHash(ch.id + ':elevation') - .5) * 9,
+      (ordinalHash(ch.id + ':elevation') - .5) * 10,
       Math.sin(angle) * radius,
     ))
   })
+  for (let pass = 0; pass < 22; pass++) {
+    for (let i = 0; i < chapterCoords.length; i++) {
+      for (let j = i + 1; j < chapterCoords.length; j++) {
+        const a = chapterCoords[i], b = chapterCoords[j]
+        const dx = b.x - a.x, dz = b.z - a.z
+        const d = Math.hypot(dx, dz)
+        if (d >= 54) continue
+        const theta = (i + 1) * G + j
+        const ux = d > .001 ? dx / d : Math.cos(theta)
+        const uz = d > .001 ? dz / d : Math.sin(theta)
+        const shift = (54 - d) * .30
+        a.x -= ux * shift; a.z -= uz * shift
+        b.x += ux * shift; b.z += uz * shift
+      }
+    }
+    for (const point of chapterCoords) {
+      const d = Math.hypot(point.x, point.z)
+      if (d < 55 && d > .001) {
+        point.x *= 55 / d
+        point.z *= 55 / d
+      }
+    }
+  }
+  top.forEach((ch, i) => pos.set(ch.id, chapterCoords[i]))
   // Nested chapters stay near their real parent but get their own system.
   const pending = new Map(nested.map(c => [c.id, c]))
   for (let pass = 0; pending.size && pass <= nested.length; pass++) {
