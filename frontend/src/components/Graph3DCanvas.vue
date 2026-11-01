@@ -375,6 +375,61 @@ function organicOffsets(count: number, seed: string): THREE.Vector3[] {
   return offsets
 }
 
+// Browse-only groups are distributed over concentric elliptical ORBITS.
+// Ring sizes increase with circumference (35 groups -> [6, 8, 10, 11]),
+// not over grid rows. Group positioning never represents semantic distance.
+function browseOrbitBands(groups: GraphNode[]): GraphNode[][] {
+  const sorted = [...groups].sort((a, b) =>
+    a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
+  const count = sorted.length
+  if (!count) return []
+  const rings = count <= 8 ? 1 : count <= 18 ? 2 :
+    count <= 30 ? 3 : count <= 48 ? 4 :
+      Math.min(8, Math.ceil(count / 11))
+  const weights = Array.from({length:rings}, (_, i) => 1 + i*.28)
+  const sum = weights.reduce((a,b)=>a+b,0)
+  const exact = weights.map(w => count*w/sum)
+  const sizes = exact.map(Math.floor)
+  let pending = count - sizes.reduce((a,b)=>a+b,0)
+  const order = exact.map((n,i)=>({i,fraction:n-Math.floor(n)}))
+    .sort((a,b)=>b.fraction-a.fraction || b.i-a.i)
+  for (let i=0;i<pending;i++) sizes[order[i%order.length].i]++
+  const bands: GraphNode[][] = []
+  let offset=0
+  for (const size of sizes) {
+    bands.push(sorted.slice(offset, offset+size))
+    offset+=size
+  }
+  return bands
+}
+
+// Equal ANGULAR increments bunch up at the narrow ends of an ellipse.
+// Instead sample its perimeter at approximately equal arc-length intervals.
+function ellipseArcAngles(a: number, b: number) {
+  const segments = 384
+  const arc = new Float64Array(segments+1)
+  let prevX=a,prevY=0
+  for(let i=1;i<=segments;i++) {
+    const t=2*Math.PI*i/segments
+    const x=a*Math.cos(t),y=b*Math.sin(t)
+    arc[i]=arc[i-1]+Math.hypot(x-prevX,y-prevY)
+    prevX=x;prevY=y
+  }
+  const circumference=arc[segments]
+  return (fraction:number) => {
+    const target=(((fraction%1)+1)%1)*circumference
+    let low=0,high=segments
+    while(low+1<high) {
+      const mid=(low+high)>>1
+      if(arc[mid]<target)low=mid
+      else high=mid
+    }
+    const delta=arc[high]-arc[low]
+    const u=delta>.00001?(target-arc[low])/delta:0
+    return (low+u)*2*Math.PI/segments
+  }
+}
+
 function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   const pos = new Map<string, THREE.Vector3>()
   const groupNodes=nodes.filter(n=>n.kind==='group')
@@ -416,75 +471,64 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
       if (chapter) pos.set(chapter.id, new THREE.Vector3(-150, 0, -8))
       return pos
     }
-    // The group atlas occupies the usable VIEWPORT, not a small 250-unit
-    // orbit in the middle of a 1500px-wide scene. Use a staggered, jittered
-    // honeycomb so caption-sized clearances survive projection. Positions
-    // reflect presentation only; group ordering has no semantic meaning.
-    const groups = [...groupNodes].sort((a, b) =>
-      a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
-    const count = groups.length
-    const viewport = safeViewport()
-    const usableWidth = Math.max(300, viewport.right - viewport.left)
-    const usableHeight = Math.max(240, viewport.bottom - viewport.top)
-    const aspect = THREE.MathUtils.clamp(usableWidth / usableHeight, 1, 3.5)
-    // Balance text-card widths against the vertical space. On a typical
-    // desktop, 26 groups use five spacious, staggered rows instead of a
-    // tightly packed ring with eleven labels scattered outside the planets.
-    const rows = count <= 2 ? 1 : Math.min(count,
-      Math.max(2, Math.ceil(Math.sqrt(count / (aspect * .40)))))
-    const basePerRow = Math.floor(count / rows)
-    const extra = count % rows
-    const lengths = Array.from({length:rows}, (_, i) =>
-      basePerRow + (i < extra ? 1 : 0))
-    const maximumCols = Math.max(...lengths)
-    const worldHalfY = rows < 2 ? 0 : Math.max(136, (rows - 1) * 57)
-    const worldHalfX = count < 2 ? 0
-      : Math.max(195, worldHalfY * aspect * 1.02)
-    const xStep = maximumCols <= 1 ? 0
-      : worldHalfX * 2 / (maximumCols - 1)
-    const yStep = rows <= 1 ? 0 : worldHalfY * 2 / (rows - 1)
-    const points: THREE.Vector3[] = []
-    let index = 0
-    for (let row = 0; row < rows; row++) {
-      const rowCount = lengths[row]
-      const rowWidth = (rowCount - 1) * xStep
-      const rowOffset = row % 2 === 0 ? -.035 : .035
-      for (let col = 0; col < rowCount; col++) {
-        const node = groups[index++]
-        const dx = (ordinalHash(node.id + ':jitter-x') - .5) *
-          Math.min(20, xStep * .15)
-        const dy = (ordinalHash(node.id + ':jitter-y') - .5) *
-          Math.min(14, yStep * .13)
-        points.push(new THREE.Vector3(
-          -rowWidth / 2 + col * xStep + rowOffset * xStep + dx,
-          (row - (rows - 1) / 2) * yStep + dy,
-          (ordinalHash(node.id + ':depth') - .5) * 12,
-        ))
-      }
-    }
-    // Any slight projection conflict is resolved in the XY plane, without
-    // moving labels away from the planets or regularizing into square tiles.
-    const clearX = Math.min(150, Math.max(70, xStep * .80))
-    const clearY = Math.min(94, Math.max(46, yStep * .77))
-    for (let pass = 0; pass < 12; pass++) {
-      for (let i = 0; i < points.length; i++) {
-        for (let j = i + 1; j < points.length; j++) {
-          const a = points[i], b = points[j]
-          const dx = b.x-a.x, dy = b.y-a.y
-          const d = Math.hypot(dx / clearX, dy / clearY)
-          if (d >= 1) continue
-          const angle = (i + 1) * G + j
-          const ux = d > .0001 ? dx / (d * clearX) : Math.cos(angle)
-          const uy = d > .0001 ? dy / (d * clearY) : Math.sin(angle)
-          const force = (1 - d) * .32
-          a.x -= ux * clearX * force
-          a.y -= uy * clearY * force
-          b.x += ux * clearX * force
-          b.y += uy * clearY * force
+    // Four (for 31-48 groups) gently offset elliptical orbital belts.
+    // They cover the true usable aspect ratio without straight columns,
+    // rectangular grids, or six-spoke hubs. They retain small depth parallax.
+    const groups = [...groupNodes].sort((a,b) =>
+      a.name.localeCompare(b.name,'zh-Hans') || a.id.localeCompare(b.id))
+    const bands=browseOrbitBands(groups)
+    const viewport=safeViewport()
+    const width=Math.max(300, viewport.right-viewport.left)
+    const height=Math.max(240, viewport.bottom-viewport.top)
+    const aspect=THREE.MathUtils.clamp(width/height*.96,1.20,2.48)
+    const outerB=Math.max(245,100+bands.length*55)
+    const outerA=outerB*aspect
+    const allPoints: THREE.Vector3[]=[]
+    const ellipseTilt=-.055
+    const sinTilt=Math.sin(ellipseTilt), cosTilt=Math.cos(ellipseTilt)
+    // Estimated caption-sized clearance in world coordinates, scaled by
+    // the viewport's physical width and height.
+    const clearX=Math.max(95,2*outerA*162/Math.max(1,width*.88))
+    const clearY=Math.max(52,2*outerB*78/Math.max(1,height*.85))
+    bands.forEach((band,ring)=>{
+      const fraction=bands.length===1?1:
+        .40+.60*ring/(bands.length-1)
+      const a=outerA*fraction
+      const b=outerB*fraction
+      const angleForArc=ellipseArcAngles(a,b)
+      let winning: THREE.Vector3[]=[]
+      let bestScore=Infinity
+      // Rotate the rings independently until adjacent orbits have minimal
+      // label/planet projections. Angles are optimized without taking any
+      // node OFF its orbit, so the result remains elliptical.
+      for(let phase=0;phase<32;phase++){
+        const candidate=band.map((node,i)=>{
+          const jitter=(ordinalHash(node.id+':orbit-angle')-.5)*.009
+          const theta=angleForArc((i+(phase+.19*ring)/32)/band.length+jitter)
+          const x=a*Math.cos(theta)
+          const y=b*Math.sin(theta)
+          return new THREE.Vector3(
+            x*cosTilt-y*sinTilt,
+            x*sinTilt+y*cosTilt,
+            (ordinalHash(node.id+':orbit-depth')-.5)*8+ring*.6,
+          )
+        })
+        let score=0
+        for(const p of candidate)for(const q of allPoints){
+          const dx=(p.x-q.x)/clearX
+          const dy=(p.y-q.y)/clearY
+          const distance=Math.hypot(dx,dy)
+          const overlap=Math.max(0,1.14-distance)
+          score+=overlap*overlap
+        }
+        if(score<bestScore){
+          bestScore=score
+          winning=candidate
         }
       }
-    }
-    groups.forEach((node, i) => pos.set(node.id, points[i]))
+      band.forEach((node,i)=>pos.set(node.id,winning[i]))
+      allPoints.push(...winning)
+    })
     return pos
   }
   const root = nodes.find(n => n.kind === 'course')
