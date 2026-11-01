@@ -157,3 +157,35 @@ def test_schema_upgrade_retains_existing_question_versions(tmp_path):
         sql=db.execute("SELECT sql FROM sqlite_master WHERE name='question_versions'").fetchone()["sql"]
         assert "'short_answer'" in sql
         assert db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='question_versions'").fetchone()[0] > 0
+
+
+def test_practice_multi_select_and_short_answer_type_filters(tmp_path):
+    db = tmp_path / "filter-types.sqlite3"
+    with TestClient(create_app(db_path=db, storage_dir=tmp_path/"uploads",
+                               ai_provider=ExtendedAI())) as http:
+        course, _, ids = seed(http)
+        for vid in ids:
+            assert http.post(f"/api/question-versions/{vid}/review",
+                             json={"decision":"approved"}).status_code == 200
+        base = f"/api/courses/{course}"
+        url = base + "/quiz-availability"
+        start = base + "/quiz-sessions"
+        params = [("question_types","multiple_choice"),("question_types","short_answer")]
+        assert http.get(url, params=params).json()["available"] == 2
+        assert http.get(url, params={"question_types":"multiple_choice"}).json()["available"] == 1
+        assert http.get(url, params={"question_types":"single_choice"}).json()["available"] == 0
+
+        multi = http.post(start, json={"count":1,"unanswered_only":True,
+                                       "question_types":["multiple_choice"]})
+        assert multi.status_code == 201, multi.text
+        item = multi.json()["items"][0]
+        assert item["question_type"] == "multiple_choice"
+        assert http.post(f"/api/quiz-items/{item['quiz_item_id']}/answer",
+                         json={"client_request_id":"multi-filter-111","response":["A","C"]}).status_code == 200
+        assert http.get(url, params=[*params,("unanswered_only","true")]).json()["available"] == 1
+        remaining = http.post(start, json={"count":1,"unanswered_only":True,
+                                           "question_types":["multiple_choice","short_answer"]})
+        assert remaining.status_code == 201, remaining.text
+        assert remaining.json()["items"][0]["question_type"] == "short_answer"
+        # Only approved single-concept objective questions are adaptive-eligible.
+        assert http.get(url, params={"mode":"adaptive"}).json()["available"] == 0

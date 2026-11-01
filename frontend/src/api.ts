@@ -886,11 +886,29 @@ export const api = {
   report: (courseId: string) => request<LearningReport>(
     '/api/courses/' + encodeURIComponent(courseId) + '/learning-report',
   ),
-  startQuiz: (courseId: string, count: number, mode: 'normal' | 'adaptive' | 'blind' = 'normal') => request<QuizSession>(
+  quizAvailability: (courseId: string, options: {
+    mode: 'normal' | 'adaptive' | 'blind'
+    questionTypes: QuizItem['question_type'][]
+    unansweredOnly: boolean
+  }) => {
+    const params = new URLSearchParams({
+      mode: options.mode === 'blind' ? 'normal' : options.mode,
+      source: options.mode === 'blind' ? 'pending' : 'approved',
+      unanswered_only: String(options.unansweredOnly),
+    })
+    options.questionTypes.forEach(type => params.append('question_types', type))
+    return request<{ available: number }>(
+      '/api/courses/' + encodeURIComponent(courseId) + '/quiz-availability?' + params.toString(),
+    )
+  },
+  startQuiz: (courseId: string, count: number, mode: 'normal' | 'adaptive' | 'blind' = 'normal',
+    options?: { questionTypes?: QuizItem['question_type'][]; unansweredOnly?: boolean }) => request<QuizSession>(
     '/api/courses/' + encodeURIComponent(courseId) + '/quiz-sessions',
     { method: 'POST', body: JSON.stringify({
       count, mode: mode === 'blind' ? 'normal' : mode,
       source: mode === 'blind' ? 'pending' : 'approved',
+      question_types: options?.questionTypes,
+      unanswered_only: options?.unansweredOnly ?? false,
     }) },
   ),
   quiz: (sessionId: string) => request<QuizSession>(
