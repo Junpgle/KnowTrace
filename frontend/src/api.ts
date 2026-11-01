@@ -311,6 +311,8 @@ export interface QuizItem {
   stem: string
   options: Record<string, string>
   answered: boolean
+  provisional?: boolean
+  submitted_response?: string | boolean
   result?: QuizAnswerResult
 }
 
@@ -319,11 +321,12 @@ export interface QuizSession {
   course_id: string
   mode: 'normal' | 'adaptive'
   status: 'active' | 'completed' | 'cancelled'
+  blind_pending?: boolean
   started_at: string
   finished_at: string | null
   total: number
   answered: number
-  correct: number
+  correct: number | null
   items: QuizItem[]
 }
 
@@ -338,10 +341,11 @@ export interface AnswerFeedback {
   answer_id: string
   quiz_item_id: string
   response: string | boolean
-  is_correct: boolean
-  correct_answer: string | boolean
-  explanation: string | null
-  knowledge_point_id: string
+  is_correct?: boolean
+  correct_answer?: string | boolean
+  explanation?: string | null
+  knowledge_point_id?: string
+  deferred?: boolean
   mastery: MasterySnapshot | null
   diagnostic: boolean
   answered_at: string
@@ -365,6 +369,7 @@ export interface LearningReport {
   correct: number
   accuracy: number | null
   mastery_model: string
+  provisional_answers?: number
   bkt_warning: string
   knowledge_points: KnowledgeReport[]
 }
@@ -832,9 +837,12 @@ export const api = {
   report: (courseId: string) => request<LearningReport>(
     '/api/courses/' + encodeURIComponent(courseId) + '/learning-report',
   ),
-  startQuiz: (courseId: string, count: number, mode: 'normal' | 'adaptive' = 'normal') => request<QuizSession>(
+  startQuiz: (courseId: string, count: number, mode: 'normal' | 'adaptive' | 'blind' = 'normal') => request<QuizSession>(
     '/api/courses/' + encodeURIComponent(courseId) + '/quiz-sessions',
-    { method: 'POST', body: JSON.stringify({ count, mode }) },
+    { method: 'POST', body: JSON.stringify({
+      count, mode: mode === 'blind' ? 'normal' : mode,
+      source: mode === 'blind' ? 'pending' : 'approved',
+    }) },
   ),
   quiz: (sessionId: string) => request<QuizSession>(
     '/api/quiz-sessions/' + encodeURIComponent(sessionId),
