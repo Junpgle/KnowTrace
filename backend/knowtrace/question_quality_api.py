@@ -87,7 +87,10 @@ def register_question_quality_routes(app: FastAPI, database: Path):
                 if status in ("approved","pending"): stats[status]+=1
                 if status=="approved":
                     if link["is_primary"]:stats["primary"]+=1
-                    stats["composite" if q["concept_count"]>1 else "diagnostic"]+=1
+                    if q["concept_count"]>1:
+                        stats["composite"]+=1
+                    elif q["question_type"] in ("single_choice","true_false"):
+                        stats["diagnostic"]+=1
         approved=[p for p in scoped if p["review_status"]=="approved"]
         covered=sum(mapping[p["id"]]["approved"]>0 for p in approved)
         pending_only=sum(mapping[p["id"]]["approved"]==0 and mapping[p["id"]]["pending"]>0 for p in approved)
