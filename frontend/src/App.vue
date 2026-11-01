@@ -15,7 +15,7 @@ const DocumentLibrary = defineAsyncComponent(() => import('./components/Document
 const AISettings = defineAsyncComponent(() => import('./components/AISettings.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
-  type QuizItem, type QuizSession, type KnowledgePoint } from './api'
+  type QuizItem, type QuizSession, type KnowledgePoint, type QuestionQuality } from './api'
 
 type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy' | 'library' | 'settings'
 type Choice = string | boolean | null
@@ -40,6 +40,8 @@ const knowledgePoints = ref<KnowledgePoint[]>([])
 const report = ref<LearningReport | null>(null)
 const quiz = ref<QuizSession | null>(null)
 const count = ref(1)
+const quizMode = ref<'normal' | 'adaptive'>('normal')
+const quality = ref<QuestionQuality | null>(null)
 const index = ref(0)
 const selected = ref<Choice>(null)
 const questionStarted = ref(Date.now())
@@ -53,7 +55,9 @@ const approvedCount = computed(() => {
     q.primary_knowledge_point_id !== null && approvedIds.has(q.primary_knowledge_point_id)).length
 })
 const pendingCount = computed(() => questions.value.filter(q => q.review_status === 'pending').length)
-const maxCount = computed(() => Math.min(20, approvedCount.value))
+const maxCount = computed(() => Math.min(20,
+  quizMode.value === 'adaptive' ? (quality.value?.latest_questions.approved_diagnostic ?? 0)
+    : approvedCount.value))
 const countOptions = computed(() => Array.from({ length: maxCount.value }, (_, i) => i + 1))
 const currentItem = computed<QuizItem | null>(() => quiz.value?.items[index.value] ?? null)
 const currentResult = computed<QuizAnswerResult | undefined>(() => currentItem.value?.result)
@@ -153,9 +157,11 @@ async function loadCourseData(id: string) {
   questions.value = []
   knowledgePoints.value = []
   report.value = null
+  quality.value = null
   banner.value = ''
   try {
-    const [qResult, rResult, kResult] = await Promise.allSettled([api.questions(id), api.report(id), api.knowledgePoints(id)])
+    const [qResult, rResult, kResult, qualityResult] = await Promise.allSettled([
+      api.questions(id), api.report(id), api.knowledgePoints(id), api.questionQuality(id)])
     if (version !== requestVersion) return
     if (qResult.status === 'fulfilled') questions.value = qResult.value
     else showError(qResult.reason)
@@ -163,6 +169,8 @@ async function loadCourseData(id: string) {
     else showError(rResult.reason)
     if (kResult.status === 'fulfilled') knowledgePoints.value = kResult.value
     else showError(kResult.reason)
+    if (qualityResult.status === 'fulfilled') quality.value = qualityResult.value
+    else showError(qualityResult.reason)
     count.value = Math.max(1, Math.min(count.value, Math.max(1, maxCount.value)))
     const saved = localStorage.getItem(sessionKey(id))
     if (saved) {
@@ -204,10 +212,13 @@ async function refresh() {
   if (!courseId.value || refreshing.value) return
   refreshing.value = true
   try {
-    const [q, r, k] = await Promise.all([api.questions(courseId.value), api.report(courseId.value), api.knowledgePoints(courseId.value)])
+    const [q, r, k, qualityResult] = await Promise.all([api.questions(courseId.value),
+      api.report(courseId.value), api.knowledgePoints(courseId.value),
+      api.questionQuality(courseId.value)])
     questions.value = q
     report.value = r
     knowledgePoints.value = k
+    quality.value = qualityResult
     if (quiz.value) {
       quiz.value = await api.quiz(quiz.value.id)
       if (quiz.value.status === 'active') firstUnanswered()
@@ -221,13 +232,15 @@ async function startQuiz() {
   starting.value = true
   banner.value = ''
   try {
-    quiz.value = await api.startQuiz(courseId.value, Math.min(count.value, maxCount.value))
+    quiz.value = await api.startQuiz(courseId.value, Math.min(count.value, maxCount.value), quizMode.value)
     localStorage.setItem(sessionKey(courseId.value), quiz.value.id)
     latestMastery.value = null
     chooseIndex(0)
   } catch (error) {
     if (error instanceof ApiError && error.status === 409)
-      showError(new Error('可用题目不足，或题目所属知识点尚未审核。请检查题库及知识点的审核状态。'))
+      showError(new Error(quizMode.value === 'adaptive'
+        ? '薄弱点优先练习只使用已审核的单知识点诊断题，当前数量不足。请先审核基础诊断题。'
+        : '可用题目不足，或题目所属知识点尚未审核。请检查题库及知识点的审核状态。'))
     else showError(error)
   } finally { starting.value = false }
 }
@@ -246,7 +259,9 @@ function applyAnswer(itemId: string, answer: AnswerFeedback, elapsedMs: number) 
   item.result = { answer_id: answer.answer_id, response: answer.response, is_correct: answer.is_correct,
     correct_answer: answer.correct_answer, explanation: answer.explanation,
     answered_at: answer.answered_at, elapsed_ms: elapsedMs }
-  latestMastery.value = { itemId, before: answer.mastery.before, after: answer.mastery.after }
+  latestMastery.value = answer.mastery
+    ? { itemId, before: answer.mastery.before, after: answer.mastery.after }
+    : null
   quiz.value.answered += 1
   if (answer.is_correct) quiz.value.correct += 1
   if (quiz.value.answered === quiz.value.total) quiz.value.status = 'completed'
@@ -427,6 +442,17 @@ onMounted(() => { void initialize() })
                 <section class="panel setup-panel">
                   <div class="setup-eyebrow"><div class="setup-icon"><BookOpen :size="24" /></div><span>创建一场新的测评</span></div>
                   <h2>今天想练习多少道题？</h2><p>我们会从 <strong>{{ currentCourse?.title }}</strong> 的最新已审核题目中选取练习。</p>
+                  <div class="setup-field">
+                    <label for="quiz-mode">练习模式</label>
+                    <select id="quiz-mode" v-model="quizMode" @change="count = Math.max(1,Math.min(count,maxCount))">
+                      <option value="normal">普通练习 · 所有已审核题</option>
+                      <option value="adaptive">薄弱点优先 · 单知识点诊断题</option>
+                    </select>
+                    <p class="qb-hint" v-if="quizMode === 'adaptive'">
+                      基于 BKT 掌握概率、历史练习次数和题目难度排序；只用单知识点题测评，
+                      防止综合题污染掌握度。可用诊断题 {{ quality?.latest_questions.approved_diagnostic ?? 0 }} 道。
+                    </p>
+                  </div>
                   <div class="setup-field"><label for="question-count">练习题量</label>
                     <div v-if="maxCount" class="count-control"><button aria-label="减少一道题" :disabled="count <= 1" @click="count--">−</button>
                       <select id="question-count" v-model.number="count"><option v-for="number in countOptions" :key="number" :value="number">{{ number }} 道题</option></select>
@@ -435,7 +461,7 @@ onMounted(() => { void initialize() })
                   </div>
                   <div class="setup-points"><span><CheckCircle2 :size="17" /> 作答后即时反馈</span><span><Activity :size="17" /> 更新知识掌握度</span><span><Clock3 :size="17" /> 自动保存学习记录</span></div>
                   <button class="button button-primary start-button" :disabled="maxCount < 1 || starting" @click="startQuiz"><LoaderCircle v-if="starting" :size="18" class="spinning" /><Play v-else :size="18" fill="currentColor" />{{ starting ? '正在创建测评…' : '开始练习' }} <ArrowRight :size="18" /></button>
-                  <div class="setup-footer">当前模式：<strong>普通顺序练习</strong> · 自适应选题将在后续版本加入</div>
+                  <div class="setup-footer">当前模式：<strong>{{ quizMode === 'adaptive' ? '薄弱点优先诊断' : '普通顺序练习' }}</strong> · 已审核综合题可用于练习，但不单独更新 BKT</div>
                 </section>
                 <aside class="panel setup-aside"><div class="setup-aside-graphic"><div class="abstract-ring ring-one"></div><div class="abstract-ring ring-two"></div><Target :size="60" :stroke-width="1.5" /></div>
                   <h3>用练习发现真正的薄弱点</h3><p>每道题都关联知识点；答案提交后，BKT 会根据历史作答动态估计掌握概率。</p>
@@ -478,6 +504,10 @@ onMounted(() => { void initialize() })
                       <button v-else class="button button-primary submit-button" @click="nextQuestion">{{ isComplete ? '查看学习报告' : '下一题' }} <ArrowRight :size="18" /></button>
                     </div>
                   </div>
+                  <p v-if="currentItem?.selection_reason" class="qb-hint">选题理由：{{ currentItem.selection_reason }}</p>
+                  <p v-if="currentItem && currentItem.answered && latestMastery === null" class="qb-hint">
+                    综合题只记录作答结果，不将一次作答视为某个知识点的独立 BKT 证据。
+                  </p>
                   <div class="quiz-footnote"><Clock3 :size="15" /> 数据保存在你本机的 KnowTrace 数据库中，重复提交不会重复计算掌握度。</div>
                 </section>
                 <aside class="quiz-aside">
