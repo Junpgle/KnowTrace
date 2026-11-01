@@ -553,14 +553,17 @@ function previewAvailable(source: SourceEvidence): boolean {
           </p>
           <div class="qb-section-divider"></div>
           <div class="qb-source-title"><ShieldCheck :size="18" /><strong>题目来源与核验</strong></div>
-          <div v-for="source in questionDetail.sources" :key="source.chunk_id" class="qb-source">
+          <div v-if="questionDetail.review_status === 'pending' && !answerRevealed" class="qb-hint">
+            课件引文可能直接包含正确答案，已随答案一并隐藏。需要审核时请主动点击上方「显示正确答案与解析」。
+          </div>
+          <div v-for="source in (questionDetail.review_status === 'pending' && !answerRevealed ? [] : questionDetail.sources)" :key="source.chunk_id" class="qb-source">
             <div class="qb-source-heading"><span>{{ source.original_filename }} · 第 {{ source.page_start }} 页</span>
               <span v-if="source.content_kind === 'figure_description'" class="qb-pill caution"><Image :size="12" /> 未验证视觉描述</span>
               <span v-else class="qb-pill neutral">文本引用</span></div>
             <p>{{ source.evidence_note || '暂无引文说明' }}</p>
             <a v-if="previewAvailable(source)" :href="sourcePreviewUrl(source)" target="_blank" rel="noopener noreferrer">打开 PDF 原页核对 <ArrowRight :size="14" /></a>
           </div>
-          <div v-if="qSourcesAreVisual" class="qb-warning"><AlertCircle :size="17" /><span>此题来源包含 AI 对图片的描述。即使引文匹配，也不能证明原图识别和答案一定正确。请打开原页检查。</span></div>
+          <div v-if="qSourcesAreVisual && (questionDetail.review_status !== 'pending' || answerRevealed)" class="qb-warning"><AlertCircle :size="17" /><span>此题来源包含 AI 对图片的描述。即使引文匹配，也不能证明原图识别和答案一定正确。请打开原页检查。</span></div>
 
           <template v-if="!editingQuestion && (questionDetail.review_status === 'pending' || questionDetail.review_status === 'draft')">
             <div class="qb-section-divider"></div>
