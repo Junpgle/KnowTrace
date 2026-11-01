@@ -551,6 +551,7 @@ onMounted(() => { void initialize() })
           <CourseContentHub v-else-if="view === 'content'" :course-id="courseId"
             :course-name="currentCourse?.title || '课程'" :initial-section="contentSection"
             @updated="refresh" @blind-trial="startBlindFromBank"
+            @section-change="contentSection = $event"
             @open-practice="navigate('practice')" />
           <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
           <div v-else class="view-stack">
