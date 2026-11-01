@@ -50,6 +50,7 @@ def seed(http):
     pdf=fitz.open()
     page=pdf.new_page()
     page.insert_text((20,80),QUOTE)
+    page.insert_text((20,115),"The source, transmission system, and receiver cooperate in data communication.")
     upload=http.post(f"/api/courses/{course}/documents",
         files={"file":("network.pdf",pdf.tobytes(),"application/pdf")})
     assert upload.status_code==201,upload.text
@@ -139,7 +140,8 @@ def test_schema_upgrade_retains_existing_question_versions(tmp_path):
         "IN ('single_choice','true_false')")
     with sqlite3.connect(str(path)) as connection:
         connection.executescript(old)
-        connection.execute("INSERT INTO courses(id,title) VALUES ('legacy-course','Legacy')")
+        connection.execute("INSERT INTO users(id,username) VALUES ('local','local')")
+        connection.execute("INSERT INTO courses(id,owner_user_id,title) VALUES ('legacy-course','local','Legacy')")
         connection.execute("INSERT INTO questions(id,course_id,origin) VALUES ('q1','legacy-course','ai')")
         connection.execute("""INSERT INTO question_versions
             (id,question_id,version_no,question_type,stem,options_json,
