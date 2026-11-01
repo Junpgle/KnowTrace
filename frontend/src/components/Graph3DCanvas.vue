@@ -8,6 +8,8 @@ import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
 import { planCenteredCourseOrbits } from '../centeredCourseOrbits'
+import { placeOrbitCaptions } from '../orbitCaptionPlacement'
+import type { OrbitCaptionSlot } from '../orbitCaptionPlacement'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GraphEdge, GraphNode } from '../api'
 
@@ -107,6 +109,8 @@ const orbitMarkerRadii = new Map<string, number>()
 // position. The ordinary collision solver can jump between many candidate
 // offsets every frame, which looks like the name is shaking or teleporting.
 const stableOrbitCaptionOpacity = new Map<string, number>()
+const stableOrbitCaptionTargets = new Map<string, OrbitCaptionSlot>()
+const stableOrbitCaptionOffsets = new Map<string, OrbitCaptionSlot>()
 type OrbitingPlanet = {
   id: string
   world: THREE.Vector3
@@ -752,6 +756,8 @@ function clearGraph(animate = false) {
   orbitMarkers.splice(0)
   orbitMarkerRadii.clear()
   stableOrbitCaptionOpacity.clear()
+  stableOrbitCaptionTargets.clear()
+  stableOrbitCaptionOffsets.clear()
   orbitingPlanets.splice(0)
   movingLines.splice(0)
   orbitVisuals.clear()
@@ -1994,71 +2000,80 @@ function placeLabel(anchor: LabelAnchor) {
 // every frame. When two moving captions cross, gently fade the lower-priority
 // one instead of teleporting it to the other side of the screen.
 function arrangeStableOrbitCaptions() {
-  if(!camera||!renderer||!orbitingPlanets.length)return
-  // The transition crossfade owns sprite opacity until the flight ends.
-  // Overriding it here would make the next level flash into view early.
-  if(outgoing.length||incoming)return
-  const safe=safeViewport()
+  if (!camera || !renderer || !orbitingPlanets.length) return
+  if (outgoing.length || incoming) return
+  const w=renderer.domElement.clientWidth
+  const h=renderer.domElement.clientHeight
+  // A hard full-width top inset wastes the free space in the screenshot.
+  // Reserve only the REAL DOM overlays and the 12px canvas border.
+  const bounds={left:12,top:12,right:w-12,bottom:h-18}
   const overlays=overlayBoxes()
-  const height=renderer.domElement.clientHeight
+  const nodesById=new Map(props.nodes.map(node=>[node.id,node]))
+  const markerById=new Map(orbitMarkers.map(marker=>[marker.id,marker]))
+  const cameraForward=new THREE.Vector3(0,0,-1)
+    .applyQuaternion(camera.quaternion)
   const tanHalf=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2)
-  const sprites=labelAnchors.filter(a=>a.nodeId&&a.screen)
-  const ranked=sprites.sort((a,b)=>{
-    const score=(label:LabelAnchor)=>{
-      const node=props.nodes.find(n=>n.id===label.nodeId)
-      return (node?.id===hoveredNodeId?100000:0)+
-        (node?.id===props.selectedId?90000:0)+
-        (node?.kind==='course'?80000:0)+
-        (node?.kind==='chapter'
-          ? (cachedChapterTotals.get(node.id)??node.source_count)
-          : node?.source_count??0)
-    }
-    return score(b)-score(a)||
-      (a.nodeId??'').localeCompare(b.nodeId??'')
+  const candidates=labelAnchors.flatMap(anchor=>{
+    if (!anchor.nodeId || !anchor.screen) return []
+    const node=nodesById.get(anchor.nodeId)
+    if (!node) return []
+    const center=screenPosition(anchor.center)
+    if (!center.visible) return []
+    const marker=markerById.get(anchor.nodeId)
+    const depth=Math.max(1,anchor.center.clone()
+      .sub(camera!.position).dot(cameraForward))
+    const pxPerWorld=h/(2*tanHalf*depth)
+    const radius=marker
+      ? (orbitMarkerRadii.get(marker.id)??3)*pxPerWorld
+      : 8
+    const count=node.kind==='chapter'
+      ? cachedChapterTotals.get(node.id)??node.source_count
+      : node.source_count
+    return [{
+      id:anchor.nodeId,x:center.x,y:center.y,
+      radius:Math.max(5,radius),
+      width:anchor.screen.width,height:anchor.screen.height,
+      priority:(node.id===hoveredNodeId?100000:0)+
+        (node.id===props.selectedId?90000:0)+
+        (node.kind==='course'?80000:0)+count,
+    }]
   })
-  const planetBoxes:{id:string;box:ScreenBox}[]=[]
-  for(const marker of orbitMarkers){
-    const p=screenPosition(marker.planet.getWorldPosition(new THREE.Vector3()))
-    if(!p.visible)continue
-    const world=marker.planet.getWorldPosition(new THREE.Vector3())
-    const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
-    const depth=Math.max(1,world.sub(camera.position).dot(forward))
-    const radius=Math.min(92,Math.max(6,
-      (orbitMarkerRadii.get(marker.id)??8)*height/(2*tanHalf*depth)))
-    planetBoxes.push({id:marker.id,box:{
-      left:p.x-radius-3,right:p.x+radius+3,
-      top:p.y-radius-3,bottom:p.y+radius+3,
-    }})
-  }
-  const placed:ScreenBox[]=[]
-  for(const anchor of ranked){
-    const id=anchor.nodeId!
-    const sprite=anchor.sprite
-    const point=screenPosition(sprite.getWorldPosition(new THREE.Vector3()))
-    const w=anchor.screen!.width
-    const h=anchor.screen!.height
-    const box:ScreenBox={
-      left:point.x-w/2-5,right:point.x+w/2+5,
-      top:point.y-h/2-4,bottom:point.y+h/2+4,
+  const previous=Object.fromEntries(stableOrbitCaptionTargets)
+  const planned=placeOrbitCaptions(candidates,bounds,overlays,previous)
+  const slots=new Map(planned.map(p=>[p.id,p]))
+  const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion)
+  const up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion)
+  const anchorsById=new Map(labelAnchors
+    .filter(a=>a.nodeId).map(a=>[a.nodeId!,a]))
+  for (const [id,anchor] of anchorsById) {
+    const slot=slots.get(id)
+    if (slot) {
+      stableOrbitCaptionTargets.set(id,{dx:slot.dx,dy:slot.dy})
+      const old=stableOrbitCaptionOffsets.get(id)??slot
+      const dx=old.dx+(slot.dx-old.dx)*.18
+      const dy=old.dy+(slot.dy-old.dy)*.18
+      stableOrbitCaptionOffsets.set(id,{dx,dy})
+      // placeLabel() already set the pixel-correct scale. Translate this
+      // sprite to the target SCREEN position without moving its planet.
+      const base=screenPosition(anchor.sprite.getWorldPosition(new THREE.Vector3()))
+      const target=candidates.find(c=>c.id===id)!
+      const screenX=target.x+dx-base.x
+      const screenY=target.y+dy-base.y
+      const depth=Math.max(1,anchor.center.clone()
+        .sub(camera.position).dot(cameraForward))
+      const parentScale=Math.max(.05,anchor.sprite.parent?.scale.x??1)
+      const localPerPx=2*tanHalf*depth/(h*parentScale)
+      anchor.sprite.position.addScaledVector(right,screenX*localPerPx)
+        .addScaledVector(up,-screenY*localPerPx)
     }
-    // The caption's own planet is intentionally nearby; other planets,
-    // title/toolbar/drawer overlays and other visible captions are reserved.
-    const fits=point.visible &&
-      box.left>=safe.left && box.right<=safe.right &&
-      box.top>=safe.top && box.bottom<=safe.bottom &&
-      !overlays.some(o=>overlaps(box,o,3)) &&
-      !placed.some(o=>overlaps(box,o,5)) &&
-      !planetBoxes.some(p=>p.id!==id && overlaps(box,p.box,2))
-    const pinned=id===hoveredNodeId || id===props.selectedId
-    if(fits||pinned)placed.push(box)
-    // No instantaneous visibility flip during conjunctions. The tooltip
-    // remains available on hover even when this static caption fades.
-    const target=fits||pinned ? .96 : 0
-    const prev=stableOrbitCaptionOpacity.get(id)??.96
-    const alpha=prev+(target-prev)*.12
-    stableOrbitCaptionOpacity.set(id,alpha)
-    ;(sprite.material as THREE.SpriteMaterial).opacity=alpha
-    sprite.visible=alpha>.025
+    // Existing captions only fade when ALL nearby positions are genuinely
+    // blocked. A valid side/below position is chosen before hiding.
+    const alphaTarget=slot ? .96 : 0
+    const alpha=stableOrbitCaptionOpacity.get(id)??.96
+    const next=alpha+(alphaTarget-alpha)*.17
+    stableOrbitCaptionOpacity.set(id,next)
+    ;(anchor.sprite.material as THREE.SpriteMaterial).opacity=next
+    anchor.sprite.visible=next>.018
   }
 }
 
@@ -2396,12 +2411,10 @@ function pointerMove(event: PointerEvent) {
   const node = [...props.nodes, ...(props.contextNodes ?? [])]
     .find(n => n.id === hoveredNodeId)
   hoveredName.value = node?.name ?? ''
-  const body=orbitingPlanets.find(p=>p.id===hoveredNodeId)
-  if (node && body && (node.kind==='chapter'||node.kind==='group')) {
+  if (node && (node.kind==='chapter'||node.kind==='group')) {
     const count=node.kind==='group' ? node.source_count :
-      (cachedChapterTotals.get(node.id)??0)
-    hoveredOrbitInfo.value=`${count} 个知识点 · 公转约 ${Math.round(
-      2*Math.PI/body.radiansPerSecond)} 秒/圈`
+      (cachedChapterTotals.get(node.id)??node.source_count)
+    hoveredOrbitInfo.value=`${count} 个知识点`
   } else hoveredOrbitInfo.value=''
   const bounds = mountPoint.value.getBoundingClientRect()
   const tooltipWidth = Math.min(340, Math.max(0, bounds.width - 24))
