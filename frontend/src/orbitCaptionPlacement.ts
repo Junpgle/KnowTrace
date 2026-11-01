@@ -85,25 +85,30 @@ export function placeOrbitCaptions(
     box:rect(item.x,item.y,item.radius*2+12,item.radius*2+12),
   }))
   const rank=[...items].sort((a,b)=>b.priority-a.priority||a.id.localeCompare(b.id))
-  for (const item of rank) {
-    const valid=(slot: OrbitCaptionSlot) => {
-      const box=rect(item.x+slot.dx,item.y+slot.dy,item.width,item.height)
-      const inside=box.left>=bounds.left&&box.right<=bounds.right&&
-        box.top>=bounds.top&&box.bottom<=bounds.bottom
-      if(!inside||overlays.some(o=>boxesOverlap(box,o,4)) ||
-        placed.some(o=>boxesOverlap(box,o.box,5)) ||
-        planets.some(p=>p.id!==item.id&&boxesOverlap(box,p.box,4)))
-        return null
-      return box
-    }
-    // The previous slot remains pinned while it is collision-free. A label
-    // therefore doesn't jump between two equally good slots every frame.
+  const available=(item:OrbitCaptionItem,slot:OrbitCaptionSlot,gap:number) => {
+    const box=rect(item.x+slot.dx,item.y+slot.dy,item.width,item.height)
+    const inside=box.left>=bounds.left&&box.right<=bounds.right&&
+      box.top>=bounds.top&&box.bottom<=bounds.bottom
+    if(!inside||overlays.some(o=>boxesOverlap(box,o,3)) ||
+      placed.some(o=>boxesOverlap(box,o.box,gap)) ||
+      planets.some(p=>p.id!==item.id&&boxesOverlap(box,p.box,3)))
+      return null
+    return box
+  }
+  // Reserve still-clear previous labels BEFORE considering any fresh slot.
+  // A tiny change of position cannot cause a higher-ranked caption to
+  // steal another caption's long-held location.
+  for(const item of rank) {
     const old=previous[item.id]
-    const retained=old&&valid(old)
-    if(retained) {
-      placed.push({id:item.id,dx:old.dx,dy:old.dy,box:retained})
-      continue
-    }
+    if(!old)continue
+    const box=available(item,old,0)
+    if(box)placed.push({id:item.id,dx:old.dx,dy:old.dy,box})
+  }
+  const retainedIds=new Set(placed.map(p=>p.id))
+  for (const item of rank) {
+    if(retainedIds.has(item.id))continue
+    const old=previous[item.id]
+    const valid=(slot:OrbitCaptionSlot)=>available(item,slot,5)
     const candidates=candidateSlots(item)
     let winner: OrbitCaptionPlacement | null=null
     let score=Infinity
