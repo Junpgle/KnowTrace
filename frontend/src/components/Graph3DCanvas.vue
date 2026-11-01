@@ -87,6 +87,9 @@ let hoveredNodeId: string | null = null
 const hoveredName = ref('')
 const hoveredPoint = ref({ x: 0, y: 0 })
 const labelAnchors: LabelAnchor[] = []
+// Visual tracks are intentionally browse-only and never become knowledge
+// graph edges. Hovering a group subtly illuminates its complete ellipse.
+const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[] = []
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
@@ -720,6 +723,7 @@ function clearGraph(animate = false) {
   backdropCloud = null
   backdropPoints.splice(0)
   labelAnchors.splice(0)
+  orbitTracks.splice(0)
   hoveredNodeId = null
   hoveredName.value = ''
   positions.clear()
@@ -1191,6 +1195,32 @@ function rebuild(animate = false, transition?: SceneTransition) {
     g.add(cluster)
     meshes.push(cluster)
   }
+  // One faint CONTINUOUS track per elliptical belt is a clearer orbital
+  // cue than a separate miniature Saturn ring around every group planet.
+  if (props.nodes.length && props.nodes.every(n => n.kind === 'group')) {
+    const bands = browseOrbitBands(props.nodes)
+    bands.forEach((band,index) => {
+      const points = band.map(n=>positions.get(n.id))
+        .filter((p):p is THREE.Vector3 => Boolean(p))
+      if (points.length < 3) return
+      const curve = new THREE.CatmullRomCurve3(
+        points.map(p => p.clone()), true, 'centripetal', .45)
+      const track = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(
+          curve.getPoints(Math.max(120,points.length*16))),
+        new THREE.LineBasicMaterial({
+          color: [0x6fc6c8,0x729fbf,0x7ea6bf,0x64b6c7][index%4],
+          transparent: true, opacity: .12 + index * .015,
+          depthWrite: false, depthTest: false,
+        }),
+      )
+      g.add(track)
+      orbitTracks.push({
+        line:track, ids:new Set(band.map(n=>n.id)),
+        baseOpacity:.12 + index * .015,
+      })
+    })
+  }
   for (const node of brightNodes.filter(n => n.kind !== 'knowledge')) {
     const position = positions.get(node.id)
     if (!position) continue
@@ -1249,7 +1279,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
 
-    if (!focusState.active) {
+    if (!focusState.active && !(overview && node.kind === 'group')) {
       const ringR = radius * (isCourse ? 2.2 : 1.9)
       const curve = new THREE.EllipseCurve(0, 0, ringR, ringR, 0, Math.PI * 2)
       const ringGeometry = new THREE.BufferGeometry().setFromPoints(
@@ -1947,6 +1977,13 @@ function draw() {
     if (travel >= 1) finishFade()
   }
   controls.update()
+  if (!outgoing.length) {
+    for (const track of orbitTracks) {
+      const hovered = !!hoveredNodeId && track.ids.has(hoveredNodeId)
+      ;(track.line.material as THREE.LineBasicMaterial).opacity =
+        hovered ? .38 : track.baseOpacity
+    }
+  }
   // Project the CURRENT camera frame, not last frame's inverse matrix.
   // Screen-space avoidance otherwise lags one frame during fast navigation.
   camera.updateMatrixWorld()
