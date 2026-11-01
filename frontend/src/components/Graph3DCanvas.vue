@@ -115,7 +115,9 @@ const movingLines: {
   geometry: THREE.BufferGeometry
   edges: {source:string;target:string}[]
 }[] = []
-let orbitFrozenAt = 0
+let orbitalSeconds = 0
+let lastOrbitFrame = 0
+const orbitVisuals = new Map<string, {object:THREE.Object3D;start:THREE.Vector3}[]>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
@@ -734,6 +736,9 @@ function clearGraph(animate = false) {
   groupMarkerRadii.clear()
   orbitingPlanets.splice(0)
   movingLines.splice(0)
+  orbitVisuals.clear()
+  orbitalSeconds = 0
+  lastOrbitFrame = 0
   hoveredNodeId = null
   hoveredName.value = ''
   positions.clear()
@@ -1243,6 +1248,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     })
   }
   for (const node of brightNodes.filter(n => n.kind !== 'knowledge')) {
+    const orbitDecorations: THREE.Object3D[] = []
     const position = positions.get(node.id)
     if (!position) continue
     const isCourse = node.kind === 'course'
@@ -1286,6 +1292,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     planet.userData.nodeId = node.id
     g.add(planet)
     meshes.push(planet)
+    orbitDecorations.push(planet)
 
     // Restrained luminous atmosphere: one soft glow and an orbital ring
     // instead of hundreds of fake chapter dots.
@@ -1301,6 +1308,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     aura.position.copy(position)
     aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
+    orbitDecorations.push(aura)
     if (overview && node.kind === 'group') {
       groupMarkers.push({planet, aura, id:node.id})
     }
@@ -1326,6 +1334,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
       }
       ring.position.copy(position)
       g.add(ring)
+      orbitDecorations.push(ring)
       // Sparse decorative halo is intentionally NOT part of the knowledge
       // graph: its dots cannot be selected or mistaken for knowledge nodes.
       if (overview && !isCourse && count > 0) {
@@ -1344,10 +1353,12 @@ function rebuild(animate = false, transition?: SceneTransition) {
         }
         const dustGeom = new THREE.BufferGeometry()
         dustGeom.setAttribute('position', new THREE.Float32BufferAttribute(particles, 3))
-        g.add(new THREE.Points(dustGeom, new THREE.PointsMaterial({
+        const dust=new THREE.Points(dustGeom, new THREE.PointsMaterial({
           color: baseColor, size: .65, transparent: true,
           opacity: .6, depthWrite: false,
-        })))
+        }))
+        g.add(dust)
+        orbitDecorations.push(dust)
       }
     }
 
@@ -1391,7 +1402,11 @@ function rebuild(animate = false, transition?: SceneTransition) {
         g.add(label)
       }
     }
+    orbitVisuals.set(node.id,orbitDecorations.map(object=>({
+      object,start:object.position.clone(),
+    })))
   }
+  initializeOrbitingPlanets()
 
   const structural: number[] = []
   const ordinary: number[] = []
@@ -1411,17 +1426,26 @@ function rebuild(animate = false, transition?: SceneTransition) {
     if (bucket) bucket.push(a.x, a.y, a.z, b.x, b.y, b.z)
   }
   function addLines(points: number[], color: number, opacity: number) {
-    if (!points.length) return
+    if (!points.length) return null
     const geom = new THREE.BufferGeometry()
     geom.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
     const lines = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
       color, transparent: true, opacity, depthWrite: false,
     }))
     g.add(lines)
+    return lines
   }
   if ((!focusState.active || props.preservePositionsOnSelect) &&
       (props.showStructure !== false || props.nodes.some(n=>n.kind==='group'))) {
-    addLines(structural, 0x7b9aad, focusState.active ? .09 : .3)
+    const structuralLine = addLines(structural, 0x7b9aad, focusState.active ? .09 : .3)
+    if (structuralLine && orbitingPlanets.length) {
+      movingLines.push({
+        geometry:structuralLine.geometry,
+        edges:props.edges.filter(e=>e.structural &&
+          positions.has(e.source)&&positions.has(e.target))
+          .map(e=>({source:e.source,target:e.target})),
+      })
+    }
   }
   addLines(ordinary, 0xffd184, focusState.active ? 0.085 : 0.79)
   for (const [type, points] of highlightedByType) {
