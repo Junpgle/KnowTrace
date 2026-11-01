@@ -236,3 +236,96 @@ def test_blind_trial_prefers_unattempted_candidates(env):
         json={"count":1,"source":"pending"}).json()["items"][0]
     assert second["question_version_id"] != first["question_version_id"]
     assert {first["question_version_id"],second["question_version_id"]} == set(versions)
+
+
+def test_bkt_evidence_report_requires_independent_items(env):
+    """The first correct answer is 57.65% under fixed v1 assumptions,
+    but is not advertised as a measured course proficiency percentage."""
+    http, _ = env
+    course, kp, versions = seed(http)
+    approve(http, versions)
+    session = http.post(f"/api/courses/{course}/quiz-sessions",json={"count":2}).json()
+    single = next(item for item in session["items"]
+                  if item["question_type"] == "single_choice")
+    response = http.post(f"/api/quiz-items/{single['quiz_item_id']}/answer",
+        json={"client_request_id":"evidence-report-101","response":"A"})
+    assert response.status_code == 200,response.text
+    report = http.get(f"/api/courses/{course}/learning-report").json()
+    summary = report["evidence_summary"]
+    assert summary["approved_points"] == 1
+    assert summary["observed_points"] == 1
+    assert summary["repeated_evidence_points"] == 0
+    assert summary["observation_coverage"] == 1
+    point = next(x for x in report["knowledge_points"] if x["knowledge_point_id"] == kp)
+    assert point["p_mastery"] == pytest.approx(.5764705882352941)
+    assert point["display_mastery"] is None
+    assert point["evidence_level"] == "limited"
+    assert point["distinct_questions"] == 1
+    assert point["practice_days"] == 1
+    assert point["practice_sessions"] == 1
+
+
+def test_same_question_repetition_not_counted_twice_in_bkt(env):
+    """Repeated same-day recognition is practice, not independent BKT data."""
+    http, db = env
+    course, kp, versions = seed(http)
+    approve(http, versions)
+    for number in range(2):
+        session = http.post(f"/api/courses/{course}/quiz-sessions", json={"count":2}).json()
+        single = next(x for x in session["items"] if x["question_type"] == "single_choice")
+        response = http.post(f"/api/quiz-items/{single['quiz_item_id']}/answer",json={
+            "client_request_id":f"repeat-bkt-1{number:03d}", "response":"A"})
+        assert response.status_code == 200,response.text
+        assert (response.json()["mastery"] is not None) == (number == 0)
+    with connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM mastery_events").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM answer_records").fetchone()[0] == 2
+    report = http.get(f"/api/courses/{course}/learning-report").json()
+    p = next(x for x in report["knowledge_points"] if x["knowledge_point_id"] == kp)
+    assert p["observations"] == 1
+    assert p["answered"] == 2
+    assert p["distinct_questions"] == 1
+    assert p["display_mastery"] is None
+
+
+def test_revising_question_does_not_reset_repetition_guard(env):
+    http, db = env
+    course, kp, versions = seed(http)
+    approve(http, versions)
+    first = http.post(f"/api/courses/{course}/quiz-sessions",json={"count":2}).json()
+    original = next(x for x in first["items"] if x["question_type"]=="single_choice")
+    assert http.post(f"/api/quiz-items/{original['quiz_item_id']}/answer",json={
+        "client_request_id":"rev-bkt-first","response":"A"}).status_code==200
+    next_version = http.post(f"/api/question-versions/{versions[0]}/revise",
+        json={"stem":"Which original component sends network signals?"})
+    assert next_version.status_code == 201,next_version.text
+    v2 = next_version.json()["id"]
+    assert http.post(f"/api/question-versions/{v2}/review",
+        json={"decision":"approved"}).status_code==200
+    other = http.post(f"/api/courses/{course}/quiz-sessions",json={"count":2})
+    assert other.status_code==201,other.text
+    revised = next(x for x in other.json()["items"] if x["question_version_id"]==v2)
+    result = http.post(f"/api/quiz-items/{revised['quiz_item_id']}/answer",json={
+        "client_request_id":"rev-bkt-second","response":"A"})
+    assert result.status_code == 200,result.text
+    assert result.json()["mastery"] is None
+    with connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM mastery_events").fetchone()[0]==1
+
+
+def test_mastery_evidence_display_threshold_is_not_a_confidence_interval():
+    from knowtrace.mastery_evidence import evidence_level,overview_stats
+    assert evidence_level(observations=0,distinct_questions=0,practice_days=0)=="unobserved"
+    assert evidence_level(observations=20,distinct_questions=1,practice_days=10)=="limited"
+    assert evidence_level(observations=5,distinct_questions=3,practice_days=1)=="limited"
+    assert evidence_level(observations=5,distinct_questions=3,practice_days=2)=="repeated"
+    summary = overview_stats([
+        {"review_status":"approved","evidence_level":"limited"},
+        {"review_status":"approved","evidence_level":"repeated"},
+        {"review_status":"approved","evidence_level":"unobserved"},
+        {"review_status":"pending","evidence_level":"unobserved"},
+    ])
+    assert summary["approved_points"]==3
+    assert summary["observed_points"]==2
+    assert summary["repeated_evidence_points"]==1
+    assert summary["observation_coverage"]==pytest.approx(2/3,abs=.0001)
