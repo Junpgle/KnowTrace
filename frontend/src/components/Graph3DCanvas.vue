@@ -221,9 +221,11 @@ function makeFocusLabel(name: string, selected: boolean): THREE.Sprite | null {
   ctx.lineWidth = selected ? 5 : 3
   ctx.strokeStyle = selected ? '#67f4dc' : 'rgba(134, 209, 229, .77)'
   ctx.stroke()
-  const shown = name.length > 30 ? name.slice(0, 29) + '…' : name
-  const lines = shown.length > 15
-    ? [shown.slice(0, 15), shown.slice(15)] : [shown]
+  // Keep up to 11 Chinese characters per row so fillText does not
+  // silently squeeze a 15-20-character sentence to tiny visual glyphs.
+  const shown = name.length > 22 ? name.slice(0, 21) + '…' : name
+  const lines = shown.length > 11
+    ? [shown.slice(0, 11), shown.slice(11)] : [shown]
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = selected ? '#f4fffc' : '#e7f6ff'
