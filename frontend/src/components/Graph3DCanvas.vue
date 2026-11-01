@@ -138,6 +138,10 @@ const movingLines: {
 }[] = []
 let lastOrbitFrame = 0
 let chapterOrbitPixelScale = 1
+// A fresh WebGL canvas starts with a placeholder camera at (34,112,96).
+// Never show that camera as the initial atlas zoom while the fitted camera
+// is still interpolating over 1120ms. A real first view is fully framed.
+let firstSceneCameraCommitted = false
 const orbitVisuals = new Map<string, {object:THREE.Object3D;start:THREE.Vector3}[]>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
@@ -1971,6 +1975,24 @@ function restoreCamera(snapshot: CameraSnapshot) {
     tween = true
   }
 }
+function commitInitialCamera() {
+  if (firstSceneCameraCommitted || !camera || !controls || !renderer ||
+      !mountPoint.value || !props.nodes.length) return
+  if (mountPoint.value.clientWidth < 240 ||
+      mountPoint.value.clientHeight < 200) return
+  // Use the very same fit logic as the user's "fit canvas" button, but
+  // apply it BEFORE the first visible frame, rather than interpolating
+  // from the camera's arbitrary construction-time placeholder.
+  focus(props.selectedId ?? null, true)
+  camera.position.copy(desiredPosition)
+  controls.target.copy(desiredTarget)
+  tween = false
+  controls.update()
+  camera.updateMatrixWorld()
+  if (scene?.fog instanceof THREE.FogExp2)
+    scene.fog.density = fogDesiredDensity
+  firstSceneCameraCommitted = true
+}
 function resetCamera() { focus(null, true) }
 // User-controlled zoom is useful for dense whole-course views; do not reset
 // the scene or change the selected concept when adjusting the lens.
@@ -2568,6 +2590,7 @@ function initialize() {
   renderer.domElement.addEventListener('pointerleave', pointerLeave)
   document.addEventListener('visibilitychange', visibilityChanged)
   focus(null, true)
+  commitInitialCamera()
   draw()
 }
 onMounted(initialize)
@@ -2663,6 +2686,7 @@ watch(() => ({
     if (!(props.preservePositionsOnSelect && !layerChanged && selectedChanged))
       focus(next.selectedId, layerChanged)
   }
+  if (!hierarchyChanged) commitInitialCamera()
 }, { flush: 'post' })
 onBeforeUnmount(() => {
   disposed = true
