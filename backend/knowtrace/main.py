@@ -23,6 +23,7 @@ from .mimo import MimoProvider
 from .parser import ParseError, SUPPORTED_EXTENSIONS, extract_chunks
 from .questions import validate_generated_questions, validate_question_fields
 from .quiz_api import register_quiz_routes
+from .question_batch_api import register_question_batch_routes
 from .manual_transfer import register_manual_routes
 from .graph_api import register_graph_routes
 from .source_chapter_api import register_source_chapter_routes
@@ -125,6 +126,7 @@ def create_app(*, db_path: str | Path | None = None,
     recover_batches = lambda: None
     recover_ai_reviews = lambda: None
     recover_relations = lambda: None
+    recover_question_batches = lambda: None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -133,6 +135,7 @@ def create_app(*, db_path: str | Path | None = None,
         recover_batches()
         recover_ai_reviews()
         recover_relations()
+        recover_question_batches()
         yield
 
     app = FastAPI(title="KnowTrace API", version="1.6.0", lifespan=lifespan)
@@ -771,6 +774,7 @@ def create_app(*, db_path: str | Path | None = None,
                        (payload.decision,payload.decision,version_id))
             return {"id":version_id,"review_status":payload.decision}
 
+    recover_question_batches = register_question_batch_routes(app, database, resolve_provider)
     register_quiz_routes(app, database)
     def extract_batch_pages(document_id: str, start: int, end: int,
                             visual: bool, provider: str):
