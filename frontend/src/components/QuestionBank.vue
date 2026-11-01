@@ -466,10 +466,16 @@ function previewAvailable(source: SourceEvidence): boolean {
       <QuestionBulkApproval v-else-if="tab === 'questions' && showBatchReview" :course-id="props.courseId" @updated="reload();emit('updated')" />
     <div v-else-if="tab === 'questions'" class="qb-columns">
       <aside class="qb-list panel">
-        <div class="qb-list-head"><strong>课程知识点</strong><span>{{ knowledge.length }} 项</span></div>
+        <div class="qb-list-head"><strong>课程知识点</strong><span>{{visibleKnowledge.length}} / {{knowledge.length}} 项</span></div>
+        <div class="qb-list-search"><input v-model="knowledgeSearch" type="search" placeholder="搜索知识点名称…" aria-label="搜索知识点名称"/></div>
+        <div class="qb-filter">
+          <button :class="{active:knowledgeStatus==='all'}" @click="knowledgeStatus='all'">全部</button>
+          <button :class="{active:knowledgeStatus==='pending'}" @click="knowledgeStatus='pending'">待审核</button>
+          <button :class="{active:knowledgeStatus==='approved'}" @click="knowledgeStatus='approved'">已通过</button>
+        </div>
         <div v-if="!knowledge.length" class="qb-empty-small">暂无知识点。请先导入课程资料并提取知识点。</div>
         <div class="qb-list-scroll">
-          <button v-for="point in knowledge" :key="point.id" class="qb-list-item"
+          <button v-for="point in visibleKnowledge" :key="point.id" class="qb-list-item"
             :class="{ active: selectedKpId === point.id }" @click="selectKnowledge(point.id)">
             <span class="qb-list-title">{{ point.canonical_name }}</span>
             <span class="qb-list-sub"><span class="qb-pill" :class="statusClass(point.review_status)">{{ statusName(point.review_status) }}</span><ChevronRight :size="15" /></span>
@@ -503,8 +509,8 @@ function previewAvailable(source: SourceEvidence): boolean {
             </div>
           </template>
 
-          <div class="qb-section-divider"></div>
-          <div class="qb-source-title"><FileText :size="17" /><strong>知识点资料来源</strong></div>
+          <details class="qb-collapsible">
+          <summary><FileText :size="17"/> 课件来源（{{kpDetail.sources.length}} 条） <span>展开核对</span></summary>
           <div v-if="!kpDetail.sources.length" class="qb-hint">这个知识点没有关联课件来源，暂时不能用 AI 出题。</div>
           <div v-for="source in kpDetail.sources" :key="source.chunk_id" class="qb-source">
             <div class="qb-source-heading"><span>{{ source.original_filename }} · 第 {{ source.page_start }} 页</span>
@@ -514,8 +520,15 @@ function previewAvailable(source: SourceEvidence): boolean {
             <a v-if="previewAvailable(source)" :href="sourcePreviewUrl(source)" target="_blank" rel="noopener noreferrer">查看 PDF 原始页面 <ArrowRight :size="14" /></a>
           </div>
 
-          <div class="qb-section-divider"></div>
-          <div class="qb-source-title"><Sparkles :size="18" /><strong>基于此知识点生成题目</strong></div>
+          </details>
+          <div class="qb-knowledge-generate-shortcut">
+            <div><strong>需要生成题目？</strong><p>建议按章节批量出题。只有特殊知识点才需要单独生成。</p></div>
+            <button class="button button-outline button-small" type="button" @click="switchTab('batch')"><Sparkles :size="16"/> 批量出题</button>
+            <button class="button button-outline button-small" type="button"
+              @click="showSingleGenerate=!showSingleGenerate">{{showSingleGenerate?'收起单点出题':'单点出题（高级）'}}</button>
+          </div>
+          <div v-if="showSingleGenerate" class="qb-single-generate">
+          <div class="qb-source-title"><Sparkles :size="18"/><strong>基于当前知识点生成</strong></div>
           <p class="qb-hint">使用本地 Qwen 生成题目，生成结果均为待审核。图示描述可能包含识别误差，请核对原图。</p>
           <div class="qb-generation-form">
             <label>出题模型<select v-model="selectedProvider" :disabled="busy">
@@ -540,6 +553,7 @@ function previewAvailable(source: SourceEvidence): boolean {
             <strong>模型输出校验提醒</strong>
             <p v-for="(warning, i) in generated.warnings" :key="i">{{ warning }}</p>
           </div>
+          </div>
         </template>
       </section>
       </div>
@@ -547,14 +561,15 @@ function previewAvailable(source: SourceEvidence): boolean {
 
     <div v-else class="qb-columns">
       <aside class="qb-list panel">
-        <div class="qb-list-head"><strong>课程题目</strong><span>{{ questions.length }} 道</span></div>
+        <div class="qb-list-head"><strong>课程题目</strong><span>{{visibleQuestions.length}} / {{questions.length}} 道</span></div>
+        <div class="qb-list-search"><input v-model="questionSearch" type="search" placeholder="搜索题干关键词…" aria-label="搜索题干"/></div>
         <div class="qb-filter">
           <button v-for="f in filters" :key="f"
             :class="{ active: filter === f }" @click="chooseFilter(f)">{{ f === 'all' ? '全部' : statusName(f) }}</button>
         </div>
         <div v-if="!visibleQuestions.length" class="qb-empty-small">
-          {{ filter === 'pending' ? '暂无待审核题目。可先去知识点审核页，让 AI 生成题目。' : '当前筛选下暂无题目。' }}
-          <button v-if="filter === 'pending'" class="qb-text-button" @click="switchTab('knowledge')">去生成题目 <ArrowRight :size="15" /></button>
+          {{ questionSearch.trim() ? '没有找到匹配的题目。' : filter === 'pending' ? '暂无待审核题目，可以进入生成中心创建题目。' : '当前筛选下暂无题目。' }}
+          <button v-if="filter === 'pending' && !questionSearch.trim()" class="qb-text-button" @click="switchTab('batch')">去批量出题 <ArrowRight :size="15" /></button>
         </div>
         <div class="qb-list-scroll">
           <button v-for="item in visibleQuestions" :key="item.version_id" class="qb-list-item"
@@ -626,8 +641,8 @@ function previewAvailable(source: SourceEvidence): boolean {
           <p v-if="questionDetail.knowledge_points.length > 1" class="qb-hint">
             组合题的多个考点由 AI 提议、课件引用辅助核验，仍需逐项人工审核。一次答对不能证明所有考点均已掌握。
           </p>
-          <div class="qb-section-divider"></div>
-          <div class="qb-source-title"><ShieldCheck :size="18" /><strong>题目来源与核验</strong></div>
+          <details class="qb-collapsible qb-question-sources">
+          <summary><ShieldCheck :size="18"/> 课件引用与原文核验（{{questionDetail.sources.length}} 条） <span>按需展开</span></summary>
           <div v-if="questionDetail.review_status === 'pending' && !answerRevealed" class="qb-hint">
             课件引文可能直接包含正确答案，已随答案一并隐藏。需要审核时请主动点击上方「显示正确答案与解析」。
           </div>
@@ -639,6 +654,7 @@ function previewAvailable(source: SourceEvidence): boolean {
             <a v-if="previewAvailable(source)" :href="sourcePreviewUrl(source)" target="_blank" rel="noopener noreferrer">打开 PDF 原页核对 <ArrowRight :size="14" /></a>
           </div>
           <div v-if="qSourcesAreVisual && (questionDetail.review_status !== 'pending' || answerRevealed)" class="qb-warning"><AlertCircle :size="17" /><span>此题来源包含 AI 对图片的描述。即使引文匹配，也不能证明原图识别和答案一定正确。请打开原页检查。</span></div>
+          </details>
 
           <template v-if="!editingQuestion && (questionDetail.review_status === 'pending' || questionDetail.review_status === 'draft')">
             <div class="qb-section-divider"></div>
