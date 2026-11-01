@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -21,6 +22,52 @@ def initialize(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with connect(path) as connection:
         connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        # Existing SQLite CHECK constraints cannot be modified using ALTER.
+        # Rebuild only question_versions inside a single rollback-safe transaction,
+        # preserving all versions, child mapping records, indexes and triggers.
+        # The migration runs BEFORE new exercises are enabled.
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='question_versions'"
+        ).fetchone()["sql"]
+        if "'short_answer'" not in table_sql:
+            # executescript has already committed schema initialization.
+            # Foreign key checks must be temporarily deferred for the table
+            # replacement; checks are rerun before commit.
+            connection.commit()
+            connection.execute("PRAGMA foreign_keys=OFF")
+            objects = [row["sql"] for row in connection.execute("""
+                SELECT sql FROM sqlite_master
+                WHERE tbl_name='question_versions' AND type IN ('trigger','index')
+                AND sql IS NOT NULL
+            """)]
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                replacement = re.sub(
+                    r"^(CREATE\\s+TABLE\\s+)(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\x22\\x60]?question_versions[\\x22\\x60]?",
+                    r"\\1question_versions_v2", table_sql, count=1, flags=re.I)
+                if replacement == table_sql:
+                    raise RuntimeError("Unable to safely migrate question_versions")
+                replacement = replacement.replace(
+                    "'single_choice','true_false'",
+                    "'single_choice','multiple_choice','true_false','short_answer'")
+                replacement = replacement.replace(
+                    "'single_choice', 'true_false'",
+                    "'single_choice','multiple_choice','true_false','short_answer'")
+                connection.execute(replacement)
+                connection.execute("INSERT INTO question_versions_v2 SELECT * FROM question_versions")
+                connection.execute("DROP TABLE question_versions")
+                connection.execute("ALTER TABLE question_versions_v2 RENAME TO question_versions")
+                for statement in objects:
+                    connection.execute(statement)
+                broken = connection.execute("PRAGMA foreign_key_check").fetchone()
+                if broken:
+                    raise RuntimeError("Migration foreign-key consistency check failed")
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.execute("PRAGMA foreign_keys=ON")
         # Additive migration for existing v1.2 databases. CREATE TABLE IF NOT
         # EXISTS does not add columns to a pre-existing table.
         present = {row["name"] for row in connection.execute(
