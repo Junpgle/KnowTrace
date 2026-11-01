@@ -7,6 +7,7 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
+import { planIndependentOrbitLanes } from '../independentOrbitLanes'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GraphEdge, GraphNode } from '../api'
 
@@ -585,35 +586,25 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     byChapter.get(owner)!.push(node)
   }
 
-  // Whole-course overview uses the SAME elliptical design language as
-  // the chapter browse-group overview. Chapters orbit the course core in
-  // the XZ plane; concept counts determine their visual weight/speed.
+  // The chapter atlas is an elliptical *distribution of lane anchors*,
+  // NOT one common orbit on which fast small planets catch slow large ones.
+  // Every chapter gets its own local ellipse in initializeOrbitingPlanets().
   const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
     .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
-  const count=top.length
-  const large=Math.max(1,...top.map(ch=>byChapter.get(ch.id)?.length ?? 0))
-  const viewport=safeViewport()
-  const aspect=THREE.MathUtils.clamp(
-    (viewport.right-viewport.left)/Math.max(1,viewport.bottom-viewport.top),
-    1.30, 2.30)
-  const orbit = Math.max(128, 125 + Math.sqrt(large)*2.8 + count*3)
-  const chapterBands=browseOrbitBands(top)
-  chapterBands.forEach((band,ring)=>{
-    const fraction=chapterBands.length===1 ? 1 :
-      .56+.44*ring/Math.max(1,chapterBands.length-1)
-    const a=orbit*fraction*aspect*.82
-    const b=orbit*fraction*.76
-    const at=ellipseArcAngles(a,b)
-    const phase=ring*.37+.09
-    band.forEach((ch,i)=>{
-      const angle=at((i+phase)/band.length)
-      pos.set(ch.id,new THREE.Vector3(
-        Math.cos(angle)*a,
-        (ordinalHash(ch.id+':altitude')-.5)*4,
-        Math.sin(angle)*b,
-      ))
-    })
+  const viewport = safeViewport()
+  const usableWidth = Math.max(430,viewport.right-viewport.left)
+  const usableHeight = Math.max(260,viewport.bottom-viewport.top)
+  const major = Math.max(420,usableWidth*.45)
+  const minor = Math.max(250,usableHeight*.43)
+  const angles = ellipseArcAngles(major,minor)
+  top.forEach((chapter,index)=>{
+    const theta=angles((index+.12)/Math.max(1,top.length))
+    pos.set(chapter.id,new THREE.Vector3(
+      Math.cos(theta)*major,
+      (ordinalHash(chapter.id+':altitude')-.5)*4,
+      Math.sin(theta)*minor,
+    ))
   })
   // Nested chapters stay near their real parent but get their own system.
   const pending = new Map(nested.map(c => [c.id, c]))
