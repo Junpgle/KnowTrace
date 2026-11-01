@@ -1977,7 +1977,8 @@ function restoreCamera(snapshot: CameraSnapshot) {
 }
 function commitInitialCamera() {
   if (firstSceneCameraCommitted || !camera || !controls || !renderer ||
-      !mountPoint.value || !props.nodes.length) return
+      !mountPoint.value ||
+      !props.nodes.some(node => node.kind !== 'course')) return
   if (mountPoint.value.clientWidth < 240 ||
       mountPoint.value.clientHeight < 200) return
   // Use the very same fit logic as the user's "fit canvas" button, but
