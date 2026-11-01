@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, ref, watch } from 'vue'
+import { api, type GraphNode } from '../api'
 import {
   ArrowRight, BookOpen, ClipboardCheck, FileText, Network,
   Sparkles, Layers3, ShieldCheck,
@@ -7,7 +8,8 @@ import {
 // Keep heavy PDF/graph modules out of the default learning bundle.
 const DocumentLibrary = defineAsyncComponent(() => import('./DocumentLibrary.vue'))
 const QuestionBank = defineAsyncComponent(() => import('./QuestionBank.vue'))
-const KnowledgeGalaxy = defineAsyncComponent(() => import('./KnowledgeGalaxy.vue'))
+const RelationStudio = defineAsyncComponent(() => import('./RelationStudio.vue'))
+const KnowledgeClassification = defineAsyncComponent(() => import('./KnowledgeClassification.vue'))
 
 type Section = 'materials' | 'knowledge' | 'relations' | 'questions'
 type QuestionMode = 'questions' | 'batch' | 'external'
@@ -28,11 +30,37 @@ const emit = defineEmits<{
 
 const section = ref<Section>(props.initialSection ?? 'materials')
 const questionMode = ref<QuestionMode>('questions')
+const knowledgeMode = ref<'review' | 'classification'>('review')
+const relationKnowledge = ref<GraphNode[]>([])
+const relationLoading = ref(false)
+const relationError = ref('')
+const focusedKnowledgeId = ref('')
+let relationRequest = 0
+async function loadRelationKnowledge() {
+  const token = ++relationRequest
+  relationLoading.value = true
+  relationError.value = ''
+  try {
+    const result = await api.knowledgeGraph(props.courseId, { limit: 2000, include_pending: true })
+    if (token === relationRequest) relationKnowledge.value = result.nodes.filter(n => n.kind === 'knowledge')
+  } catch (error) {
+    if (token === relationRequest) relationError.value = error instanceof Error ? error.message : '知识点加载失败'
+  } finally { if (token === relationRequest) relationLoading.value = false }
+}
+function relationUpdated() {
+  void loadRelationKnowledge()
+  emit('updated')
+}
+function openRelationPoint(id: string) {
+  focusedKnowledgeId.value = id
+  knowledgeMode.value = 'review'
+  section.value = 'knowledge'
+}
 const documentId = ref(props.initialDocumentId ?? '')
 const sectionItems = [
   { id: 'materials' as const, label: '资料', description: '上传、解析与提取', icon: FileText },
   { id: 'knowledge' as const, label: '知识点', description: '校对与归类', icon: BookOpen },
-  { id: 'relations' as const, label: '关系图谱', description: '探索与关系审核', icon: Network },
+  { id: 'relations' as const, label: '知识关系', description: '提取、审核与学习路线', icon: Network },
   { id: 'questions' as const, label: '题目', description: '生成、审核与管理', icon: ClipboardCheck },
 ]
 function changeSection(target: Section) {
@@ -40,6 +68,7 @@ function changeSection(target: Section) {
 }
 function jumpQuestionMode(next: 'overview' | 'knowledge' | 'questions' | 'batch' | 'external') {
   if (next === 'knowledge') {
+    knowledgeMode.value = 'review'
     section.value = 'knowledge'
   } else {
     if (next !== 'overview') questionMode.value = next
@@ -50,13 +79,17 @@ function chooseQuestionMode(next: QuestionMode) {
   questionMode.value = next
   section.value = 'questions'
 }
-function fromDocumentReview() { section.value = 'knowledge' }
+function fromDocumentReview() { knowledgeMode.value = 'review'; section.value = 'knowledge' }
 function fromDocumentExternal(id: string) {
   documentId.value = id
   chooseQuestionMode('external')
 }
 
 watch(section, current => emit('section-change', current))
+watch([section, () => props.courseId], ([current]) => {
+  if (current === 'relations') void loadRelationKnowledge()
+  else ++relationRequest
+}, { immediate: true })
 watch(() => props.initialSection, next => {
   if (next) section.value = next
 })
@@ -69,6 +102,9 @@ watch(() => props.initialDocumentId, next => {
 watch(() => props.courseId, () => {
   documentId.value = ''
   questionMode.value = 'questions'
+  knowledgeMode.value = 'review'
+  focusedKnowledgeId.value = ''
+  relationKnowledge.value = []
   section.value = props.initialSection ?? 'materials'
 })
 </script>
@@ -79,7 +115,7 @@ watch(() => props.courseId, () => {
       <div>
         <p class="eyebrow">COURSE CONTENT</p>
         <h1>课程内容<span class="heading-dot">.</span></h1>
-        <p class="section-description">统一管理 {{ courseName }} 的资料、知识点、关系图谱与题目。</p>
+        <p class="section-description">在 {{ courseName }} 中统一处理资料、知识点归类、知识关系和人工审核；图谱在侧边栏独立查看。</p>
       </div>
     </header>
 
@@ -98,14 +134,35 @@ watch(() => props.courseId, () => {
         embedded @updated="emit('updated')" @open-review="fromDocumentReview"
         @open-external="fromDocumentExternal" />
 
-      <QuestionBank v-else-if="section === 'knowledge'" :key="courseId + ':knowledge'"
-        :course-id="courseId" initial-tab="knowledge" embedded
-        @updated="emit('updated')" @blind-trial="emit('blind-trial')"
-        @navigate-tab="jumpQuestionMode" />
+      <section v-else-if="section === 'knowledge'" class="content-hub-questions">
+        <div class="content-hub-subnav" role="tablist" aria-label="知识点管理工作区">
+          <button type="button" role="tab" :aria-selected="knowledgeMode === 'review'"
+            :class="{active:knowledgeMode==='review'}" @click="knowledgeMode='review'">
+            <ShieldCheck :size="17" /> 知识点校对与审核
+          </button>
+          <button type="button" role="tab" :aria-selected="knowledgeMode === 'classification'"
+            :class="{active:knowledgeMode==='classification'}" @click="knowledgeMode='classification'">
+            <BookOpen :size="17" /> 章节归类
+          </button>
+        </div>
+        <QuestionBank v-if="knowledgeMode === 'review'" :key="courseId + ':knowledge'"
+          :course-id="courseId" initial-tab="knowledge" :initial-knowledge-point-id="focusedKnowledgeId" embedded
+          @updated="emit('updated')" @blind-trial="emit('blind-trial')"
+          @navigate-tab="jumpQuestionMode" />
+        <KnowledgeClassification v-else :key="courseId + ':classification'"
+          :course-id="courseId" @updated="emit('updated')" />
+      </section>
 
-      <KnowledgeGalaxy v-else-if="section === 'relations'" :course-id="courseId"
-        :course-name="courseName" embedded
-        @open-bank="chooseQuestionMode('questions')" @open-practice="emit('open-practice')" />
+      <section v-else-if="section === 'relations'" class="content-hub-questions">
+        <p v-if="relationError" class="content-hub-error" role="alert">{{ relationError }}
+          <button type="button" class="button button-outline button-small" @click="loadRelationKnowledge">重试</button>
+        </p>
+        <p v-if="relationLoading && !relationKnowledge.length" class="section-description">正在读取课程知识点…</p>
+        <RelationStudio v-if="!relationLoading || relationKnowledge.length"
+          :key="courseId + ':relations'" :course-id="courseId"
+          :knowledge="relationKnowledge" :focus-id="null"
+          @updated="relationUpdated" @select="openRelationPoint" />
+      </section>
 
       <section v-else class="content-hub-questions">
         <div class="content-hub-subnav" role="tablist" aria-label="题目工作区">
@@ -149,6 +206,7 @@ watch(() => props.courseId, () => {
 .content-hub-nav button:hover .content-hub-nav-arrow,.content-hub-nav button.active .content-hub-nav-arrow{opacity:1}
 .content-hub-body{min-width:0}
 .content-hub-questions{display:grid;gap:14px}
+.content-hub-error{padding:12px;color:#a34e38;background:#fff4ed;border-radius:9px;display:flex;align-items:center;gap:12px}
 .content-hub-subnav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #e1e9eb;padding-bottom:11px}
 .content-hub-subnav button{display:inline-flex;align-items:center;gap:7px;padding:10px 13px;background:transparent;border:1px solid transparent;border-radius:8px;color:#718f97;font-size:13px;font-weight:650;cursor:pointer}
 .content-hub-subnav button.active{border-color:#bee5da;background:#e8f7f1;color:#138878}

@@ -5,16 +5,17 @@ import {
   CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
-  TrendingUp, X, XCircle, FolderOpen, Plus, Upload, Settings,
+  TrendingUp, X, XCircle, FolderOpen, Network, Plus, Upload, Settings,
 } from '@lucide/vue'
 const CourseContentHub = defineAsyncComponent(() => import('./components/CourseContentHub.vue'))
+const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
 import AITaskCenter from './components/AITaskCenter.vue'
 const AISettings = defineAsyncComponent(() => import('./components/AISettings.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession, type KnowledgePoint, type QuestionQuality } from './api'
 
-type View = 'overview' | 'practice' | 'report' | 'content' | 'settings'
+type View = 'overview' | 'practice' | 'report' | 'content' | 'galaxy' | 'settings'
 type Choice = string | boolean | string[] | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
@@ -95,7 +96,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', content: '课程内容', settings: '模型设置' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', content: '课程内容', galaxy: '知识图谱', settings: '模型设置' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -440,6 +441,7 @@ onMounted(() => { void initialize() })
       <div class="sidebar-group-label sidebar-content-label">课程管理</div>
       <nav class="sidebar-nav" aria-label="课程管理导航">
         <button type="button" :class="{ active: view === 'content' }" @click="navigate('content')"><FolderOpen :size="19" /><span>课程内容</span><span v-if="pendingCount" class="nav-dot"></span></button>
+        <button type="button" :class="{ active: view === 'galaxy' }" @click="navigate('galaxy')"><Network :size="19" /><span>知识图谱</span></button>
       </nav>
       <div class="sidebar-group-label course-label">正在学习</div>
       <div class="course-selector">
@@ -472,7 +474,7 @@ onMounted(() => { void initialize() })
           <div class="topbar-avatar">学</div>
         </div>
       </header>
-      <main class="page-content">
+      <main class="page-content" :class="{ 'page-content-galaxy': view === 'galaxy' }">
         <div v-if="banner" class="notice" role="alert"><AlertCircle :size="19" /><span>{{ banner }}</span><button aria-label="关闭提示" @click="banner = ''"><X :size="17" /></button></div>
 
         <div v-if="loading" class="loading-screen"><LoaderCircle :size="32" class="spinning" /><strong>正在整理你的学习空间…</strong><span>从本地 KnowTrace 后端读取课程与学习记录</span></div>
@@ -719,6 +721,10 @@ onMounted(() => { void initialize() })
             :course-name="currentCourse?.title || '课程'" :initial-section="contentSection"
             @updated="refresh" @blind-trial="startBlindFromBank"
             @section-change="contentSection = $event"
+            @open-practice="navigate('practice')" />
+          <KnowledgeGalaxy v-else-if="view === 'galaxy'" :key="courseId" :course-id="courseId"
+            :course-name="currentCourse?.title || '课程'"
+            @open-bank="openContentSection('questions')" @open-manage="openContentSection('knowledge')"
             @open-practice="navigate('practice')" />
           <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
           <div v-else class="view-stack">

@@ -17,7 +17,7 @@ import {
   type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
-const props = defineProps<{ courseId: string; initialTab?: 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string; embedded?: boolean }>()
+const props = defineProps<{ courseId: string; initialTab?: 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string; initialKnowledgePointId?: string; embedded?: boolean }>()
 const emit = defineEmits<{ updated: []; 'blind-trial': []; 'navigate-tab': [tab: Tab] }>()
 
 type Tab = 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'
@@ -106,7 +106,7 @@ function asAnswer(value: string | boolean | string[]): string {
   return Array.isArray(value) ? value.join('、') : value === true ? '正确' : value === false ? '错误' : value
 }
 
-async function reload(preferKp = selectedKpId.value, preferQuestion = selectedQuestionId.value) {
+async function reload(preferKp = (props.initialKnowledgePointId || selectedKpId.value), preferQuestion = selectedQuestionId.value) {
   const token = ++loadToken
   loading.value = true
   try {
@@ -139,6 +139,12 @@ watch(() => props.courseId, () => {
   resetFeedback()
   void reload('', '')
 }, { immediate: true })
+
+watch(() => props.initialKnowledgePointId, value => {
+  if (value && knowledge.value.some(point => point.id === value) && selectedKpId.value !== value) {
+    void selectKnowledge(value)
+  }
+})
 
 watch(() => props.initialTab, value => {
   if (value && tab.value !== value) {

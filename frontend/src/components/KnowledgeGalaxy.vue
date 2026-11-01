@@ -7,15 +7,13 @@ import {
 } from '@lucide/vue'
 import Graph3DCanvas from './Graph3DCanvas.vue'
 import GalaxyExplorer from './GalaxyExplorer.vue'
-import RelationStudio from './RelationStudio.vue'
 import {
   api, sourcePreviewUrl,
   type GraphEdge, type GraphNode, type KnowledgeGraph, type KnowledgePointDetail,
-  type PDFSourceChapterMapping, type PDFSourceChapterPreview,
 } from '../api'
 
 const props = defineProps<{ courseId: string; courseName: string; embedded?: boolean }>()
-const emit = defineEmits<{ openBank: []; openPractice: [] }>()
+const emit = defineEmits<{ openBank: []; openManage: []; openPractice: [] }>()
 const graph = ref<KnowledgeGraph | null>(null)
 const detail = ref<KnowledgePointDetail | null>(null)
 const loading = ref(true)
@@ -29,91 +27,12 @@ const includePending = ref(true)
 const showRelations = ref(false)
 const display = ref<'3d' | 'list'>('3d')
 const explorerOpen = ref(false)
-const showStudio = ref(false)
-const studioAnchor = ref<HTMLDivElement | null>(null)
-async function toggleStudio() {
-  showStudio.value = !showStudio.value
-  if (showStudio.value) {
-    await nextTick()
-    studioAnchor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-}
-const newChapter = ref('')
-const chapterChoice = ref('')
-const chapterBusy = ref(false)
-const chapterMessage = ref('')
-const showPDFClassification = ref(false)
-const pdfPanel = ref<HTMLDivElement | null>(null)
-const pdfPreview = ref<PDFSourceChapterPreview | null>(null)
-const pdfBusy = ref(false)
-const pdfError = ref('')
-const pdfMessage = ref('')
-const pdfSelection = ref<Record<string, string>>({})
-const pdfTitles = ref<Record<string, string>>({})
-const pdfConfirmed = ref(false)
-const pdfMappings = computed<PDFSourceChapterMapping[]>(() =>
-  (pdfPreview.value?.documents ?? []).reduce<PDFSourceChapterMapping[]>((mappings, doc) => {
-    const selected = pdfSelection.value[doc.document_id] ?? 'skip'
-    if (selected === 'new') {
-      mappings.push({
-        document_id: doc.document_id,
-        chapter_title: (pdfTitles.value[doc.document_id] ?? '').trim(),
-      })
-    } else if (selected.startsWith('chapter:')) {
-      mappings.push({ document_id: doc.document_id, chapter_id: selected.slice('chapter:'.length) })
-    }
-    return mappings
-  }, [])
-)
-const pdfReady = computed(() => pdfMappings.value.length > 0
-  && pdfMappings.value.every(mapping => Boolean(mapping.chapter_id || mapping.chapter_title)))
-async function loadPDFPreview() {
-  pdfBusy.value = true
-  pdfError.value = ''
-  try {
-    const data = await api.previewSourceChapters(props.courseId)
-    pdfPreview.value = data
-    pdfSelection.value = Object.fromEntries(data.documents.map(doc => [
-      doc.document_id,
-      doc.matching_chapter_id ? 'chapter:' + doc.matching_chapter_id : 'new',
-    ]))
-    pdfTitles.value = Object.fromEntries(data.documents.map(doc => [
-      doc.document_id, doc.suggested_title,
-    ]))
-    pdfConfirmed.value = false
-  } catch (e) {
-    pdfError.value = e instanceof Error ? e.message : 'PDF 来源预览失败'
-  } finally { pdfBusy.value = false }
-}
-async function togglePDFClassification() {
-  showPDFClassification.value = !showPDFClassification.value
-  if (!showPDFClassification.value) return
-  if (!pdfPreview.value) await loadPDFPreview()
-  await nextTick()
-  pdfPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-async function applyPDFClassification() {
-  if (!pdfConfirmed.value || !pdfReady.value || pdfBusy.value) return
-  pdfBusy.value = true
-  pdfError.value = ''
-  pdfMessage.value = ''
-  try {
-    const result = await api.applySourceChapters(props.courseId, pdfMappings.value)
-    pdfMessage.value = `已归类 ${result.assigned_points} 个知识点，新建 ${result.created_chapters.length} 个章节；剩余 ${result.remaining_unclassified} 个未归类。`
-    // Refresh the actual graph and reload the database-backed preview.
-    await refresh()
-    await loadPDFPreview()
-  } catch (e) {
-    pdfError.value = e instanceof Error ? e.message : '批量归类失败'
-  } finally { pdfBusy.value = false }
-}
 const canvas = ref<InstanceType<typeof Graph3DCanvas> | null>(null)
 let requestToken = 0
 let detailToken = 0
 
 const chapters = computed(() => graph.value?.nodes.filter(n => n.kind === 'chapter') ?? [])
 const allKnowledge = computed(() => graph.value?.nodes.filter(n => n.kind === 'knowledge') ?? [])
-const chapterNames = computed(() => new Map(chapters.value.filter(c => !c.virtual).map(c => [c.chapter_id, c.name])))
 const selectedNode = computed(() => graph.value?.nodes.find(n => n.id === selectedId.value) ?? null)
 const relationship = computed(() => graph.value?.edges.filter(
   e => !e.structural && (e.source === selectedId.value || e.target === selectedId.value),
@@ -240,36 +159,6 @@ async function select(id: string | null) {
   } catch { /* still show point metadata and actions */ }
   finally { if (token === detailToken) detailLoading.value = false }
 }
-async function createNewChapter() {
-  const title = newChapter.value.trim()
-  if (!title || chapterBusy.value) return
-  chapterBusy.value = true
-  chapterMessage.value = ''
-  try {
-    await api.createChapter(props.courseId, { title, ordinal: chapters.value.length + 1 })
-    newChapter.value = ''
-    await refresh()
-    chapterMessage.value = '章节已创建。可选择知识点并调整归属。'
-  } catch (e) { chapterMessage.value = e instanceof Error ? e.message : '创建章节失败' }
-  finally { chapterBusy.value = false }
-}
-async function moveToChapter() {
-  const point = selectedNode.value
-  if (!point || point.kind !== 'knowledge' || chapterBusy.value) return
-  const id = point.id
-  chapterBusy.value = true
-  chapterMessage.value = ''
-  try {
-    await api.assignKnowledgeChapter(id, chapterChoice.value || null)
-    await refresh()
-    await select(id)
-    chapterMessage.value = '章节归属已更新。根据现有审核规则，知识点需在“题库管理”中重新审核。'
-  } catch (e) { chapterMessage.value = e instanceof Error ? e.message : '归属调整失败' }
-  finally { chapterBusy.value = false }
-}
-watch(selectedNode, point => {
-  if (point?.kind === 'knowledge') chapterChoice.value = point.chapter_id || ''
-})
 async function resetView() {
   selectedId.value = null
   selectedChapter.value = 'all'
@@ -286,11 +175,6 @@ watch(() => props.courseId, () => {
   filter.value = 'all'
   detail.value = null
   explorerOpen.value = false
-  showPDFClassification.value = false
-  pdfPreview.value = null
-  pdfMessage.value = ''
-  pdfError.value = ''
-  pdfConfirmed.value = false
   void refresh()
 }, { immediate: true })
 </script>
@@ -300,14 +184,13 @@ watch(() => props.courseId, () => {
     <header class="kg-heading">
       <div v-if="!props.embedded"><p class="eyebrow">KNOWLEDGE UNIVERSE</p>
         <h1>知识星系<span class="heading-dot">.</span></h1>
-        <p class="section-description">以真实知识为星球，以经过审核的关联为星际航路。</p>
+        <p class="section-description">独立探索知识结构与已审核关系。关系提取、归类和审核请前往课程内容。</p>
       </div>
       <div class="kg-top-actions">
         <button type="button" class="button button-primary button-small" :disabled="loading || !graph" @click="explorerOpen=true"><Maximize2 :size="16" /> 全屏探索</button>
-        <button type="button" class="button button-outline button-small" @click="togglePDFClassification">
-          <FileText :size="16" /> {{ showPDFClassification ? '收起 PDF 归类' : '按来源 PDF 归类' }}
+        <button type="button" class="button button-outline button-small" @click="emit('openManage')">
+          <BookOpen :size="16" /> 前往知识点管理
         </button>
-        <button type="button" class="button button-primary button-small" @click="toggleStudio"><Network :size="16" /> {{ showStudio ? "收起关系工作台" : "提取 / 审核关系" }}</button>
         <button type="button" class="button button-outline button-small" :disabled="loading" @click="refresh"><RefreshCw :size="16" /> 刷新</button>
         <button type="button" class="button button-outline button-small" @click="resetView"><RotateCcw :size="16" /> 返回总览</button>
       </div>
@@ -322,66 +205,13 @@ watch(() => props.courseId, () => {
         <div><span>已有 BKT 观测</span><strong>{{ graph.stats.mastery_estimated_points }} 个</strong></div>
       </section>
       <p v-if="graph.stats.unclassified_points" class="kg-muted">
-        未归类 {{ graph.stats.unclassified_points }} 个；其中 {{ graph.stats.suggested_chapter_points }} 个具有多个已审核关联节点支持的章节建议。
-        关系提取不会自动填写章节，选择知识点后可人工确认建议。
+        未归类 {{ graph.stats.unclassified_points }} 个；其中 {{ graph.stats.suggested_chapter_points }} 个已有章节建议。
+        请在「课程内容 → 知识点 → 章节归类」中确认归属。
       </p>
       <p v-if="graph.stats.truncated" class="kg-error">
         本次仅加载 {{ graph.stats.shown_knowledge_points }} / {{ graph.stats.total_knowledge_points }} 个知识点；
         后续将增加分页和分章节按需加载，不应把未加载知识点视为不存在。
       </p>
-      <section v-if="showPDFClassification" ref="pdfPanel" class="kg-source-classifier panel">
-        <div class="kg-source-heading">
-          <div>
-            <h2><FileText :size="18" /> 依据来源 PDF 批量归类</h2>
-            <p>每份 PDF 对应一个章节。按文件名新建章节或选用已有章节；只处理目前没有章节的知识点。</p>
-          </div>
-          <button type="button" class="button button-outline button-small" :disabled="pdfBusy"
-            @click="loadPDFPreview"><RefreshCw :size="14" /> 重新预览</button>
-        </div>
-        <p v-if="pdfError" class="kg-error" role="alert">{{ pdfError }}</p>
-        <p v-if="pdfMessage" class="kg-tip" role="status">{{ pdfMessage }}</p>
-        <p v-if="pdfBusy" class="kg-muted"><LoaderCircle class="spinning" :size="15" /> 正在处理来源映射…</p>
-        <template v-if="pdfPreview">
-          <p class="kg-source-summary">
-            未归类 {{ pdfPreview.unclassified_points }} 个 · 单一 PDF 来源 {{ pdfPreview.single_pdf_points }} 个 ·
-            跨多份资料 {{ pdfPreview.multi_document_points }} 个 · 无来源 {{ pdfPreview.no_source_points }} 个
-          </p>
-          <p v-if="!pdfPreview.documents.length" class="kg-muted">
-            暂无具有未归类知识点来源引用的 PDF。请确认知识点保留了 PDF 来源记录。
-          </p>
-          <div v-else class="kg-source-rows">
-            <div v-for="doc in pdfPreview.documents" :key="doc.document_id" class="kg-source-row">
-              <div class="kg-source-doc">
-                <strong>{{ doc.filename }}</strong>
-                <small>引用此 PDF 的未归类知识点 {{ doc.linked_unclassified }} 个，其中仅来自这份 PDF 的 {{ doc.single_source_points }} 个</small>
-              </div>
-              <div class="kg-source-controls">
-                <select v-model="pdfSelection[doc.document_id]" :aria-label="'选择 '+doc.filename+' 对应章节'">
-                  <option value="skip">暂不处理</option>
-                  <option value="new">新建章节（从文件名）</option>
-                  <option v-for="chapter in chapters.filter(x => !x.virtual)" :key="chapter.id"
-                    :value="'chapter:' + chapter.chapter_id">{{ chapter.name }}</option>
-                </select>
-                <input v-if="pdfSelection[doc.document_id] === 'new'"
-                  v-model="pdfTitles[doc.document_id]" maxlength="160"
-                  :aria-label="'为 '+doc.filename+' 设置章节名称'" placeholder="输入新章节名" />
-              </div>
-            </div>
-          </div>
-          <p class="kg-muted">
-            只有一个知识点的所有来源 PDF 都映射到同一章节时才会归类；跨不同章节、缺少来源或包含未映射资料的知识点保持未归类。
-            此操作保留原有审核状态、题目、BKT 数据和关系边，不会覆盖已有章节归属。
-          </p>
-          <label class="kg-source-confirm">
-            <input v-model="pdfConfirmed" type="checkbox" />
-            我已检查 PDF 与章节的对应关系，同意仅批量归类未分章知识点。
-          </label>
-          <button type="button" class="button button-primary" :disabled="pdfBusy || !pdfConfirmed || !pdfReady"
-            @click="applyPDFClassification">
-            <BookOpen :size="16" /> 确认归类 {{ pdfMappings.length }} 份 PDF 对应知识点
-          </button>
-        </template>
-      </section>
       <div class="kg-layout">
         <aside class="kg-filter panel">
           <h2><Search :size="17" /> 星系导航</h2>
@@ -394,12 +224,6 @@ watch(() => props.courseId, () => {
               <option v-for="chapter in chapters" :key="chapter.id" :value="chapter.id">{{ chapter.name }}</option>
             </select>
           </label>
-          <h2 class="kg-subtitle"><BookOpen :size="17" /> 章节整理</h2>
-          <label class="kg-field"><span>新增真实课程章节</span>
-            <input v-model="newChapter" maxlength="160" placeholder="例如：第2章 数据通信" />
-          </label>
-          <button type="button" class="button button-outline button-small" :disabled="chapterBusy || !newChapter.trim()" @click="createNewChapter">创建章节</button>
-          <p v-if="chapterMessage" class="kg-muted" role="status">{{ chapterMessage }}</p>
           <h2 class="kg-subtitle"><Activity :size="17" /> 学习状态</h2>
           <div class="kg-filters">
             <button type="button" :class="{active:filter==='all'}" @click="filter='all'">全部</button>
@@ -468,24 +292,6 @@ watch(() => props.courseId, () => {
                 <div><span>证据来源</span><strong>{{ selectedNode.source_count }} 条</strong></div>
               </div>
               <p class="kg-muted">未测评不代表掌握度为 0%。</p>
-              <h3><BookOpen :size="17" /> 调整章节归属</h3>
-              <div v-if="!selectedNode.chapter_id && selectedNode.suggested_chapter_id" class="kg-tip">
-                建议归入「{{ chapterNames.get(selectedNode.suggested_chapter_id) }}」：
-                {{ selectedNode.suggestion_support }} / {{ selectedNode.suggestion_total }} 个已审核关联的已归类知识点支持。
-                <button type="button" class="button button-outline button-small"
-                  @click="chapterChoice = selectedNode.suggested_chapter_id!">采纳建议（需保存）</button>
-                <p>建议不等于正式归属；保存后仍需重新审核该知识点。</p>
-              </div>
-              <label class="kg-field"><span>选择归属章节（仅调整结构，不自动生成知识依赖）</span>
-                <select v-model="chapterChoice">
-                  <option value="">未归类</option>
-                  <option v-for="chapter in chapters.filter(x => !x.virtual)" :key="chapter.id" :value="chapter.chapter_id">{{ chapter.name }}</option>
-                </select>
-              </label>
-              <button type="button" class="button button-outline button-small"
-                :disabled="chapterBusy || chapterChoice === (selectedNode.chapter_id || '')"
-                @click="moveToChapter">保存章节归属</button>
-              <p class="kg-muted">调整章节后知识点重新进入待审核，不会自动保留原审核结果。</p>
               <h3><ShieldCheck :size="17" /> 已审核的知识关系</h3>
               <p v-if="!related.length" class="kg-muted">暂无已审核的前置或相关关系。系统不会凭空间邻近推测它们。</p>
               <button v-for="item in related" :key="item.edge.id" class="kg-related" @click="select(item.id)">
@@ -514,10 +320,6 @@ watch(() => props.courseId, () => {
             </div>
           </template>
         </aside>
-      </div>
-      <div v-if="showStudio" ref="studioAnchor" class="kg-studio-anchor">
-        <RelationStudio :course-id="courseId" :knowledge="allKnowledge"
-          :focus-id="selectedId" @updated="refresh" @select="select" />
       </div>
       <div class="kg-legend">
         <span><i class="kg-dot mastered"></i>已掌握 ≥80%</span>
