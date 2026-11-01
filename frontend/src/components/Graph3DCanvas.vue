@@ -8,6 +8,7 @@ import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
 import { sizeOrderedBrowseBands } from '../sizeOrderedBrowseBands'
+import { canonicalGroupOrbitFrames } from '../groupOrbitGeometry'
 import { planCenteredCourseOrbits } from '../centeredCourseOrbits'
 import { placeOrbitCaptions } from '../orbitCaptionPlacement'
 import { tightAtlasDistance } from '../tightAtlasViewport'
@@ -545,7 +546,7 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
           return new THREE.Vector3(
             x*cosTilt-y*sinTilt,
             x*sinTilt+y*cosTilt,
-            (ordinalHash(node.id+':orbit-depth')-.5)*8+ring*.6,
+            0, // a flat canonical ellipse is required for a single exact orbit plane
           )
         })
         let score=0
@@ -924,48 +925,42 @@ function initializeOrbitingPlanets(saved?: ReadonlyMap<string, SavedOrbit>) {
     return
   }
   if(isGroup){
-    // Busy group views use a few coherent elliptical belts. Each belt
-    // rotates as a whole so the 35 labels cannot catch and overtake one
-    // another. There is no random wandering or sudden per-planet looping.
-    const right=new THREE.Vector3(1,0,0)
-      .applyQuaternion(camera.quaternion).normalize()
-    const up=new THREE.Vector3(0,1,0)
-      .applyQuaternion(camera.quaternion).normalize()
-    // Each belt orbits as one cohesive layer. Its average count increases
-    // monotonically with orbital radius because band membership is count
-    // sorted. Thus larger planets are farther out AND their belts slower.
-    browseOrbitBands(props.nodes).forEach(band=>{
-      const present=band.filter(n=>positions.has(n.id)&&orbitVisuals.has(n.id))
-      if(!present.length)return
-      const center=new THREE.Vector3()
-      present.forEach(node=>center.add(positions.get(node.id)!))
-      center.multiplyScalar(1/present.length)
-      const vectors=present.map(node=>{
-        const p=positions.get(node.id)!.clone().sub(center)
-        return {id:node.id,x:p.dot(right),y:p.dot(up)}
-      })
-      const major=Math.max(1,...vectors.map(v=>Math.abs(v.x)))
-      const minor=Math.max(1,...vectors.map(v=>Math.abs(v.y)))
-      const average=present.reduce((sum,n)=>sum+n.source_count,0)/present.length
-      // Consistent seed across bands ensures a larger/outer belt can never
-      // rotate faster merely due to a different random group ID. Same-count
-      // bands intentionally match speeds to avoid visual overtaking.
+    const bands=browseOrbitBands(props.nodes)
+    const local=layout(props.nodes, [])
+    const viewport=safeViewport()
+    const width=Math.max(300,viewport.right-viewport.left)
+    const height=Math.max(240,viewport.bottom-viewport.top)
+    const aspect=THREE.MathUtils.clamp(width/height*.96,1.20,2.48)
+    const outerB=Math.max(245,100+bands.length*55)
+    const outerA=outerB*aspect
+    const samples=props.nodes.flatMap(node=>{
+      const point=local.get(node.id)
+      const world=positions.get(node.id)
+      return point && world ? [{id:node.id,local:point,world}] : []
+    })
+    // Recover the common center and two true basis vectors from the affine
+    // chapter-to-group flight. A previous implementation inferred separate
+    // orbit centers from sparse visible points and ADDED per-planet residuals.
+    // That allowed the 14-point inner-looking planet and 3-point outer one
+    // to drift across radial belts as they revolved.
+    const frames=canonicalGroupOrbitFrames(samples,
+      bands.map(band=>band.map(node=>node.id)),outerA,outerB)
+    if(!frames)return
+    bands.forEach(band=>{
+      const average=band.reduce((sum,node)=>sum+node.source_count,0)/band.length
       const seconds=orbitMetrics('group',average,'browse-orbit-belt').periodSeconds
-      for(const node of present){
-        const position=positions.get(node.id)!
-        const delta=position.clone().sub(center)
-        const x=delta.dot(right),y=delta.dot(up)
-        const phase=Math.atan2(y/minor,x/major)
-        // Retain its exact initial location while turning around the
-        // shared ellipse; no jump when orbit motion first starts.
-        const residual=delta.clone()
-          .addScaledVector(right,-major*Math.cos(phase))
-          .addScaledVector(up,-minor*Math.sin(phase))
+      for(const node of band){
+        const orbit=frames.get(node.id)
+        const world=positions.get(node.id)
+        const objects=orbitVisuals.get(node.id)
+        if(!orbit||!world||!objects?.length)continue
         orbitingPlanets.push({
-          id:node.id,world:position,initialWorld:position.clone(),
-          center:center.clone().add(residual),axisX:right.clone(),axisY:up.clone(),
-          major,minor,phase,radiansPerSecond:2*Math.PI/seconds,
-          elapsedSeconds:0,objects:orbitVisuals.get(node.id)!,
+          id:node.id,world,initialWorld:world.clone(),
+          center:orbit.center.clone(),
+          axisX:orbit.axisX.clone(),axisY:orbit.axisY.clone(),
+          major:orbit.major,minor:orbit.minor,phase:orbit.phase,
+          radiansPerSecond:2*Math.PI/seconds,elapsedSeconds:0,
+          objects,
         })
       }
     })
@@ -2588,7 +2583,8 @@ onMounted(initialize)
 // Computed arrays can be recreated by selection/filter changes, previously
 // restarting a layer fade and camera fit even when the scene was unchanged.
 const sceneSignature = (nodes: GraphNode[]) =>
-  nodes.map(n => n.kind + ':' + n.id).sort().join('|')
+  nodes.map(n => n.kind + ':' + n.id +
+    (n.kind === 'group' ? ':' + n.source_count : '')).sort().join('|')
 watch(() => ({
   nodes: props.nodes,
   edges: props.edges,
