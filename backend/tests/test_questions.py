@@ -211,3 +211,79 @@ def test_bad_model_response_is_no_questions(tmp_path):
         with connect(db) as cx:
             job = cx.execute("SELECT status FROM processing_jobs WHERE job_type='question_generate'").fetchone()
             assert job["status"] == "failed"
+
+
+def test_question_one_click_approve_respects_risk_and_audits(setup):
+    http, db_path = setup
+    course, _, kp = prepare_approved_knowledge(http)
+    response = http.post(f"/api/knowledge-points/{kp}/generate-questions",
+                         json={"count":2})
+    assert response.status_code == 200, response.text
+    ids = response.json()["question_version_ids"]
+    preview = http.get(f"/api/courses/{course}/questions/bulk-approval-preview")
+    assert preview.status_code == 200, preview.text
+    data = preview.json()
+    assert data["total"] == 2 and data["eligible"] == 2
+    assert all("correct_answer" not in row and "explanation" not in row
+               for row in data["questions"])
+    with connect(db_path) as db:
+        db.execute("UPDATE question_sources SET evidence_note=? WHERE question_version_id=?",
+                   ("unverified model text, inspect original PDF", ids[1]))
+        db.commit()
+    changed = http.get(f"/api/courses/{course}/questions/bulk-approval-preview").json()
+    assert changed["eligible"] == 1 and changed["flagged"] == 1
+    assert changed["questions"][1]["issues"]
+    route = f"/api/courses/{course}/questions/bulk-approve"
+    assert http.post(route, json={
+        "confirmed":False, "accept_unverified_answers":True,
+        "question_version_ids":ids}).status_code == 422
+    assert http.post(route, json={
+        "confirmed":True, "accept_unverified_answers":False,
+        "question_version_ids":ids}).status_code == 422
+    applied = http.post(route, json={
+        "confirmed":True, "accept_unverified_answers":True,
+        "question_version_ids":ids+ids})
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["applied"] == [ids[0]]
+    assert len(applied.json()["skipped"]) == 1
+    assert http.get(f"/api/question-versions/{ids[0]}").json()["review_status"] == "approved"
+    assert http.get(f"/api/question-versions/{ids[1]}").json()["review_status"] == "pending"
+    with connect(db_path) as db:
+        events = db.execute("SELECT * FROM question_bulk_review_events").fetchall()
+        assert len(events) == 1
+        assert events[0]["question_version_id"] == ids[0]
+        assert json.loads(events[0]["details_json"])["correct_answer_verified"] is False
+    # Repeating the exact same request must not double-count previously approved items.
+    repeated = http.post(route, json={
+        "confirmed":True, "accept_unverified_answers":True,
+        "question_version_ids":ids})
+    assert repeated.status_code == 200
+    assert repeated.json()["applied"] == []
+    with connect(db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM question_bulk_review_events").fetchone()[0] == 1
+
+
+def test_question_bulk_approve_blocks_cross_course_and_stale_versions(setup):
+    http, db_path = setup
+    course_a, _, kp_a = prepare_approved_knowledge(http)
+    course_b, _, kp_b = prepare_approved_knowledge(http)
+    older = http.post(f"/api/knowledge-points/{kp_a}/generate-questions",
+                      json={"count":1}).json()["question_version_ids"][0]
+    foreign = http.post(f"/api/knowledge-points/{kp_b}/generate-questions",
+                        json={"count":1}).json()["question_version_ids"][0]
+    revised = http.post(f"/api/question-versions/{older}/revise",
+                        json={"stem":"What is the job of the original sender?"})
+    assert revised.status_code == 201, revised.text
+    newest = revised.json()["id"]
+    preview = http.get(f"/api/courses/{course_a}/questions/bulk-approval-preview").json()
+    assert [r["id"] for r in preview["questions"]] == [newest]
+    attempted = http.post(f"/api/courses/{course_a}/questions/bulk-approve",json={
+        "confirmed":True,"accept_unverified_answers":True,
+        "question_version_ids":[older,foreign,newest]})
+    assert attempted.status_code == 200, attempted.text
+    assert attempted.json()["applied"] == [newest]
+    assert len(attempted.json()["skipped"]) == 2
+    assert http.get(f"/api/question-versions/{older}").json()["review_status"] == "pending"
+    assert http.get(f"/api/question-versions/{foreign}").json()["review_status"] == "pending"
+    assert http.get(f"/api/question-versions/{newest}").json()["review_status"] == "approved"
+    assert http.get("/api/courses/unknown/questions/bulk-approval-preview").status_code == 404
