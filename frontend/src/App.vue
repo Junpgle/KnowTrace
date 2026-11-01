@@ -40,7 +40,7 @@ const knowledgePoints = ref<KnowledgePoint[]>([])
 const report = ref<LearningReport | null>(null)
 const quiz = ref<QuizSession | null>(null)
 const count = ref(1)
-const quizMode = ref<'normal' | 'adaptive'>('normal')
+const quizMode = ref<'normal' | 'adaptive' | 'blind'>('normal')
 const quality = ref<QuestionQuality | null>(null)
 const index = ref(0)
 const selected = ref<Choice>(null)
@@ -57,7 +57,7 @@ const approvedCount = computed(() => {
 const pendingCount = computed(() => questions.value.filter(q => q.review_status === 'pending').length)
 const maxCount = computed(() => Math.min(20,
   quizMode.value === 'adaptive' ? (quality.value?.latest_questions.approved_diagnostic ?? 0)
-    : approvedCount.value))
+    : quizMode.value === 'blind' ? pendingCount.value : approvedCount.value))
 const countOptions = computed(() => Array.from({ length: maxCount.value }, (_, i) => i + 1))
 const currentItem = computed<QuizItem | null>(() => quiz.value?.items[index.value] ?? null)
 const currentResult = computed<QuizAnswerResult | undefined>(() => currentItem.value?.result)
@@ -68,7 +68,8 @@ const currentOptions = computed(() => {
   return ['A', 'B', 'C', 'D'].map(key => ({ key, label: key, text: currentItem.value?.options[key] ?? '' }))
 })
 const effectiveChoice = computed<Choice>(() =>
-  currentItem.value?.answered ? currentResult.value?.response ?? null : selected.value)
+  currentItem.value?.answered ? (currentResult.value?.response ?? currentItem.value.submitted_response ?? null)
+    : selected.value)
 const avgMastery = computed<number | null>(() => {
   const values = (report.value?.knowledge_points ?? [])
     .filter(p => p.observations && p.p_mastery !== null)
@@ -239,8 +240,10 @@ async function startQuiz() {
   } catch (error) {
     if (error instanceof ApiError && error.status === 409)
       showError(new Error(quizMode.value === 'adaptive'
-        ? '薄弱点优先练习只使用已审核的单知识点诊断题，当前数量不足。请先审核基础诊断题。'
-        : '可用题目不足，或题目所属知识点尚未审核。请检查题库及知识点的审核状态。'))
+        ? '薄弱点优先练习只使用已审核的单知识点诊断题，当前数量不足。'
+        : quizMode.value === 'blind'
+          ? '没有足够的待审核候选题（或关联的知识点尚未审核）。请降低题量或先生成候选题。'
+          : '可用题目不足，或题目所属知识点尚未审核。请检查题库及知识点的审核状态。'))
     else showError(error)
   } finally { starting.value = false }
 }
@@ -256,14 +259,17 @@ function applyAnswer(itemId: string, answer: AnswerFeedback, elapsedMs: number) 
   const item = quiz.value.items.find(i => i.quiz_item_id === itemId)
   if (!item || item.answered) return
   item.answered = true
-  item.result = { answer_id: answer.answer_id, response: answer.response, is_correct: answer.is_correct,
-    correct_answer: answer.correct_answer, explanation: answer.explanation,
-    answered_at: answer.answered_at, elapsed_ms: elapsedMs }
+  item.submitted_response = answer.response
+  if (!answer.deferred && answer.is_correct !== undefined && answer.correct_answer !== undefined) {
+    item.result = { answer_id: answer.answer_id, response: answer.response, is_correct: answer.is_correct,
+      correct_answer: answer.correct_answer, explanation: answer.explanation ?? null,
+      answered_at: answer.answered_at, elapsed_ms: elapsedMs }
+  }
   latestMastery.value = answer.mastery
     ? { itemId, before: answer.mastery.before, after: answer.mastery.after }
     : null
   quiz.value.answered += 1
-  if (answer.is_correct) quiz.value.correct += 1
+  if (answer.is_correct && quiz.value.correct !== null) quiz.value.correct += 1
   if (quiz.value.answered === quiz.value.total) quiz.value.status = 'completed'
 }
 async function submit() {
@@ -304,6 +310,11 @@ async function submit() {
 }
 function nextQuestion() {
   if (!quiz.value) return
+  if (quiz.value.blind_pending && isComplete.value) {
+    // Keep the whole corrected trial available for review after submission.
+    chooseIndex(index.value + 1 < quiz.value.items.length ? index.value + 1 : 0)
+    return
+  }
   const next = quiz.value.items.findIndex((item, position) => position > index.value && !item.answered)
   if (next >= 0) chooseIndex(next)
   else if (!isComplete.value) firstUnanswered()
@@ -441,30 +452,36 @@ onMounted(() => { void initialize() })
               <div class="setup-layout">
                 <section class="panel setup-panel">
                   <div class="setup-eyebrow"><div class="setup-icon"><BookOpen :size="24" /></div><span>创建一场新的测评</span></div>
-                  <h2>今天想练习多少道题？</h2><p>我们会从 <strong>{{ currentCourse?.title }}</strong> 的最新已审核题目中选取练习。</p>
+                  <h2>今天想练习多少道题？</h2><p>我们会从 <strong>{{ currentCourse?.title }}</strong> 的{{ quizMode === 'blind' ? '待审核候选题' : '最新已审核题目' }}中选取练习。</p>
                   <div class="setup-field">
                     <label for="quiz-mode">练习模式</label>
                     <select id="quiz-mode" v-model="quizMode" @change="count = Math.max(1,Math.min(count,maxCount))">
                       <option value="normal">普通练习 · 所有已审核题</option>
                       <option value="adaptive">薄弱点优先 · 单知识点诊断题</option>
+                      <option value="blind">候选题盲测 · 无需提前查看答案</option>
                     </select>
                     <p class="qb-hint" v-if="quizMode === 'adaptive'">
                       基于 BKT 掌握概率、历史练习次数和题目难度排序；只用单知识点题测评，
                       防止综合题污染掌握度。可用诊断题 {{ quality?.latest_questions.approved_diagnostic ?? 0 }} 道。
+                    </p>
+                    <p class="qb-hint" v-if="quizMode === 'blind'">
+                      无需逐题预审。所有题目提交完毕后才统一显示答案与解析；候选题未经人工确认，
+                      可能存在错误，其成绩单独记录，不计入正式正确率或 BKT 掌握度。
+                      当前待审核题目 {{ pendingCount }} 道。
                     </p>
                   </div>
                   <div class="setup-field"><label for="question-count">练习题量</label>
                     <div v-if="maxCount" class="count-control"><button aria-label="减少一道题" :disabled="count <= 1" @click="count--">−</button>
                       <select id="question-count" v-model.number="count"><option v-for="number in countOptions" :key="number" :value="number">{{ number }} 道题</option></select>
                       <button aria-label="增加一道题" :disabled="count >= maxCount" @click="count++">+</button></div>
-                    <div v-else class="empty-count">暂无可供练习的已审核题目</div>
+                    <div v-else class="empty-count">{{ quizMode === 'blind' ? '暂无待审核候选题' : '暂无可供练习的已审核题目' }}</div>
                   </div>
-                  <div class="setup-points"><span><CheckCircle2 :size="17" /> 作答后即时反馈</span><span><Activity :size="17" /> 更新知识掌握度</span><span><Clock3 :size="17" /> 自动保存学习记录</span></div>
+                  <div class="setup-points"><span><CheckCircle2 :size="17" /> {{ quizMode === 'blind' ? '整套提交后公布解析' : '作答后即时反馈' }}</span><span><Activity :size="17" /> {{ quizMode === 'blind' ? '不更新 BKT 掌握度' : '单知识点题更新掌握度' }}</span><span><Clock3 :size="17" /> 自动保存学习记录</span></div>
                   <button class="button button-primary start-button" :disabled="maxCount < 1 || starting" @click="startQuiz"><LoaderCircle v-if="starting" :size="18" class="spinning" /><Play v-else :size="18" fill="currentColor" />{{ starting ? '正在创建测评…' : '开始练习' }} <ArrowRight :size="18" /></button>
-                  <div class="setup-footer">当前模式：<strong>{{ quizMode === 'adaptive' ? '薄弱点优先诊断' : '普通顺序练习' }}</strong> · 已审核综合题可用于练习，但不单独更新 BKT</div>
+                  <div class="setup-footer">当前模式：<strong>{{ quizMode === 'blind' ? '待审核题盲测' : quizMode === 'adaptive' ? '薄弱点优先诊断' : '普通顺序练习' }}</strong> · {{ quizMode === 'blind' ? '仅自测，不作正式掌握度判定' : '已审核综合题不单独更新 BKT' }}</div>
                 </section>
                 <aside class="panel setup-aside"><div class="setup-aside-graphic"><div class="abstract-ring ring-one"></div><div class="abstract-ring ring-two"></div><Target :size="60" :stroke-width="1.5" /></div>
-                  <h3>用练习发现真正的薄弱点</h3><p>每道题都关联知识点；答案提交后，BKT 会根据历史作答动态估计掌握概率。</p>
+                  <h3>用练习发现真正的薄弱点</h3><p>已审核单知识点题可用于 BKT 诊断；候选题盲测不会提前泄露答案，也不会计入正式掌握度。</p>
                   <div class="aside-divider"></div><div class="aside-stats"><span>已审核题目</span><strong>{{ approvedCount }}</strong></div><div class="aside-stats"><span>待审核题目</span><strong>{{ pendingCount }}</strong></div>
                   <button v-if="!approvedCount || pendingCount" class="text-link setup-admin" @click="navigate('bank')">前往题库生成与审核 <ArrowRight :size="16" /></button>
                 </aside>
@@ -473,9 +490,9 @@ onMounted(() => { void initialize() })
             <template v-else>
               <div class="quiz-layout">
                 <section class="quiz-main">
-                  <div class="quiz-progress panel"><div class="quiz-progress-top"><span class="quiz-progress-title"><span class="pulse-dot"></span>{{ isComplete ? '本次练习已完成' : '正在进行 · 普通练习' }}</span><strong>{{ quiz.answered }} <span>/ {{ quiz.total }} 题</span></strong></div>
+                  <div class="quiz-progress panel"><div class="quiz-progress-top"><span class="quiz-progress-title"><span class="pulse-dot"></span>{{ isComplete ? '本次练习已完成' : quiz.blind_pending ? '正在进行 · 候选题盲测（答案暂隐藏）' : '正在进行 · 正式练习' }}</span><strong>{{ quiz.answered }} <span>/ {{ quiz.total }} 题</span></strong></div>
                     <div class="progress-track big"><span :style="{ width: (quiz.total ? quiz.answered / quiz.total * 100 : 0) + '%' }"></span></div></div>
-                  <div v-if="isComplete" class="completion-banner"><div class="completion-icon"><Award :size="28" /></div><div><strong>本轮练习完成！</strong><span>答对 {{ quiz.correct }} / {{ quiz.total }} 题，所有作答已保存。</span></div><button class="button button-light" @click="navigate('report')">查看报告 <ArrowRight :size="17" /></button></div>
+                  <div v-if="isComplete" class="completion-banner"><div class="completion-icon"><Award :size="28" /></div><div><strong>本轮练习完成！</strong><span>{{ quiz.blind_pending ? '候选答案对照：' : '答对 ' }}{{ quiz.correct ?? '—' }} / {{ quiz.total }} 题，所有作答已保存。{{ quiz.blind_pending ? '候选答案未经人工确认，不计正式测评。' : '' }}</span></div><button class="button button-light" @click="quiz?.blind_pending ? chooseIndex(0) : navigate('report')">{{ quiz?.blind_pending ? '查看整套解析' : '查看报告' }} <ArrowRight :size="17" /></button></div>
                   <div v-if="currentItem" class="question-card panel">
                     <div class="question-head"><span class="type-tag"><FileQuestion :size="15" /> {{ currentItem.question_type === 'single_choice' ? '单选题' : '判断题' }}</span><span class="question-index">QUESTION {{ String(currentItem.position).padStart(2, '0') }}</span></div>
                     <h2>{{ currentItem.stem }}</h2><p class="question-instruction">{{ currentItem.question_type === 'single_choice' ? '请选择一个最符合题意的答案' : '请判断下列说法是否正确' }}</p>
@@ -491,6 +508,10 @@ onMounted(() => { void initialize() })
                         <span v-else class="option-circle"></span>
                       </button>
                     </div>
+                    <div v-if="currentItem.answered && !currentResult && quiz.blind_pending" class="answer-feedback">
+                      <div class="feedback-heading"><CheckCircle2 :size="22" /><strong>答案已保存，整套完成后统一揭晓</strong></div>
+                      <p>可继续答下一题。中途刷新或关闭网页不会泄露答案；重新打开仍可接着作答。</p>
+                    </div>
                     <div v-if="currentItem.answered && currentResult" class="answer-feedback" :class="{ incorrect: !currentResult.is_correct }">
                       <div class="feedback-heading"><CheckCircle2 v-if="currentResult.is_correct" :size="22" /><XCircle v-else :size="22" /><strong>{{ currentResult.is_correct ? '回答正确，继续保持！' : '再巩固一下这个知识点' }}</strong></div>
                       <p>正确答案：<strong>{{ formatChoice(currentResult.correct_answer) }}</strong></p>
@@ -499,14 +520,18 @@ onMounted(() => { void initialize() })
                         <Activity :size="16" /> BKT 估计掌握度 <strong>{{ percent(latestMastery.before) }} → {{ percent(latestMastery.after) }}</strong>
                       </div>
                     </div>
-                    <div class="question-actions"><div class="answer-safety"><Lightbulb :size="17" /><span>{{ currentItem.answered ? '答案与解析已显示' : '提交前不会显示正确答案' }}</span></div>
+                    <div class="question-actions"><div class="answer-safety"><Lightbulb :size="17" /><span>{{ currentItem.answered
+                          ? (currentResult ? '本题答案与解析已揭晓' : '已保存作答；全部完成后揭晓')
+                          : (quiz.blind_pending ? '全卷提交前均不显示答案' : '提交前不会显示正确答案') }}</span></div>
                       <button v-if="!currentItem.answered" class="button button-primary submit-button" :disabled="!canAnswer" @click="submit"><LoaderCircle v-if="submitting" :size="18" class="spinning" /><Check v-else :size="18" />{{ submitting ? '正在保存答案…' : pendingRequest ? '重试提交答案' : '提交答案' }}</button>
-                      <button v-else class="button button-primary submit-button" @click="nextQuestion">{{ isComplete ? '查看学习报告' : '下一题' }} <ArrowRight :size="18" /></button>
+                      <button v-else class="button button-primary submit-button" @click="nextQuestion">{{ isComplete ? (quiz.blind_pending ? '查看下一题解析' : '查看学习报告') : '下一题' }} <ArrowRight :size="18" /></button>
                     </div>
                   </div>
                   <p v-if="currentItem?.selection_reason" class="qb-hint">选题理由：{{ currentItem.selection_reason }}</p>
                   <p v-if="currentItem && currentItem.answered && latestMastery === null" class="qb-hint">
-                    综合题只记录作答结果，不将一次作答视为某个知识点的独立 BKT 证据。
+                    {{ quiz.blind_pending
+                      ? '候选题尚未人工审核：作答记录独立保存，答案仅供对照，不写入正式正确率和 BKT。'
+                      : '综合题只记录作答结果，不将一次作答视为某个知识点的独立 BKT 证据。' }}
                   </p>
                   <div class="quiz-footnote"><Clock3 :size="15" /> 数据保存在你本机的 KnowTrace 数据库中，重复提交不会重复计算掌握度。</div>
                 </section>
