@@ -179,8 +179,13 @@ def propose_questions(provider, points: list[dict], chunks: list[dict],
         "一道题可以真实考查1至4个知识点，优先有证据支持的2至3点综合题。"
         "只在解题必须应用某知识点时标记该点，不能因题干提到某词就标记。"
         "同一来源片段可支持多个知识点，但每个关联点必须有至少一条对应来源引文。"
+        "每道题最多标注4个真正需要解题时应用的知识点，不要把整组候选知识点全部标到一道题上。"
+        "请先选择主考点与题干，再逐一核对其来源；"
+        "凡未出现在所引用片段 knowledge_point_ids 中的知识点均不可写进 knowledge_point_ids。"
+        "不确定关联考点能否举证时，只保留能够举证的主考点；不必强求多知识点题。"
         "每道题输出 primary_knowledge_point_id、knowledge_point_ids、evidence 数组。"
-        "evidence 的每项包含 source_chunk_id 和从该片段连续复制至少10字符的 quote。"
+        "evidence 的每项包含 source_chunk_id 和从该片段连续复制至少10字符的 quote，"
+        "为每个被标记的考点至少选择一份有其 knowledge_point_id 的来源。"
         "仅输出 JSON：{\"items\":[{\"question_type\":\"single_choice\","
         "\"stem\":\"题干\",\"options\":{\"A\":\"选项\",\"B\":\"选项\",\"C\":\"选项\",\"D\":\"选项\"},"
         "\"correct_answer\":\"A\",\"explanation\":\"解析\",\"difficulty\":2,"
@@ -274,8 +279,29 @@ def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
                     err = "source quotation not found"; break
                 verified.update(source["knowledge_point_ids"])
                 sources.append((source["chunk_id"], quote.strip()))
-            if err is None and not set(ids) <= verified:
-                err = "some mapped concepts lack source evidence"
+            if err is None and primary not in verified:
+                # We cannot substantiate the principal subject of this
+                # question; do not attempt to guess a replacement primary.
+                err = "primary concept lacks source evidence"
+            if err is None:
+                unsupported = [kp for kp in ids if kp not in verified]
+                if unsupported:
+                    # Keep only grounded concepts: this remains a *pending*
+                    # question with an explicit provenance warning, NOT an
+                    # automatically approved claim about the answer.
+                    ids = [kp for kp in ids if kp in verified]
+                    mapping_note = (
+                        f"需复核：模型提出的 {len(unsupported)} 个次要关联知识点"
+                        "缺少逐字来源证据，系统已从该题映射中剔除；"
+                        "请人工检查题干、答案及剩余关联是否仍然成立。"
+                    )
+                    warnings.append(f"#{index}: {mapping_note}")
+                else:
+                    mapping_note = None
+            else:
+                mapping_note = None
+        else:
+            mapping_note = None
         stem_key = compact(item.get("stem", "")) if isinstance(item.get("stem"), str) else ""
         if err is None and stem_key in seen_stems:
             err = "duplicate question stem"
@@ -287,6 +313,7 @@ def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
             "stem":item["stem"].strip(), "options":item["options"] if item["question_type"]=="single_choice" else {"true":"正确","false":"错误"},
             "correct_answer":item["correct_answer"],"explanation":item["explanation"].strip(),
             "difficulty":item["difficulty"],"primary":primary,"ids":ids,
+            "mapping_note":mapping_note,
             "sources":list(dict(sources).items())})
         if len(accepted) == count: break
     return accepted, warnings
@@ -395,13 +422,17 @@ def register_question_batch_routes(app: FastAPI, database: Path, resolve_provide
                                     db.execute("""INSERT INTO question_knowledge_points
                                         (question_version_id,knowledge_point_id,is_primary)
                                         VALUES (?,?,?)""", (vid,kp,int(kp==item["primary"])))
-                                for chunk_id,quote in item["sources"]:
-                                    db.execute("""INSERT INTO question_sources
-                                        (question_version_id,chunk_id,evidence_note)
-                                        VALUES (?,?,?)""", (vid,chunk_id,
+                                for source_idx,(chunk_id,quote) in enumerate(item["sources"]):
+                                    source_note = (
                                         ("AI figure description (unverified): " if
                                          by_chunk[chunk_id]["content_kind"]=="figure_description"
-                                         else "Verbatim source: ")+quote))
+                                         else "Verbatim source: ")+quote
+                                    )
+                                    if source_idx == 0 and item.get("mapping_note"):
+                                        source_note = item["mapping_note"] + "\n" + source_note
+                                    db.execute("""INSERT INTO question_sources
+                                        (question_version_id,chunk_id,evidence_note)
+                                        VALUES (?,?,?)""", (vid,chunk_id,source_note))
                                 created += 1
                     with transaction(database) as db:
                         db.execute("""UPDATE question_generation_units
