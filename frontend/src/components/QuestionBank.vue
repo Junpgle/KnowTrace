@@ -357,68 +357,114 @@ function previewAvailable(source: SourceEvidence): boolean {
 
 <template>
   <div class="qb">
-    <div class="section-heading">
+    <div class="section-heading qb-heading">
       <div>
-        <p class="eyebrow">AI QUESTION STUDIO</p>
-        <h1>题库管理<span class="heading-dot">.</span></h1>
-        <p class="section-description">自动校验后可先盲测候选题，整套交卷才查看答案；人工审核仍可在需要时进行。</p>
+        <p class="eyebrow">QUESTION WORKSPACE</p>
+        <h1>题库工作台<span class="heading-dot">.</span></h1>
+        <p class="section-description">
+          {{ tab === 'overview' ? '准备知识、生成题目、审核入库，按自己的节奏完成每一步。'
+          : tab === 'batch' ? '按章节和知识簇批量生成，不必为每个知识点单独出题。'
+          : tab === 'questions' ? '集中管理候选题与正式题目，批量和逐题审核互不干扰。'
+          : tab === 'knowledge' ? '整理知识点及其来源，复杂的审核工具按需打开。'
+          : '导入外部 AI 的题目或知识点。' }}
+        </p>
       </div>
-      <button class="button button-outline button-small" :disabled="loading || busy" @click="reload()">
-        <RefreshCw :size="16" /> 刷新题库
-      </button>
-    </div>
-
-    <div class="qb-intro panel">
-      <div class="qb-intro-icon"><Sparkles :size="26" /></div>
-      <div><strong>先自测，不必提前看答案。</strong><p>待审核题可直接盲测（成绩不计 BKT），正式诊断仍只使用已审核题目。</p></div>
-      <div class="qb-stats"><span>{{ knowledge.length }} <small>知识点</small></span><span>{{ questions.length }} <small>道题目</small></span></div>
-      <button type="button" class="button button-primary button-small" :disabled="pendingQuestions < 1"
-        @click="emit('blind-trial')"><FileQuestion :size="16"/> 不看答案直接盲测（{{ pendingQuestions }}）</button>
-    </div>
-
-    <div v-if="banner" class="qb-alert qb-error" role="alert"><AlertCircle :size="18" /> {{ banner }}</div>
-    <div v-if="success" class="qb-alert qb-success" role="status"><CheckCircle2 :size="18" /> {{ success }}</div>
-    <div v-if="generated?.provider" class="qb-alert qb-success" role="status">
-      <Sparkles :size="18" />
-      <span>本次出题：{{ generated.model || generated.provider }}。
-        <template v-if="generated.provider === 'mimo'">按需工具调用 {{ generated.tool_calls ?? 0 }} 次，读取正文片段 {{ generated.retrieved_chunks ?? 0 }} 个，消耗约 {{ generated.usage?.total_tokens ?? '未知' }} Token。</template>
-      </span>
-    </div>
-    <div v-if="generated?.warnings.length" class="qb-alert qb-warning" role="status">
-      <AlertCircle :size="18" />
-      <div><strong>有 {{ generated.warnings.length }} 条模型候选未通过校验</strong>
-        <p v-for="(warning, i) in generated.warnings" :key="i">{{ warning }}</p>
+      <div class="qb-heading-actions">
+        <button v-if="tab !== 'overview'" class="button button-outline button-small"
+          type="button" @click="switchTab('overview')"><LayoutDashboard :size="16"/> 返回概览</button>
+        <button class="button button-outline button-small" type="button" :disabled="loading || busy"
+          @click="reload()"><RefreshCw :size="16"/> 刷新</button>
       </div>
     </div>
 
-    <div class="qb-tabs" role="tablist" aria-label="题库管理步骤">
-      <button role="tab" :aria-selected="tab === 'knowledge'" :class="{ active: tab === 'knowledge' }" @click="switchTab('knowledge')">
-        <BookOpen :size="18" /> 1. 知识点审核 <span v-if="pendingKnowledge" class="qb-count">{{ pendingKnowledge }}</span>
-      </button>
-      <button role="tab" :aria-selected="tab === 'questions'" :class="{ active: tab === 'questions' }" @click="switchTab('questions')">
-        <FileQuestion :size="18" /> 2. AI 题目审核 <span v-if="pendingQuestions" class="qb-count">{{ pendingQuestions }}</span>
-      </button>
-      <button role="tab" :aria-selected="tab === 'batch'" :class="{ active: tab === 'batch' }" @click="switchTab('batch')">
-        <Sparkles :size="18" /> 3. 智能批量题库
-      </button>
-      <button role="tab" :aria-selected="tab === 'external'" :class="{ active: tab === 'external' }" @click="switchTab('external')">
-        <ClipboardCheck :size="18" /> 4. 外部 AI 接力
-      </button>
+    <div class="qb-workspace-nav" role="tablist" aria-label="题库工作区">
+      <button role="tab" :aria-selected="tab === 'overview'" :class="{active:tab==='overview'}" @click="switchTab('overview')"><LayoutDashboard :size="17"/> 概览</button>
+      <button role="tab" :aria-selected="tab === 'batch'" :class="{active:tab==='batch'}" @click="switchTab('batch')"><Sparkles :size="17"/> 生成题目</button>
+      <button role="tab" :aria-selected="tab === 'questions'" :class="{active:tab==='questions'}" @click="switchTab('questions')"><ClipboardCheck :size="17"/> 审核与题库 <span v-if="pendingQuestions" class="qb-count">{{pendingQuestions}}</span></button>
+      <button role="tab" :aria-selected="tab === 'knowledge'" :class="{active:tab==='knowledge'}" @click="switchTab('knowledge')"><BookOpen :size="17"/> 知识点 <span v-if="pendingKnowledge" class="qb-count">{{pendingKnowledge}}</span></button>
+      <button role="tab" :aria-selected="tab === 'external'" :class="{active:tab==='external'}" @click="switchTab('external')"><Settings2 :size="17"/> 外部工具</button>
     </div>
 
-    <QuestionBulkApproval v-if="tab === 'questions' && !loading" :course-id="props.courseId"
-      @updated="reload();emit('updated')" />
+    <div v-if="banner" class="qb-alert qb-error" role="alert"><AlertCircle :size="18"/> {{banner}}</div>
+    <div v-if="success" class="qb-alert qb-success" role="status"><CheckCircle2 :size="18"/> {{success}}</div>
+    <div v-if="tab === 'knowledge' && generated?.provider" class="qb-alert qb-success" role="status">
+      <Sparkles :size="17"/> 本次出题：{{ generated.model || generated.provider }}，新建 {{generated.created}} 道候选题。
+    </div>
+    <div v-if="tab === 'knowledge' && generated?.warnings.length" class="qb-alert qb-warning" role="status">
+      <AlertCircle :size="17"/> {{generated.warnings.length}} 个候选未通过自动校验，请检查课件来源后重试。
+    </div>
+
+    <div v-if="tab === 'questions' && !loading" class="qb-section-header">
+      <div><strong>{{showBatchReview?'批量审核':'题目浏览与单题审核'}}</strong>
+        <p>{{showBatchReview?'程序先排除来源与结构异常的题目，再由你确认发布。':'按状态或题干搜索，选择题目查看详情。答案默认隐藏以免影响自测。'}}</p></div>
+      <div class="qb-section-actions">
+        <button type="button" class="button button-outline button-small"
+          :disabled="!pendingQuestions" @click="emit('blind-trial')"><BookOpen :size="16"/> 候选题盲测</button>
+        <button type="button" class="button button-primary button-small" @click="toggleReviewMode">
+          <ClipboardCheck :size="16"/>{{showBatchReview?'返回题目列表':'批量审核（'+pendingQuestions+'）'}}
+        </button>
+      </div>
+    </div>
     <div v-if="loading" class="qb-empty panel"><LoaderCircle class="spinning" :size="26" /> 正在读取题库…</div>
+    <div v-else-if="tab === 'overview'" class="qb-overview">
+      <div class="qb-overview-hero panel">
+        <div><p class="eyebrow">你的题库进展</p><h2>从知识，到题目，再到练习</h2>
+          <p>不需要按 1307 个知识点逐个出题或逐题审批。选择当下要做的事，即可进入对应工作区。</p></div>
+        <div class="qb-overview-metrics">
+          <span><strong>{{knowledge.length}}</strong>知识点</span>
+          <span><strong>{{questions.length}}</strong>题目</span>
+          <span><strong>{{approvedQuestions}}</strong>已入库</span>
+        </div>
+      </div>
+      <div class="qb-steps">
+        <button class="qb-step panel" type="button" @click="switchTab('knowledge')">
+          <span class="qb-step-index">01</span><BookOpen :size="23"/>
+          <strong>准备知识</strong><p>查看课程知识点、修订来源和审核异常项目。</p>
+          <span class="qb-step-foot">{{pendingKnowledge}} 个待审核知识点 <ArrowRight :size="17"/></span>
+        </button>
+        <button class="qb-step panel" type="button" @click="switchTab('batch')">
+          <span class="qb-step-index">02</span><Sparkles :size="23"/>
+          <strong>生成题目</strong><p>按章节聚合知识点，批量生成综合题并记录进度。</p>
+          <span class="qb-step-foot">进入批量出题 <ArrowRight :size="17"/></span>
+        </button>
+        <button class="qb-step panel" type="button" @click="switchTab('questions')">
+          <span class="qb-step-index">03</span><ClipboardCheck :size="23"/>
+          <strong>审核入库</strong><p>一键审核符合条件的题目，风险题集中核对。</p>
+          <span class="qb-step-foot">{{pendingQuestions}} 道待审核题目 <ArrowRight :size="17"/></span>
+        </button>
+      </div>
+      <div class="qb-overview-practice panel">
+        <div><strong>想先测测自己？</strong><p>候选题可先盲测，整套答完才显示答案；未审核成绩不更新正式 BKT。</p></div>
+        <button class="button button-primary" type="button" :disabled="!pendingQuestions" @click="emit('blind-trial')">
+          <FileQuestion :size="17"/> 不看答案，开始盲测
+        </button>
+      </div>
+    </div>
     <BulkQuestionStudio v-else-if="tab === 'batch'" :course-id="props.courseId" @updated="reload();emit('updated')" />
     <ExternalTransfer v-else-if="tab === 'external'" :course-id="props.courseId"
       :knowledge-points="knowledge" :preferred-knowledge-point-id="selectedKpId"
       :preferred-document-id="props.initialDocumentId" @imported="importedExternal" />
 
     <div v-else-if="tab === 'knowledge'" class="qb-knowledge-layout">
-      <DirectBulkApproval :course-id="props.courseId" @updated="reload();emit('updated')" />
-      <KnowledgeAIReviewPanel :course-id="props.courseId" :points="knowledge"
+      <div class="qb-section-header">
+        <div><strong>{{knowledgeTool==='batch-review'?'批量审核知识点':knowledgeTool==='ai-review'?'AI 知识审核':'知识点与课件来源'}}</strong>
+          <p>默认浏览和修改知识点，需要大批量处理时再打开审核工具。</p></div>
+        <div class="qb-section-actions">
+          <button class="button button-outline button-small" :class="{ 'qb-mode-active':knowledgeTool==='batch-review' }"
+            @click="toggleKnowledgeTool('batch-review')">
+            <ClipboardCheck :size="16"/>{{knowledgeTool==='batch-review'?'返回知识列表':'批量通过'}}
+          </button>
+          <button class="button button-outline button-small" :class="{ 'qb-mode-active':knowledgeTool==='ai-review' }"
+            @click="toggleKnowledgeTool('ai-review')">
+            <Sparkles :size="16"/>{{knowledgeTool==='ai-review'?'返回知识列表':'AI 二次核验'}}
+          </button>
+        </div>
+      </div>
+      <DirectBulkApproval v-if="knowledgeTool==='batch-review'" :course-id="props.courseId" @updated="reload();emit('updated')" />
+      <KnowledgeAIReviewPanel v-else-if="knowledgeTool==='ai-review'" :course-id="props.courseId" :points="knowledge"
         :selected-id="selectedKpId" @updated="reload();emit('updated')" @select="selectKnowledge" />
-      <div class="qb-columns">
+      <QuestionBulkApproval v-else-if="tab === 'questions' && showBatchReview" :course-id="props.courseId" @updated="reload();emit('updated')" />
+    <div v-else-if="tab === 'questions'" class="qb-columns">
       <aside class="qb-list panel">
         <div class="qb-list-head"><strong>课程知识点</strong><span>{{ knowledge.length }} 项</span></div>
         <div v-if="!knowledge.length" class="qb-empty-small">暂无知识点。请先导入课程资料并提取知识点。</div>
