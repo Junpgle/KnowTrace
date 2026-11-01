@@ -1,4 +1,4 @@
-import { orbitMetrics } from './orbitMetrics'
+import { orbitMetrics } from './orbitMetrics.ts'
 
 export type CourseOrbitInput = {
   id: string
