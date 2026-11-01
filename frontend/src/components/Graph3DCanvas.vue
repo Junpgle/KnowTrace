@@ -1654,20 +1654,30 @@ function arrangeScreenLabels() {
       if (!chosen || score < chosen.score) chosen={dx,dy,score,box}
     }
     if (!chosen && pinned) {
-      // A selected name must stay legible. Place it in an unobstructed
-      // corner of the safe region rather than directly on top of a drawer.
-      for (const target of [
-        [safe.left+w/2+7,safe.top+h/2+8],
-        [safe.right-w/2-7,safe.top+h/2+8],
-        [(safe.left+safe.right)/2,safe.bottom-h/2-8],
-      ]) {
-        const [x,y]=target
-        const box={left:x-w/2,right:x+w/2,top:y-h/2,bottom:y+h/2}
-        if (!reserved.some(p=>overlaps(box,p)) && !placed.some(p=>overlaps(box,p))) {
-          chosen={dx:x-projected.x,dy:y-projected.y,score:9999,box}
+      // Search additional nearby bands. Never teleport the selected caption
+      // to the far-left corner: that breaks the visual link to its planet.
+      for (const radius of [1.8,2.3,2.9,3.6]) {
+        for (let j=0;j<12;j++) {
+          const angle=-Math.PI/2+2*Math.PI*j/12
+          const dx=Math.cos(angle)*w*radius
+          const dy=Math.sin(angle)*(h+16)*radius
+          const x=projected.x+dx,y=projected.y+dy
+          const box={left:x-w/2-6,right:x+w/2+6,
+            top:y-h/2-5,bottom:y+h/2+5}
+          if (box.left < safe.left || box.right > safe.right ||
+              box.top < safe.top || box.bottom > safe.bottom ||
+              reserved.some(p=>overlaps(box,p,4)) ||
+              placed.some(p=>overlaps(box,p,5)) ||
+              planets.some(p=>p.id!==label.nodeId &&
+                box.left<p.x+p.radius && box.right>p.x-p.radius &&
+                box.top<p.y+p.radius && box.bottom>p.y-p.radius)) continue
+          chosen={dx,dy,score:Math.hypot(dx,dy),box}
           break
         }
+        if (chosen) break
       }
+      // If not even one clean nearby location exists, the detail drawer
+      // already displays the selected name, and hover exposes it on demand.
     }
     if (!chosen) continue
     const cameraRight = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion)
@@ -1683,44 +1693,88 @@ function arrangeScreenLabels() {
   scene?.updateMatrixWorld(true)
 }
 
-// A projected-density budget controls the quiet background of 1300+ nodes.
-// It does NOT delete them or create fake links; it darkens conflicting dots
-// as zoom/rotation changes and prioritizes a sparse map-like context.
+// Scale background spheres in SCREEN pixels, rather than world units.
+// In the previous build a 1.5-unit sphere became a 15–35px grey planet
+// on zooming in, and hundreds of them covered the active relation cluster.
+// Now this is a sparse, contrast-controlled context layer; the complete
+// underlying graph and clickable IDs are unchanged.
 function arrangeBackdrop(now: number) {
   if (!camera || !renderer || !backdropCloud || !backdropPoints.length) return
-  if (now-lastBackdropLayout < 90) return
+  if (now-lastBackdropLayout < 95) return
   lastBackdropLayout = now
   const width = renderer.domElement.clientWidth
   const height = renderer.domElement.clientHeight
+  const safe = safeViewport()
   const overlays = overlayBoxes()
-  const cell = THREE.MathUtils.clamp(
-    Math.sqrt(width*height/260), 38, 68)
-  const used = new Set<string>()
-  const focal: {x:number;y:number}[] = []
-  for (const node of props.nodes) {
-    const pos = positions.get(node.id)
-    if (!pos) continue
-    const pt = screenPosition(pos)
-    if (pt.visible) focal.push(pt)
+  const cameraForward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov)/2)
+  const cell = THREE.MathUtils.clamp(Math.sqrt(width*height/140),54,88)
+  const maxDots = Math.round(Math.min(145,Math.max(28,
+    (safe.right-safe.left)*(safe.bottom-safe.top)/8200)))
+  const occupied = new Set<string>()
+  const protectedPoints: {x:number;y:number}[] = []
+  const focus = focusRelations()
+  const ids = new Set([props.selectedId, ...focus.neighbors])
+  for (const id of ids) {
+    const point = id ? positions.get(id) : undefined
+    if (!point) continue
+    const projected = screenPosition(point)
+    if (projected.visible) protectedPoints.push(projected)
   }
-  // Same-chapter context dots win over unrelated background if both
-  // project into the same cell. The rest remain faintly visible.
-  for (const local of [true,false]) {
-    backdropPoints.forEach((node,index) => {
-      if (node.local !== local) return
-      const pt = screenPosition(node.position)
-      let strength = node.local ? .36 : .21
-      if (!pt.visible) strength *= .15
-      const key=`${Math.floor(pt.x/cell)}:${Math.floor(pt.y/cell)}`
-      if (used.has(key)) strength *= .085
-      else used.add(key)
-      if (overlays.some(b=>pt.x>=b.left&&pt.x<=b.right&&
-        pt.y>=b.top&&pt.y<=b.bottom)) strength *= .07
-      if (focal.some(p=>Math.hypot(p.x-pt.x,p.y-pt.y)<35))
-        strength *= .06
-      backdropCloud!.setColorAt(index,node.color.clone().multiplyScalar(strength))
+  const labelBoxes: ScreenBox[] = []
+  for (const a of labelAnchors) {
+    if (!a.sprite.visible) continue
+    const projected = screenPosition(a.sprite.getWorldPosition(new THREE.Vector3()))
+    if (!projected.visible) continue
+    const depth = Math.max(1,a.sprite.getWorldPosition(new THREE.Vector3())
+      .sub(camera.position).dot(cameraForward))
+    const pixelsPerWorld = height/(2*tanHalf*depth)
+    const w = a.screen?.width ?? a.sprite.scale.x*pixelsPerWorld
+    const h = a.screen?.height ?? a.sprite.scale.y*pixelsPerWorld
+    labelBoxes.push({
+      left:projected.x-w/2-12,right:projected.x+w/2+12,
+      top:projected.y-h/2-10,bottom:projected.y+h/2+10,
     })
   }
+  const matrix = new THREE.Matrix4()
+  const unit = new THREE.Quaternion()
+  const size = new THREE.Vector3()
+  let drawn = 0
+  // Focus chapter first, followed by the rest of the atlas. Each screen
+  // grid cell admits at most one faint dot, avoiding foreground occlusion.
+  for (const local of [true,false]) {
+    for (let i=0;i<backdropPoints.length;i++) {
+      const node = backdropPoints[i]
+      if (node.local !== local) continue
+      const p = screenPosition(node.position)
+      const depth = node.position.clone().sub(camera.position).dot(cameraForward)
+      const key = `${Math.floor(p.x/cell)}:${Math.floor(p.y/cell)}`
+      const drawable = p.visible && depth > camera.near &&
+        p.x >= safe.left && p.x <= safe.right &&
+        p.y >= safe.top && p.y <= safe.bottom &&
+        !occupied.has(key) && drawn < maxDots &&
+        !overlays.some(b => p.x >= b.left && p.x <= b.right &&
+          p.y >= b.top && p.y <= b.bottom) &&
+        !protectedPoints.some(t=>Math.hypot(t.x-p.x,t.y-p.y)<72) &&
+        !labelBoxes.some(b=>p.x>=b.left&&p.x<=b.right&&p.y>=b.top&&p.y<=b.bottom)
+      if (drawable) {
+        occupied.add(key)
+        drawn++
+      }
+      // Target diameter: 4.5px in focus chapter, 3px elsewhere.
+      // Hidden candidates retain their original map coordinates and IDs.
+      const radiusPx = node.local ? 2.2 : 1.5
+      const worldRadius = drawable
+        ? Math.max(.001,radiusPx*2*tanHalf*depth/height) : .000001
+      size.setScalar(worldRadius)
+      matrix.compose(node.position,unit,size)
+      backdropCloud.setMatrixAt(i,matrix)
+      backdropCloud.setColorAt(i,node.color.clone()
+        .multiplyScalar(drawable ? node.local ? .21 : .105 : .0001))
+    }
+  }
+  backdropCloud.instanceMatrix.needsUpdate = true
+  backdropCloud.computeBoundingSphere()
   if (backdropCloud.instanceColor) backdropCloud.instanceColor.needsUpdate = true
 }
 
