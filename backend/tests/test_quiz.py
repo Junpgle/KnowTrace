@@ -139,7 +139,13 @@ def test_duplicate_keys_types_and_missing_resources(env):
     assert http.get("/api/quiz-sessions/missing").status_code == 404
     assert http.post("/api/quiz-items/missing/answer",json={"client_request_id":"key-4444444","response":"A"}).status_code == 404
     assert http.get("/api/courses/missing/learning-report").status_code == 404
-    assert http.post(f"/api/courses/{course}/quiz-sessions",json={"mode":"adaptive"}).status_code == 422
+    # Adaptive is now a supported, single-concept diagnosis mode.
+    adaptive=http.post(f"/api/courses/{course}/quiz-sessions",
+                       json={"mode":"adaptive","count":1})
+    assert adaptive.status_code == 201, adaptive.text
+    assert adaptive.json()["mode"] == "adaptive"
+    assert http.post(f"/api/courses/{course}/quiz-sessions",
+                     json={"mode":"unsupported"}).status_code == 422
     assert http.post(f"/api/courses/{course}/quiz-sessions",json={"count":0}).status_code == 422
 
 
