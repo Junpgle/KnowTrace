@@ -201,6 +201,7 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                     LEFT JOIN answer_records a ON a.quiz_item_id=i.id
                     WHERE q.course_id=? AND q.archived_at IS NULL
                     AND v.review_status='approved'
+                    AND v.question_type IN ('single_choice','true_false')
                     AND kp.review_status='approved' AND kp.archived_at IS NULL
                     AND v.version_no=(SELECT MAX(v2.version_no)
                                      FROM question_versions v2 WHERE v2.question_id=q.id)
