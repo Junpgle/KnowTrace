@@ -875,6 +875,10 @@ function rebuild(animate = false, transition?: SceneTransition) {
             .addScaledVector(cameraForward, (local.z - origin.z) * .22)
           coords.set(node.id, world)
           browseWorldPositions.set(node.id, world.clone())
+          // The dimmed-context layer must use the exact same map address.
+          // Otherwise, entering a group's knowledge layer would make its
+          // faint parent planet jump back near the old chapter.
+          contextCacheCoordinates.set(node.id, world.clone())
         }
       } else if (previouslyPlaced) {
         // Non-navigation updates must not reposition the group atlas.
