@@ -530,6 +530,17 @@ function previewAvailable(source: SourceEvidence): boolean {
           </template>
 
           <div class="qb-section-divider"></div>
+          <div class="qb-source-title"><BookOpen :size="18"/><strong>本题实际考查的知识点</strong></div>
+          <div class="qb-inline-meta">
+            <span v-for="point in questionDetail.knowledge_points" :key="point.knowledge_point_id">
+              {{ point.is_primary ? '主考查 · ' : '关联考查 · ' }}
+              {{ knowledge.find(k => k.id === point.knowledge_point_id)?.canonical_name || point.knowledge_point_id }}
+            </span>
+          </div>
+          <p v-if="questionDetail.knowledge_points.length > 1" class="qb-hint">
+            组合题的多个考点由 AI 提议、课件引用辅助核验，仍需逐项人工审核。一次答对不能证明所有考点均已掌握。
+          </p>
+          <div class="qb-section-divider"></div>
           <div class="qb-source-title"><ShieldCheck :size="18" /><strong>题目来源与核验</strong></div>
           <div v-for="source in questionDetail.sources" :key="source.chunk_id" class="qb-source">
             <div class="qb-source-heading"><span>{{ source.original_filename }} · 第 {{ source.page_start }} 页</span>
