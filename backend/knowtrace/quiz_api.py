@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictStr
 
 from .bkt import BKTParameters, update_mastery
 from .db import transaction
+from .mastery_evidence import evidence_by_knowledge_point, evidence_level, overview_stats
 
 USER_ID = "local"
 MODEL_KEY = "bkt_v1"
@@ -343,7 +344,7 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
             if db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'", (course_id,)).fetchone() is None:
                 raise HTTPException(404, "Course not found")
             per_kp = _rows(db.execute("""SELECT kp.id AS knowledge_point_id,kp.canonical_name,
-                 m.p_mastery,m.observations,
+                 kp.review_status,m.p_mastery,m.observations,
                  COUNT(a.id) AS answered,COALESCE(SUM(a.is_correct),0) AS correct
                  FROM knowledge_points kp
                  LEFT JOIN mastery_states m ON m.knowledge_point_id=kp.id
@@ -358,8 +359,21 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                  WHERE kp.course_id=? AND kp.archived_at IS NULL
                  GROUP BY kp.id ORDER BY kp.canonical_name,kp.id""",
                  (USER_ID,MODEL_KEY,USER_ID,course_id,BLIND_REASON,course_id)))
+            evidence = evidence_by_knowledge_point(db, USER_ID, course_id, MODEL_KEY)
             for row in per_kp:
                 row["accuracy"] = round(row["correct"] / row["answered"], 4) if row["answered"] else None
+                found = evidence.get(row["knowledge_point_id"], {})
+                row["distinct_questions"] = found.get("distinct_questions", 0)
+                row["practice_sessions"] = found.get("practice_sessions", 0)
+                row["practice_days"] = found.get("practice_days", 0)
+                row["last_practiced_at"] = found.get("last_practiced_at")
+                row["evidence_level"] = evidence_level(
+                    observations=found.get("observations", 0),
+                    distinct_questions=row["distinct_questions"],
+                    practice_days=row["practice_days"])
+                row["display_mastery"] = (
+                    row["p_mastery"] if row["evidence_level"] == "repeated" else None)
+            summary = overview_stats(per_kp)
             answered = sum(row["answered"] for row in per_kp)
             correct = sum(row["correct"] for row in per_kp)
             sessions = db.execute("SELECT COUNT(*) FROM quiz_sessions WHERE course_id=? AND user_id=?",
@@ -373,5 +387,10 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                     "answered":answered,"correct":correct,
                     "accuracy":round(correct / answered,4) if answered else None,
                     "provisional_answers":provisional,
-                    "mastery_model":MODEL_KEY,"bkt_warning":"Model estimate, not a validated ability score.",
+                    "evidence_summary":summary,
+                    "mastery_model":MODEL_KEY,
+                    "bkt_warning":"Uncalibrated baseline BKT: fixed parameters. "
+                        "The estimate is hidden until repeated independent observations "
+                        "across different days; those observations do not validate the "
+                        "probability as a measured ability score.",
                     "knowledge_points":per_kp}
