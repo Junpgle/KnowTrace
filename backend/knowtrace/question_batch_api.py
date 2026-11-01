@@ -295,7 +295,6 @@ def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
                         "缺少逐字来源证据，系统已从该题映射中剔除；"
                         "请人工检查题干、答案及剩余关联是否仍然成立。"
                     )
-                    warnings.append(f"#{index}: {mapping_note}")
                 else:
                     mapping_note = None
             else:
@@ -308,6 +307,8 @@ def validate_cluster_reply(raw: str, *, allowed_ids: set[str],
         if err:
             warnings.append(f"#{index}: {err}")
             continue
+        if mapping_note:
+            warnings.append(f"#{index}: {mapping_note}")
         seen_stems.add(stem_key)
         accepted.append({"question_type":item["question_type"],
             "stem":item["stem"].strip(), "options":item["options"] if item["question_type"]=="single_choice" else {"true":"正确","false":"错误"},
