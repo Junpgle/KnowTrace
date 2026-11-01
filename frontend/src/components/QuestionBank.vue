@@ -55,6 +55,10 @@ const formExplanation = ref('')
 const formDifficulty = ref(2)
 const formOptions = ref<Record<string, string>>({ A: '', B: '', C: '', D: '' })
 const formAnswer = ref<string>('A')
+const formMultiple = ref<string[]>(['A','C'])
+const formShortAnswer = ref('')
+const useMulti = ref(true)
+const useShort = ref(true)
 const formBoolean = ref<boolean>(true)
 const questionCount = ref(1)
 const useSingle = ref(true)
@@ -98,7 +102,9 @@ function feedback(error: unknown) {
 }
 function resetFeedback() { banner.value = ''; success.value = '' }
 function shortName(value: string, max = 80): string { return value.length > max ? value.slice(0, max) + '…' : value }
-function asAnswer(value: string | boolean): string { return value === true ? '正确' : value === false ? '错误' : value }
+function asAnswer(value: string | boolean | string[]): string {
+  return Array.isArray(value) ? value.join('、') : value === true ? '正确' : value === false ? '错误' : value
+}
 
 async function reload(preferKp = selectedKpId.value, preferQuestion = selectedQuestionId.value) {
   const token = ++loadToken
@@ -220,6 +226,8 @@ function fillQuestionForm(q: QuestionVersion) {
   formDifficulty.value = q.difficulty
   formOptions.value = { A: q.options.A || '', B: q.options.B || '', C: q.options.C || '', D: q.options.D || '' }
   formAnswer.value = typeof q.correct_answer === 'string' ? q.correct_answer : 'A'
+  formMultiple.value = Array.isArray(q.correct_answer) ? [...q.correct_answer] : ['A','C']
+  formShortAnswer.value = typeof q.correct_answer === 'string' ? q.correct_answer : ''
   formBoolean.value = q.correct_answer === true
 }
 async function saveKnowledge() {
@@ -261,9 +269,11 @@ async function reviewKnowledge(decision: 'approved' | 'rejected') {
 }
 async function generate() {
   if (!kpDetail.value || !canGenerate.value || busy.value) return
-  const types: ('single_choice' | 'true_false')[] = []
+  const types: ('single_choice' | 'multiple_choice' | 'true_false' | 'short_answer')[] = []
   if (useSingle.value) types.push('single_choice')
   if (useBoolean.value) types.push('true_false')
+  if (useMulti.value) types.push('multiple_choice')
+  if (useShort.value) types.push('short_answer')
   if (!types.length) { feedback(new Error('请至少选择一种题型。')); return }
   busy.value = true
   resetFeedback()
@@ -306,20 +316,28 @@ async function saveQuestion() {
     feedback(new Error('题干和解析都至少需要 8 个字符。'))
     return
   }
-  if (q.question_type === 'single_choice') {
+  if (q.question_type === 'single_choice' || q.question_type === 'multiple_choice') {
     if (['A','B','C','D'].some(k => !formOptions.value[k]?.trim()) ||
         new Set(['A','B','C','D'].map(k => formOptions.value[k].trim())).size !== 4) {
       feedback(new Error('四个选项都必须填写，且不能重复。'))
       return
     }
   }
+  if (q.question_type === 'multiple_choice' && formMultiple.value.length < 2) {
+    feedback(new Error('多选题必须选择至少两个正确选项。')); return
+  }
+  if (q.question_type === 'short_answer' && formShortAnswer.value.trim().length < 8) {
+    feedback(new Error('简答题必须填写至少 8 个字符的参考答案。')); return
+  }
   const revision: QuestionRevision = {
     stem: formStem.value.trim(),
     explanation: formExplanation.value.trim(),
     difficulty: formDifficulty.value,
-    correct_answer: q.question_type === 'single_choice' ? formAnswer.value : formBoolean.value,
+    correct_answer: q.question_type === 'single_choice' ? formAnswer.value
+      : q.question_type === 'multiple_choice' ? [...formMultiple.value].sort()
+      : q.question_type === 'short_answer' ? formShortAnswer.value.trim() : formBoolean.value,
   }
-  if (q.question_type === 'single_choice') {
+  if (q.question_type === 'single_choice' || q.question_type === 'multiple_choice') {
     revision.options = Object.fromEntries(['A', 'B', 'C', 'D'].map(k => [k, formOptions.value[k].trim()]))
   }
   busy.value = true
@@ -542,7 +560,9 @@ function previewAvailable(source: SourceEvidence): boolean {
               <option value="mimo" :disabled="aiStatus ? !aiStatus.providers.find(p => p.id === 'mimo')?.available : false">小米 MiMo · Function Calling</option>
             </select></label>
             <label>数量<select v-model.number="questionCount" :disabled="busy"><option :value="1">1 道</option><option :value="2">2 道</option><option :value="3">3 道</option><option :value="4">4 道</option></select></label>
-            <fieldset :disabled="busy"><legend>题型</legend><label><input v-model="useSingle" type="checkbox" /> 单选题</label><label><input v-model="useBoolean" type="checkbox" /> 判断题</label></fieldset>
+            <fieldset :disabled="busy"><legend>题型</legend><label><input v-model="useSingle" type="checkbox" /> 单选题</label><label><input v-model="useBoolean" type="checkbox" /> 判断题</label>
+            <label><input v-model="useMulti" type="checkbox" /> 多选题</label>
+            <label><input v-model="useShort" type="checkbox" /> 简答题</label></fieldset>
           </div>
           <p class="qb-hint" v-if="aiStatus && !aiStatus.providers.some(p => p.id === 'mimo' && p.available)">
             尚未配置小米 MiMo：请在左侧「AI 模型设置」中填写按量付费 API Key（sk-），保存后即可使用。
@@ -598,12 +618,14 @@ function previewAvailable(source: SourceEvidence): boolean {
           <template v-if="editingQuestion">
             <div class="qb-form">
               <label>题干<textarea v-model="formStem" rows="3" maxlength="600"></textarea></label>
-              <template v-if="questionDetail.question_type === 'single_choice'">
+              <template v-if="questionDetail.question_type === 'single_choice' || questionDetail.question_type === 'multiple_choice'">
                 <label v-for="letter in ['A','B','C','D']" :key="letter">选项 {{ letter }}
                   <input v-model="formOptions[letter]" maxlength="250" /></label>
-                <label>正确答案<select v-model="formAnswer"><option v-for="letter in ['A','B','C','D']" :key="letter" :value="letter">{{ letter }}</option></select></label>
+                <label v-if="questionDetail.question_type === 'single_choice'">正确答案<select v-model="formAnswer"><option v-for="letter in ['A','B','C','D']" :key="letter" :value="letter">{{ letter }}</option></select></label>
+                <fieldset v-else><legend>正确选项（至少两项）</legend><label v-for="letter in ['A','B','C','D']" :key="letter"><input v-model="formMultiple" type="checkbox" :value="letter"/> {{letter}}</label></fieldset>
               </template>
-              <label v-else>正确答案<select v-model="formBoolean"><option :value="true">正确</option><option :value="false">错误</option></select></label>
+              <label v-else-if="questionDetail.question_type === 'true_false'">正确答案<select v-model="formBoolean"><option :value="true">正确</option><option :value="false">错误</option></select></label>
+              <label v-else>参考答案<textarea v-model="formShortAnswer" rows="6" maxlength="2000"></textarea></label>
               <label>题目解析<textarea v-model="formExplanation" rows="4" maxlength="1500"></textarea></label>
               <label>难度<select v-model.number="formDifficulty"><option :value="1">1 · 基础</option><option :value="2">2 · 中等</option><option :value="3">3 · 进阶</option></select></label>
               <p class="qb-hint">保存修改将创建新版本（待审核），不会覆盖曾用于测评的旧版本。原有课件证据保持不变，修改答案后请重新核对来源。</p>
@@ -612,7 +634,7 @@ function previewAvailable(source: SourceEvidence): boolean {
             </div>
           </template>
           <template v-else>
-            <div class="qb-inline-meta"><span>{{ questionDetail.question_type === 'single_choice' ? '单选题' : '判断题' }}</span><span>难度 {{ questionDetail.difficulty }}/3</span></div>
+            <div class="qb-inline-meta"><span>{{ ({single_choice:'单选题',multiple_choice:'多选题',true_false:'判断题',short_answer:'简答题'} as Record<string,string>)[questionDetail.question_type] }}</span><span>难度 {{ questionDetail.difficulty }}/3</span></div>
             <h2>{{ questionDetail.stem }}</h2>
             <div v-if="questionDetail.review_status === 'pending' && !answerRevealed" class="qb-warning">
               <strong>候选题答案已遮盖，避免影响自测</strong>
@@ -621,17 +643,18 @@ function previewAvailable(source: SourceEvidence): boolean {
                 显示正确答案与解析（会剧透）
               </button>
             </div>
-            <div class="qb-options" v-if="questionDetail.question_type === 'single_choice'">
+            <div class="qb-options" v-if="questionDetail.question_type === 'single_choice' || questionDetail.question_type === 'multiple_choice'">
               <div v-for="letter in ['A','B','C','D']" :key="letter"
-                :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === letter }">
+                :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && (Array.isArray(questionDetail.correct_answer) ? questionDetail.correct_answer.includes(letter) : (Array.isArray(questionDetail.correct_answer) ? questionDetail.correct_answer.includes(letter) : questionDetail.correct_answer === letter)) }">
                 <strong>{{ letter }}</strong><span>{{ questionDetail.options[letter] }}</span>
                 <CheckCircle2 v-if="(questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === letter" :size="18" />
               </div>
             </div>
-            <div class="qb-options" v-else>
+            <div class="qb-options" v-else-if="questionDetail.question_type === 'true_false'">
               <div :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === true }"><strong>A</strong><span>正确</span></div>
               <div :class="{ correct: (questionDetail.review_status !== 'pending' || answerRevealed) && questionDetail.correct_answer === false }"><strong>B</strong><span>错误</span></div>
             </div>
+            <p v-else-if="questionDetail.question_type === 'short_answer'" class="qb-hint">本题为开放式作答，请在练习页面填写答案后对照参考要点。</p>
             <div v-if="questionDetail.review_status !== 'pending' || answerRevealed" class="qb-explanation"><strong>正确答案：{{ asAnswer(questionDetail.correct_answer) }}</strong><span>题目解析</span><p>{{ questionDetail.explanation || '暂无解析' }}</p></div>
             <div class="qb-actions"><button class="button button-outline button-small" :disabled="busy" @click="beginRevision"><Pencil :size="16" /> 修改并创建新版本</button></div>
           </template>
