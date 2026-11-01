@@ -7,6 +7,7 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
+import { sizeOrderedBrowseBands } from '../sizeOrderedBrowseBands'
 import { planCenteredCourseOrbits } from '../centeredCourseOrbits'
 import { placeOrbitCaptions } from '../orbitCaptionPlacement'
 import { tightAtlasDistance } from '../tightAtlasViewport'
@@ -431,32 +432,10 @@ function organicOffsets(count: number, seed: string): THREE.Vector3[] {
   return offsets
 }
 
-// Browse-only groups are distributed over concentric elliptical ORBITS.
-// Ring sizes increase with circumference (35 groups -> [6, 8, 10, 11]),
-// not over grid rows. Group positioning never represents semantic distance.
+// Inner-to-outer placement and orbit animation MUST share the same
+// count-ranked band membership. Names do not determine orbital distance.
 function browseOrbitBands(groups: GraphNode[]): GraphNode[][] {
-  const sorted = [...groups].sort((a, b) =>
-    a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
-  const count = sorted.length
-  if (!count) return []
-  const rings = count <= 8 ? 1 : count <= 18 ? 2 :
-    count <= 30 ? 3 : count <= 48 ? 4 :
-      Math.min(8, Math.ceil(count / 11))
-  const weights = Array.from({length:rings}, (_, i) => 1 + i*.28)
-  const sum = weights.reduce((a,b)=>a+b,0)
-  const exact = weights.map(w => count*w/sum)
-  const sizes = exact.map(Math.floor)
-  let pending = count - sizes.reduce((a,b)=>a+b,0)
-  const order = exact.map((n,i)=>({i,fraction:n-Math.floor(n)}))
-    .sort((a,b)=>b.fraction-a.fraction || b.i-a.i)
-  for (let i=0;i<pending;i++) sizes[order[i%order.length].i]++
-  const bands: GraphNode[][] = []
-  let offset=0
-  for (const size of sizes) {
-    bands.push(sorted.slice(offset, offset+size))
-    offset+=size
-  }
-  return bands
+  return sizeOrderedBrowseBands(groups)
 }
 
 // Equal ANGULAR increments bunch up at the narrow ends of an ellipse.
@@ -530,9 +509,9 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     // Four (for 31-48 groups) gently offset elliptical orbital belts.
     // They cover the true usable aspect ratio without straight columns,
     // rectangular grids, or six-spoke hubs. They retain small depth parallax.
-    const groups = [...groupNodes].sort((a,b) =>
-      a.name.localeCompare(b.name,'zh-Hans') || a.id.localeCompare(b.id))
-    const bands=browseOrbitBands(groups)
+    const bands=browseOrbitBands(groupNodes)
+    // Planet count (source_count) now decides ring membership, from smallest
+    // inner to largest outer, and both layout and orbit animation reuse it.
     const viewport=safeViewport()
     const width=Math.max(300, viewport.right-viewport.left)
     const height=Math.max(240, viewport.bottom-viewport.top)
@@ -952,6 +931,9 @@ function initializeOrbitingPlanets(saved?: ReadonlyMap<string, SavedOrbit>) {
       .applyQuaternion(camera.quaternion).normalize()
     const up=new THREE.Vector3(0,1,0)
       .applyQuaternion(camera.quaternion).normalize()
+    // Each belt orbits as one cohesive layer. Its average count increases
+    // monotonically with orbital radius because band membership is count
+    // sorted. Thus larger planets are farther out AND their belts slower.
     browseOrbitBands(props.nodes).forEach(band=>{
       const present=band.filter(n=>positions.has(n.id)&&orbitVisuals.has(n.id))
       if(!present.length)return
@@ -1431,9 +1413,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
     const count = node.kind==='group' ? node.source_count : (cachedChapterTotals.get(node.id) ?? 0)
     const groupPalette = [0x54c9cf, 0x8ea0ef, 0x69cba8, 0xe0b981, 0x86c4ed, 0xb39be8]
     const groupOrder = node.kind === 'group'
-      ? props.nodes.filter(n=>n.kind==='group')
-        .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
-        .findIndex(n=>n.id===node.id) : -1
+      ? browseOrbitBands(props.nodes.filter(n=>n.kind==='group'))
+        .flat().findIndex(n=>n.id===node.id) : -1
     const baseColor = isCourse ? 0x4be6d6
       : node.kind==='group' ? groupPalette[(groupOrder + groupPalette.length) % groupPalette.length]
         : palette.get(node.id) ?? 0x83a4d9
