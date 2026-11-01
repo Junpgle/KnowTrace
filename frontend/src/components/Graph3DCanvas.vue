@@ -1952,7 +1952,7 @@ watch(() => ({
   } else if (layerChanged || next.selectedId !== previous.selectedId) {
     focus(next.selectedId, layerChanged)
   }
-})
+}, { flush: 'post' })
 onBeforeUnmount(() => {
   disposed = true
   cancelAnimationFrame(frameId)
