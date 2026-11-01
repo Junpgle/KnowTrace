@@ -1246,6 +1246,85 @@ function declutterGroupLabels() {
   }
 }
 
+// Put real selected/one-hop labels ahead of decorative content. Search
+// nearby screen positions to avoid overlap and the right-hand details panel.
+// Every highlighted label remains visible and clickable; the best available
+// placement is used even when a compact viewport cannot avoid all overlaps.
+function arrangeFocusedLabels() {
+  if (!camera || !renderer) return
+  const labels = labelAnchors
+    .filter(a => a.focused && a.screen)
+    .sort((a,b) =>
+      Number(b.nodeId === props.selectedId) - Number(a.nodeId === props.selectedId) ||
+      (a.nodeId ?? '').localeCompare(b.nodeId ?? ''))
+  if (!labels.length) return
+  const viewportWidth = renderer.domElement.clientWidth
+  const viewportHeight = renderer.domElement.clientHeight
+  const minX = 18
+  const maxX = Math.max(minX + 180, viewportWidth - (props.selectedId ? 365 : 20))
+  const minY = 132
+  const maxY = Math.max(minY + 90, viewportHeight - 66)
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion)
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
+  const occupied: {l:number;r:number;t:number;b:number}[] = []
+
+  for (const label of labels) {
+    const sprite = label.sprite
+    const worldPosition = sprite.getWorldPosition(new THREE.Vector3())
+    const projected = worldPosition.clone().project(camera)
+    const x = (projected.x + 1) * viewportWidth / 2
+    const y = (1 - projected.y) * viewportHeight / 2
+    const width = label.screen!.width
+    const height = label.screen!.height
+    const margin = 10
+    // Offsets are in screen pixels. The first choice keeps the caption just
+    // above its planet; later choices go sideways or below if needed.
+    const offsets: [number,number][] = [
+      [0,0], [-width*.60,0], [width*.60,0],
+      [0,-height-28], [0,height+28],
+      [-width*.75,-height*.55], [width*.75,-height*.55],
+      [-width*.75,height*.70], [width*.75,height*.70],
+      [-width-24,0], [width+24,0],
+      [0,-height*2], [0,height*2],
+      [-width*1.3,-height], [width*1.3,-height],
+    ]
+    let bestX = 0
+    let bestY = 0
+    let bestScore = Infinity
+    for (const [dx,dy] of offsets) {
+      const left = x + dx - width/2 - margin
+      const top = y + dy - height/2 - margin
+      const box = {l:left,r:left+width+margin*2,t:top,b:top+height+margin*2}
+      const outside =
+        Math.max(0, minX-box.l) + Math.max(0, box.r-maxX) +
+        Math.max(0, minY-box.t) + Math.max(0, box.b-maxY)
+      const overlap = occupied.reduce((area,p) =>
+        area + Math.max(0, Math.min(box.r,p.r)-Math.max(box.l,p.l)) *
+        Math.max(0, Math.min(box.b,p.b)-Math.max(box.t,p.t)),0)
+      const score = outside * 80 + overlap * 2 + Math.hypot(dx,dy)*.03
+      if (score < bestScore) {
+        bestScore = score
+        bestX = dx
+        bestY = dy
+      }
+    }
+    const l = x+bestX-width/2-margin
+    const t = y+bestY-height/2-margin
+    occupied.push({l,r:l+width+margin*2,t,b:t+height+margin*2})
+    const center = label.sprite.parent
+      ? label.sprite.parent.localToWorld(label.center.clone()) : label.center
+    const depth = Math.max(1, center.clone().sub(camera.position).dot(forward))
+    const parentScale = Math.max(.05, sprite.parent?.scale.x ?? 1)
+    const localPerPx = 2 * tanHalf * depth /
+      Math.max(1,viewportHeight) / parentScale
+    sprite.position.addScaledVector(right,bestX*localPerPx)
+      .addScaledVector(up,-bestY*localPerPx)
+  }
+  scene?.updateMatrixWorld(true)
+}
+
 function draw() {
   if (!renderer || !camera || !controls || !scene || disposed || !visible) return
   const now = performance.now()
