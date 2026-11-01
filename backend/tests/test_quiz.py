@@ -222,3 +222,17 @@ def test_pending_blind_trial_does_not_spoil_answers_or_change_mastery(env):
         assert conn.execute("SELECT COUNT(*) FROM mastery_events").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM mastery_states").fetchone()[0] == 0
 
+
+def test_blind_trial_prefers_unattempted_candidates(env):
+    http, _ = env
+    course, _, versions = seed(http)
+    first = http.post(f"/api/courses/{course}/quiz-sessions",
+        json={"count":1,"source":"pending"}).json()["items"][0]
+    response = "A" if first["question_type"] == "single_choice" else True
+    submitted = http.post(f"/api/quiz-items/{first['quiz_item_id']}/answer",
+        json={"client_request_id":"blind-novelty-101","response":response})
+    assert submitted.status_code == 200, submitted.text
+    second = http.post(f"/api/courses/{course}/quiz-sessions",
+        json={"count":1,"source":"pending"}).json()["items"][0]
+    assert second["question_version_id"] != first["question_version_id"]
+    assert {first["question_version_id"],second["question_version_id"]} == set(versions)
