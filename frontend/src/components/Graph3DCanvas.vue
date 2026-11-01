@@ -7,6 +7,7 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
+import { planIndependentOrbitLanes } from '../independentOrbitLanes'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GraphEdge, GraphNode } from '../api'
 
@@ -585,35 +586,25 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     byChapter.get(owner)!.push(node)
   }
 
-  // Whole-course overview uses the SAME elliptical design language as
-  // the chapter browse-group overview. Chapters orbit the course core in
-  // the XZ plane; concept counts determine their visual weight/speed.
+  // The chapter atlas is an elliptical *distribution of lane anchors*,
+  // NOT one common orbit on which fast small planets catch slow large ones.
+  // Every chapter gets its own local ellipse in initializeOrbitingPlanets().
   const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
     .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
-  const count=top.length
-  const large=Math.max(1,...top.map(ch=>byChapter.get(ch.id)?.length ?? 0))
-  const viewport=safeViewport()
-  const aspect=THREE.MathUtils.clamp(
-    (viewport.right-viewport.left)/Math.max(1,viewport.bottom-viewport.top),
-    1.30, 2.30)
-  const orbit = Math.max(128, 125 + Math.sqrt(large)*2.8 + count*3)
-  const chapterBands=browseOrbitBands(top)
-  chapterBands.forEach((band,ring)=>{
-    const fraction=chapterBands.length===1 ? 1 :
-      .56+.44*ring/Math.max(1,chapterBands.length-1)
-    const a=orbit*fraction*aspect*.82
-    const b=orbit*fraction*.76
-    const at=ellipseArcAngles(a,b)
-    const phase=ring*.37+.09
-    band.forEach((ch,i)=>{
-      const angle=at((i+phase)/band.length)
-      pos.set(ch.id,new THREE.Vector3(
-        Math.cos(angle)*a,
-        (ordinalHash(ch.id+':altitude')-.5)*4,
-        Math.sin(angle)*b,
-      ))
-    })
+  const viewport = safeViewport()
+  const usableWidth = Math.max(430,viewport.right-viewport.left)
+  const usableHeight = Math.max(260,viewport.bottom-viewport.top)
+  const major = Math.max(420,usableWidth*.45)
+  const minor = Math.max(250,usableHeight*.43)
+  const angles = ellipseArcAngles(major,minor)
+  top.forEach((chapter,index)=>{
+    const theta=angles((index+.12)/Math.max(1,top.length))
+    pos.set(chapter.id,new THREE.Vector3(
+      Math.cos(theta)*major,
+      (ordinalHash(chapter.id+':altitude')-.5)*4,
+      Math.sin(theta)*minor,
+    ))
   })
   // Nested chapters stay near their real parent but get their own system.
   const pending = new Map(nested.map(c => [c.id, c]))
@@ -634,8 +625,8 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
   }
   for (const [id, ch] of pending) {
     pos.set(id, new THREE.Vector3(
-      (ordinalHash(ch.id + 'x') - .5) * orbit,
-      18, (ordinalHash(ch.id + 'z') - .5) * orbit,
+      (ordinalHash(ch.id + 'x') - .5) * major,
+      18, (ordinalHash(ch.id + 'z') - .5) * minor,
     ))
   }
 
@@ -895,56 +886,67 @@ function initializeOrbitingPlanets() {
   orbitingPlanets.splice(0)
   if (!camera || props.selectedId || props.nodes.some(n=>n.kind==='knowledge'))
     return
-  const isGroup = props.nodes.length>0 &&
-    props.nodes.every(n=>n.kind==='group')
-  const bodies = isGroup ? props.nodes :
+  const isGroup=props.nodes.length>0&&props.nodes.every(n=>n.kind==='group')
+  const bodies=isGroup?props.nodes:
     props.nodes.filter(n=>n.kind==='chapter')
-  if (bodies.length < 2) return
-  const groupAxis = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion)
-  const groupVertical = new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion)
-  const axisX = isGroup ? groupAxis : new THREE.Vector3(1,0,0)
-  const axisY = isGroup ? groupVertical : new THREE.Vector3(0,0,1)
-  const bands=browseOrbitBands(bodies)
-  bands.forEach(band=>{
-    const points=band.map(n=>positions.get(n.id))
-      .filter((p):p is THREE.Vector3 => Boolean(p))
-    if(points.length<2)return
-    const center=new THREE.Vector3()
-    points.forEach(p=>center.add(p))
-    center.multiplyScalar(1/points.length)
-    const xRadius=Math.max(5,...points.map(p=>
-      Math.abs(p.clone().sub(center).dot(axisX))))
-    const yRadius=Math.max(5,...points.map(p=>
-      Math.abs(p.clone().sub(center).dot(axisY))))
-    band.forEach(node=>{
-      const position=positions.get(node.id)
-      const objects=orbitVisuals.get(node.id)
-      if(!position||!objects?.length)return
-      const delta=position.clone().sub(center)
-      const x=delta.dot(axisX), y=delta.dot(axisY)
-      const phase=Math.atan2(y/yRadius,x/xRadius)
-      const ellipticalScale=Math.hypot(x/xRadius,y/yRadius)
-      // Recover the EXACT initial point, including tiny depth offsets.
-      // Without this the first animation frame snaps every planet onto an
-      // approximate common ellipse and ruins the continuous-map feeling.
-      const residual=delta.clone().addScaledVector(axisX,-x)
-        .addScaledVector(axisY,-y)
-      const individualCenter=center.clone().add(residual)
-      const amount=node.kind==='group'?node.source_count:
-        (cachedChapterTotals.get(node.id)??node.source_count)
-      // Pixel size and orbital speed share one count-driven metric.
-      // The period is strictly increasing with count, even across IDs.
-      const {periodSeconds} = orbitMetrics(isGroup ? 'group' : 'chapter',
-        amount,node.id)
-      orbitingPlanets.push({
-        id:node.id, world:position, initialWorld:position.clone(),
-        center:individualCenter,
-        axisX:axisX.clone(), axisY:axisY.clone(),
-        major:xRadius*ellipticalScale, minor:yRadius*ellipticalScale, phase,
-        radiansPerSecond:2*Math.PI/periodSeconds,
-        elapsedSeconds:0,
-        objects,
-      })
+  if(!bodies.length)return
+  const axisX=isGroup
+    ? new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion).normalize()
+    : new THREE.Vector3(1,0,0)
+  const axisY=isGroup
+    ? new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).normalize()
+    : new THREE.Vector3(0,0,1)
+  const anchors=bodies.flatMap(node=>{
+    const p=positions.get(node.id)
+    if(!p)return []
+    const count=node.kind==='group'?node.source_count:
+      (cachedChapterTotals.get(node.id)??node.source_count)
+    const metric=orbitMetrics(isGroup?'group':'chapter',count,node.id)
+    return [{
+      id:node.id,
+      x:p.dot(axisX),y:p.dot(axisY),
+      count,idealRadiusPx:metric.idealRadiusPx,
+    }]
+  })
+  if(!anchors.length)return
+  const safe=safeViewport()
+  const width=Math.max(200,safe.right-safe.left)
+  const height=Math.max(160,safe.bottom-safe.top)
+  const xmin=Math.min(...anchors.map(p=>p.x))
+  const xmax=Math.max(...anchors.map(p=>p.x))
+  const ymin=Math.min(...anchors.map(p=>p.y))
+  const ymax=Math.max(...anchors.map(p=>p.y))
+  // Convert desired screen-pixel planet radii into comparable world units
+  // using the *eventual atlas framing*, not the current camera distance.
+  const worldPerPixel=Math.max(.015,
+    (xmax-xmin)/(.84*width),(ymax-ymin)/(.76*height))
+  const lanes=planIndependentOrbitLanes(
+    anchors.map(p=>({
+      id:p.id,x:p.x,y:p.y,radius:p.idealRadiusPx*worldPerPixel,
+    })),
+    (isGroup?18:40)*worldPerPixel,
+    (isGroup?12:20)*worldPerPixel,
+  )
+  lanes.forEach(lane=>{
+    const node=bodies.find(n=>n.id===lane.id)
+    const original=positions.get(lane.id)
+    const objects=orbitVisuals.get(lane.id)
+    if(!node||!original||!objects?.length)return
+    const count=node.kind==='group'?node.source_count:
+      (cachedChapterTotals.get(node.id)??node.source_count)
+    const {periodSeconds}=orbitMetrics(isGroup?'group':'chapter',count,node.id)
+    const startingAnchor=anchors.find(a=>a.id===lane.id)!
+    // Each orbit has its OWN center, not a common track. At phase zero its
+    // position equals its original location exactly, with no first-frame jump.
+    const center=original.clone()
+      .addScaledVector(axisX,lane.centerX-startingAnchor.x)
+      .addScaledVector(axisY,lane.centerY-startingAnchor.y)
+    orbitingPlanets.push({
+      id:lane.id,world:original,initialWorld:original.clone(),
+      center,axisX:axisX.clone(),axisY:axisY.clone(),
+      major:lane.major,minor:lane.minor,phase:lane.phase,
+      radiansPerSecond:2*Math.PI/periodSeconds,
+      elapsedSeconds:0,objects,
     })
   })
 }
@@ -975,6 +977,10 @@ function animateOrbits(now:number) {
     planet.world.copy(destination)
     for(const item of planet.objects)
       item.object.position.copy(item.start).add(shift)
+    // Captions are re-positioned by placeLabel() every frame. Update their
+    // anchor as well, otherwise the name stays at the old orbital coordinate.
+    for(const anchor of labelAnchors)
+      if(anchor.nodeId===planet.id)anchor.center.copy(destination)
     if(planet.id.startsWith('view-group:')){
       browseWorldPositions.set(planet.id,destination.clone())
       contextCacheCoordinates.set(planet.id,destination.clone())
@@ -1340,35 +1346,6 @@ function rebuild(animate = false, transition?: SceneTransition) {
     g.add(cluster)
     meshes.push(cluster)
   }
-  // Both course chapters and local browse groups inhabit faint elliptical
-  // belts. Lines are navigational decoration, not artificial knowledge edges.
-  const orbitBodies = props.nodes.every(n=>n.kind==='group') ? props.nodes :
-    props.nodes.some(n=>n.kind==='knowledge') ? [] :
-      props.nodes.filter(n=>n.kind==='chapter')
-  if (orbitBodies.length >= 3) {
-    const bands = browseOrbitBands(orbitBodies)
-    bands.forEach((band,index) => {
-      const points = band.map(n=>positions.get(n.id))
-        .filter((p):p is THREE.Vector3 => Boolean(p))
-      if (points.length < 3) return
-      const curve = new THREE.CatmullRomCurve3(
-        points.map(p => p.clone()), true, 'centripetal', .45)
-      const track = new THREE.LineLoop(
-        new THREE.BufferGeometry().setFromPoints(
-          curve.getPoints(Math.max(120,points.length*16))),
-        new THREE.LineBasicMaterial({
-          color: [0x6fc6c8,0x729fbf,0x7ea6bf,0x64b6c7][index%4],
-          transparent: true, opacity: .12 + index * .015,
-          depthWrite: false, depthTest: false,
-        }),
-      )
-      g.add(track)
-      orbitTracks.push({
-        line:track, ids:new Set(band.map(n=>n.id)),
-        baseOpacity:.12 + index * .015,
-      })
-    })
-  }
   for (const node of brightNodes.filter(n => n.kind !== 'knowledge')) {
     const orbitDecorations: THREE.Object3D[] = []
     const position = positions.get(node.id)
@@ -1529,6 +1506,26 @@ function rebuild(animate = false, transition?: SceneTransition) {
     })))
   }
   initializeOrbitingPlanets()
+  // Independent visual orbital tracks. These do not encode any new semantic
+  // relationship and never force larger planets to share a circumference.
+  orbitingPlanets.forEach((body,index)=>{
+    if(body.major<.0001)return
+    const points=Array.from({length:120},(_,i)=>{
+      const angle=i*Math.PI*2/120
+      return body.center.clone()
+        .addScaledVector(body.axisX,body.major*Math.cos(angle))
+        .addScaledVector(body.axisY,body.minor*Math.sin(angle))
+    })
+    const track=new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({
+        color:[0x6fc6c8,0x729fbf,0x7ea6bf,0x64b6c7][index%4],
+        transparent:true,opacity:.12,depthWrite:false,depthTest:false,
+      }),
+    )
+    g.add(track)
+    orbitTracks.push({line:track,ids:new Set([body.id]),baseOpacity:.12})
+  })
 
   const structural: number[] = []
   const ordinary: number[] = []
@@ -1881,30 +1878,18 @@ defineExpose({ resetCamera, zoomIn, zoomOut })
 // radii. Formerly chapter size depended on depth and group sizes were capped
 // at 18px; neither reflected the actual knowledge-point count reliably.
 function updateOrbitMarkerSizes() {
-  if (!camera || !renderer || !orbitMarkers.length) return
+  if(!camera||!renderer||!orbitMarkers.length)return
   const height=Math.max(1,renderer.domElement.clientHeight)
   const tanHalf=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2)
   const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
-  const centers=orbitMarkers.map(m=>screenPosition(
-    m.planet.getWorldPosition(new THREE.Vector3())))
-  orbitMarkers.forEach(({planet,aura,id,count,kind},i)=>{
-    const here=centers[i]
-    let closest=Infinity
-    if(here.visible) {
-      for(let j=0;j<centers.length;j++) {
-        if(i===j||!centers[j].visible)continue
-        closest=Math.min(closest,Math.hypot(
-          here.x-centers[j].x,here.y-centers[j].y))
-      }
-    }
-    const ideal=orbitMetrics(kind,count,id).idealRadiusPx
-    // Overlap is prevented when crowded, but the count-derived ideal is
-    // NOT flattened to a universal 18-pixel cap. In normal spacing, a
-    // 303-point chapter is visibly larger than a 106-point chapter.
-    const radiusPixels=Math.max(1.8,Math.min(ideal,closest*.42))
-    const world=planet.getWorldPosition(new THREE.Vector3())
-    const depth=Math.max(1,world.sub(camera!.position).dot(forward))
-    const worldRadius=radiusPixels*2*tanHalf*depth/height
+  orbitMarkers.forEach(({planet,aura,id,count,kind})=>{
+    // Each body has an individual clearance-planned orbit. Collision
+    // avoidance belongs to the LANE PLANNER, never in this size function:
+    // a 303-point chapter must not suddenly shrink when a neighbor passes.
+    const radiusPx=orbitMetrics(kind,count,id).idealRadiusPx
+    const position=planet.getWorldPosition(new THREE.Vector3())
+    const depth=Math.max(1,position.sub(camera!.position).dot(forward))
+    const worldRadius=radiusPx*2*tanHalf*depth/height
     planet.scale.setScalar(worldRadius)
     aura.scale.setScalar(worldRadius*(kind==='chapter'?2.65:2.85))
     orbitMarkerRadii.set(id,worldRadius)
