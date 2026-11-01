@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import ExternalTransfer from './ExternalTransfer.vue'
+import BulkQuestionStudio from './BulkQuestionStudio.vue'
 import KnowledgeAIReviewPanel from './KnowledgeAIReviewPanel.vue'
 import DirectBulkApproval from './DirectBulkApproval.vue'
 import {
@@ -15,10 +16,10 @@ import {
   type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
-const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external'; initialDocumentId?: string }>()
+const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string }>()
 const emit = defineEmits<{ updated: [] }>()
 
-type Tab = 'knowledge' | 'questions' | 'external'
+type Tab = 'knowledge' | 'questions' | 'external' | 'batch'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
 const tab = ref<Tab>(props.initialTab ?? 'questions')
 const filter = ref<Filter>('pending')
@@ -366,12 +367,16 @@ function previewAvailable(source: SourceEvidence): boolean {
       <button role="tab" :aria-selected="tab === 'questions'" :class="{ active: tab === 'questions' }" @click="switchTab('questions')">
         <FileQuestion :size="18" /> 2. AI 题目审核 <span v-if="pendingQuestions" class="qb-count">{{ pendingQuestions }}</span>
       </button>
+      <button role="tab" :aria-selected="tab === 'batch'" :class="{ active: tab === 'batch' }" @click="switchTab('batch')">
+        <Sparkles :size="18" /> 3. 智能批量题库
+      </button>
       <button role="tab" :aria-selected="tab === 'external'" :class="{ active: tab === 'external' }" @click="switchTab('external')">
-        <ClipboardCheck :size="18" /> 3. 外部 AI 接力
+        <ClipboardCheck :size="18" /> 4. 外部 AI 接力
       </button>
     </div>
 
     <div v-if="loading" class="qb-empty panel"><LoaderCircle class="spinning" :size="26" /> 正在读取题库…</div>
+    <BulkQuestionStudio v-else-if="tab === 'batch'" :course-id="props.courseId" @updated="reload();emit('updated')" />
     <ExternalTransfer v-else-if="tab === 'external'" :course-id="props.courseId"
       :knowledge-points="knowledge" :preferred-knowledge-point-id="selectedKpId"
       :preferred-document-id="props.initialDocumentId" @imported="importedExternal" />
