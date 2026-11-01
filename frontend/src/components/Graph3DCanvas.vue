@@ -1421,6 +1421,39 @@ function focus(id: string | null, resetAtlasAngle = false) {
       distance = selected?.kind === 'knowledge' ? 92 : 112
     else distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
   }
+  // Adapt BOTH frame scale and frame center to the actual unobstructed
+  // rectangle. This prevents an approved relation from landing under the
+  // details drawer while preserving a continuous map-style camera flight.
+  const safe = safeViewport()
+  const width = Math.max(1, mountPoint.value?.clientWidth ?? 1)
+  const height = Math.max(1, mountPoint.value?.clientHeight ?? 1)
+  const safeWidth = Math.max(1, safe.right - safe.left)
+  const safeHeight = Math.max(1, safe.bottom - safe.top)
+  const screenRight = new THREE.Vector3().crossVectors(
+    new THREE.Vector3(0,1,0), direction)
+  if (screenRight.lengthSq() < 1e-6) screenRight.set(1,0,0)
+  screenRight.normalize()
+  const viewDirection = direction.clone().normalize()
+  const screenTop = new THREE.Vector3()
+    .crossVectors(viewDirection,screenRight).normalize()
+  const frameCenter = (relationFocus || chapterFocus) ? overviewCenter :
+    (coordinate ?? overviewCenter)
+  const framePoints = relationFocus || chapterFocus ? focusedPoints :
+    coordinate ? [coordinate] : fitPoints
+  distance = Math.max(distance, projectedFitDistance(
+    framePoints, frameCenter, viewDirection,
+    THREE.MathUtils.clamp(safeWidth/width*.90,.19,.94),
+    THREE.MathUtils.clamp(safeHeight/height*.89,.19,.94),
+    relationFocus ? 22 : 12, relationFocus ? 30 : 18,
+  ))
+  const unitsPerPixel = 2 *
+    Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * distance/height
+  // Move the camera TARGET, not any planets. Positive screen-right travel
+  // moves the entire constellation to the left, away from the side drawer.
+  desiredTarget.addScaledVector(screenRight,
+    (width/2-(safe.left+safe.right)/2)*unitsPerPixel)
+  desiredTarget.addScaledVector(screenTop,
+    ((safe.top+safe.bottom)/2-height/2)*unitsPerPixel)
   // A visible fog pop before the camera starts moving looks like a jump
   // even if the camera transform itself is continuous.
   prepareFlightRange(distance)
@@ -1696,6 +1729,9 @@ function draw() {
     if (travel >= 1) finishFade()
   }
   controls.update()
+  // Project the CURRENT camera frame, not last frame's inverse matrix.
+  // Screen-space avoidance otherwise lags one frame during fast navigation.
+  camera.updateMatrixWorld()
   // Labels and click targets must respect animated parent-group
   // transforms in both forward and reverse transitions.
   scene.updateMatrixWorld(true)
