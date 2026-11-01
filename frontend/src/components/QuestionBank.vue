@@ -7,8 +7,8 @@ import DirectBulkApproval from './DirectBulkApproval.vue'
 import QuestionBulkApproval from './QuestionBulkApproval.vue'
 import {
   AlertCircle, ArrowRight, BookOpen, CheckCircle2, ChevronRight,
-  ClipboardCheck, FileQuestion, FileText, Image, LoaderCircle,
-  Pencil, RefreshCw, ShieldCheck, Sparkles, XCircle,
+  ClipboardCheck, FileQuestion, FileText, Image, LayoutDashboard, LoaderCircle,
+  Pencil, RefreshCw, ShieldCheck, Sparkles, Settings2, XCircle,
 } from '@lucide/vue'
 import {
   api, sourcePreviewUrl,
@@ -17,14 +17,22 @@ import {
   type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
-const props = defineProps<{ courseId: string; initialTab?: 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string }>()
+const props = defineProps<{ courseId: string; initialTab?: 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string }>()
 const emit = defineEmits<{ updated: []; 'blind-trial': [] }>()
 
-type Tab = 'knowledge' | 'questions' | 'external' | 'batch'
+type Tab = 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
-const tab = ref<Tab>(props.initialTab ?? 'questions')
+const tab = ref<Tab>(props.initialTab ?? 'overview')
 const filter = ref<Filter>('pending')
-const filters: Filter[] = ['pending', 'all', 'approved', 'rejected']
+const filters: Filter[] = ['pending', 'approved', 'rejected', 'all']
+type KnowledgeTool = 'none' | 'batch-review' | 'ai-review'
+const knowledgeTool = ref<KnowledgeTool>('none')
+const showBatchReview = ref(false)
+const showSingleGenerate = ref(false)
+const showTools = ref(false)
+const questionSearch = ref('')
+const knowledgeSearch = ref('')
+const knowledgeStatus = ref<'all' | 'pending' | 'approved'>('all')
 const busy = ref(false)
 const loading = ref(true)
 const editingKnowledge = ref(false)
@@ -65,7 +73,15 @@ let questionToken = 0
 
 const pendingQuestions = computed(() => questions.value.filter(q => q.review_status === 'pending').length)
 const pendingKnowledge = computed(() => knowledge.value.filter(k => k.review_status === 'pending').length)
-const visibleQuestions = computed(() => filter.value === 'all' ? questions.value : questions.value.filter(q => q.review_status === filter.value))
+const approvedQuestions = computed(() => questions.value.filter(q => q.review_status === 'approved').length)
+const visibleQuestions = computed(() => questions.value.filter(q =>
+  (filter.value === 'all' || q.review_status === filter.value) &&
+  (!questionSearch.value.trim() || q.stem.toLocaleLowerCase().includes(questionSearch.value.trim().toLocaleLowerCase()))
+))
+const visibleKnowledge = computed(() => knowledge.value.filter(k =>
+  (knowledgeStatus.value === 'all' || k.review_status === knowledgeStatus.value) &&
+  (!knowledgeSearch.value.trim() || k.canonical_name.toLocaleLowerCase().includes(knowledgeSearch.value.trim().toLocaleLowerCase()))
+))
 const canGenerate = computed(() => Boolean(kpDetail.value &&
   kpDetail.value.review_status === 'approved' && kpDetail.value.sources.length > 0))
 const qSourcesAreVisual = computed(() => Boolean(questionDetail.value?.sources.some(s => s.content_kind === 'figure_description')))
@@ -120,12 +136,22 @@ watch(() => props.courseId, () => {
 
 watch(() => props.initialTab, value => {
   if (value && tab.value !== value) {
-    tab.value = value
-    resetFeedback()
+    switchTab(value)
   }
 })
 function switchTab(value: Tab) {
   tab.value = value
+  showTools.value = false
+  showBatchReview.value = false
+  knowledgeTool.value = 'none'
+  resetFeedback()
+}
+function toggleReviewMode() {
+  showBatchReview.value = !showBatchReview.value
+  resetFeedback()
+}
+function toggleKnowledgeTool(value: Exclude<KnowledgeTool, 'none'>) {
+  knowledgeTool.value = knowledgeTool.value === value ? 'none' : value
   resetFeedback()
 }
 async function importedExternal(payload: { kind: 'questions' | 'knowledge'; ids: string[]; created: number; reused?: number }) {
@@ -133,7 +159,7 @@ async function importedExternal(payload: { kind: 'questions' | 'knowledge'; ids:
     filter.value = 'pending'
     await reload(selectedKpId.value, payload.ids[0] || '')
     tab.value = 'questions'
-    success.value = '外部 AI 的 ' + payload.created + ' 道题已进入待审核区。请逐题核对。'
+    success.value = '已导入 ' + payload.created + ' 道候选题。可以先盲测，再选择批量审核或核对风险题。'
   } else {
     await reload(payload.ids[0] || '', selectedQuestionId.value)
     tab.value = 'knowledge'
@@ -253,7 +279,7 @@ async function generate() {
       filter.value = 'pending'
       const firstId = result.question_version_ids[0]
       if (firstId) await selectQuestion(firstId)
-      success.value = '成功生成 ' + result.created + ' 道待审核题目。请先核对题目与来源。'
+      success.value = '生成 ' + result.created + ' 道候选题。可以先盲测，再选择审核方式。'
       emit('updated')
     } else {
       success.value = '模型已返回，但没有题目通过校验。请查看下面的警告，或换一个知识点重试。'
