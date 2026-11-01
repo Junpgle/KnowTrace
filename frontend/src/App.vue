@@ -121,6 +121,14 @@ function navigate(destination: View) {
   if (destination === 'practice' && quiz.value?.status === 'active') firstUnanswered()
 }
 
+function startBlindFromBank() {
+  // Open a brand-new blind trial without exposing any pending answer on the
+  // administrative page. Previous sessions remain stored and can be resumed.
+  quizMode.value = 'blind'
+  quiz.value = null
+  count.value = Math.max(1, Math.min(10, pendingCount.value))
+  navigate('practice')
+}
 function openDocumentExternal(documentId: string) {
   bankDocumentId.value = documentId
   openBankTab('external')
@@ -550,7 +558,7 @@ onMounted(() => { void initialize() })
           </div>
 
           <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" :initial-tab="bankEntryTab"
-            :initial-document-id="bankDocumentId" @updated="refresh" />
+            :initial-document-id="bankDocumentId" @updated="refresh" @blind-trial="startBlindFromBank" />
           <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
           <DocumentLibrary v-else-if="view === 'library'" :course-id="courseId" :course-name="currentCourse?.title || '课程'"
             @updated="refresh" @open-review="openBankTab('knowledge')" @open-external="openDocumentExternal" />
