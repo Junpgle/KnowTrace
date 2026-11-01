@@ -257,7 +257,7 @@ export interface QuestionBatch {
     group_size: number
     max_groups: number
     questions_per_group: number
-    question_types: ('single_choice' | 'true_false')[]
+    question_types: ('single_choice' | 'multiple_choice' | 'true_false' | 'short_answer')[]
   }
   total_groups: number
   completed_groups: number
@@ -276,7 +276,7 @@ export interface QuestionBatchRequest {
   group_size: number
   max_groups: number
   questions_per_group: number
-  question_types: ('single_choice' | 'true_false')[]
+  question_types: ('single_choice' | 'multiple_choice' | 'true_false' | 'short_answer')[]
   confirmed: boolean
 }
 
@@ -284,7 +284,7 @@ export interface QuestionBulkApprovalCandidate {
   id: string
   stem: string
   version_no: number
-  question_type: 'single_choice' | 'true_false'
+  question_type: 'single_choice' | 'multiple_choice' | 'true_false' | 'short_answer'
   chapter_id: string | null
   knowledge_count: number
   source_count: number
@@ -307,7 +307,7 @@ export interface QuestionSummary {
   version_id: string
   question_id: string
   version_no: number
-  question_type: 'single_choice' | 'true_false'
+  question_type: 'single_choice' | 'multiple_choice' | 'true_false' | 'short_answer'
   stem: string
   difficulty: number
   review_status: 'draft' | 'pending' | 'approved' | 'rejected'
@@ -316,9 +316,9 @@ export interface QuestionSummary {
 
 export interface QuizAnswerResult {
   answer_id: string
-  response: string | boolean
-  is_correct: boolean
-  correct_answer: string | boolean
+  response: string | boolean | string[]
+  is_correct: boolean | null
+  correct_answer: string | boolean | string[]
   explanation: string | null
   answered_at: string
   elapsed_ms?: number | null
@@ -330,15 +330,22 @@ export interface QuizItem {
   question_version_id: string
   primary_knowledge_point_id: string
   selection_reason?: string | null
-  question_type: 'single_choice' | 'true_false'
+  question_type: 'single_choice' | 'multiple_choice' | 'true_false' | 'short_answer'
   stem: string
   options: Record<string, string>
   answered: boolean
   provisional?: boolean
-  submitted_response?: string | boolean
+  submitted_response?: string | boolean | string[]
+  evaluation?: ShortAnswerEvaluation | null
   result?: QuizAnswerResult
 }
 
+export interface ShortAnswerEvaluation {
+  mode: 'self' | 'ai'
+  verdict: 'learned' | 'not_learned' | 'uncertain'
+  feedback: string
+  diagnostic?: boolean
+}
 export interface QuizSession {
   id: string
   course_id: string
@@ -350,6 +357,9 @@ export interface QuizSession {
   total: number
   answered: number
   correct: number | null
+  objective_total?: number
+  subjective_total?: number
+  evaluated_subjective?: number | null
   items: QuizItem[]
 }
 
@@ -363,9 +373,9 @@ export interface MasterySnapshot {
 export interface AnswerFeedback {
   answer_id: string
   quiz_item_id: string
-  response: string | boolean
-  is_correct?: boolean
-  correct_answer?: string | boolean
+  response: string | boolean | string[]
+  is_correct?: boolean | null
+  correct_answer?: string | boolean | string[]
   explanation?: string | null
   knowledge_point_id?: string
   deferred?: boolean
@@ -638,10 +648,10 @@ export interface QuestionVersion {
   id: string
   question_id: string
   version_no: number
-  question_type: 'single_choice' | 'true_false'
+  question_type: 'single_choice' | 'multiple_choice' | 'true_false' | 'short_answer'
   stem: string
   options: Record<string, string>
-  correct_answer: string | boolean
+  correct_answer: string | boolean | string[]
   explanation: string | null
   difficulty: number
   review_status: 'draft' | ReviewStatus
@@ -666,7 +676,7 @@ export interface GenerationResult {
 export interface QuestionRevision {
   stem?: string
   options?: Record<string, string>
-  correct_answer?: string | boolean
+  correct_answer?: string | boolean | string[]
   explanation?: string
   difficulty?: number
 }
@@ -872,13 +882,18 @@ export const api = {
   ),
   answer: (quizItemId: string, body: {
     client_request_id: string
-    response: string | boolean
+    response: string | boolean | string[]
     elapsed_ms: number
   }) => request<AnswerFeedback>(
     '/api/quiz-items/' + encodeURIComponent(quizItemId) + '/answer',
     { method: 'POST', body: JSON.stringify(body) },
   ),
 
+  evaluateShortAnswer: (quizItemId: string, mode: 'self' | 'ai',
+      options: {verdict?: 'learned'|'not_learned';provider?: AIProviderId} = {}) =>
+    request<ShortAnswerEvaluation>('/api/quiz-items/' + encodeURIComponent(quizItemId) +
+      '/short-answer-review', {method:'POST',body:JSON.stringify({mode,...options})}),
+  
   createCourse: (data: {title:string;description?:string|null;code?:string|null}) =>
     request<Course>('/api/courses', {method:'POST',body:JSON.stringify(data)}),
   uploadDocument: (courseId: string, file: File) => {
@@ -899,10 +914,10 @@ export const api = {
   documents: (courseId: string) => request<CourseDocument[]>(
     '/api/courses/' + encodeURIComponent(courseId) + '/documents',
   ),
-  externalQuestionPrompt: (kpId: string, data: { count: number; question_types: ('single_choice' | 'true_false')[] }) =>
+  externalQuestionPrompt: (kpId: string, data: { count: number; question_types: ('single_choice' | 'multiple_choice' | 'true_false' | 'short_answer')[] }) =>
     request<ExternalPrompt>('/api/knowledge-points/' + encodeURIComponent(kpId) + '/external-question-prompt',
       { method: 'POST', body: JSON.stringify(data) }),
-  importExternalQuestions: (kpId: string, data: { count: number; question_types: ('single_choice' | 'true_false')[]; response_text: string }) =>
+  importExternalQuestions: (kpId: string, data: { count: number; question_types: ('single_choice' | 'multiple_choice' | 'true_false' | 'short_answer')[]; response_text: string }) =>
     request<ExternalQuestionImportResult>('/api/knowledge-points/' + encodeURIComponent(kpId) + '/import-external-questions',
       { method: 'POST', body: JSON.stringify(data) }),
   externalKnowledgePrompt: (docId: string, data: { page_start: number; page_end: number }) =>
@@ -947,7 +962,7 @@ export const api = {
   resumeQuestionBatch: (batchId: string) =>
     request<QuestionBatch>('/api/question-batches/' + encodeURIComponent(batchId) + '/resume',
       { method: 'POST' }),
-  generateQuestions: (id: string, options: { count: number; question_types: ('single_choice' | 'true_false')[]; provider?: AIProviderId }) =>
+  generateQuestions: (id: string, options: { count: number; question_types: ('single_choice' | 'multiple_choice' | 'true_false' | 'short_answer')[]; provider?: AIProviderId }) =>
     request<GenerationResult>('/api/knowledge-points/' + encodeURIComponent(id) + '/generate-questions',
       { method: 'POST', body: JSON.stringify(options) }),
   questionVersion: (id: string) => request<QuestionVersion>(
