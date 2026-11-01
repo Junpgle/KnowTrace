@@ -845,39 +845,52 @@ function rebuild(animate = false, transition?: SceneTransition) {
       props.nodes.every(n => n.kind === 'group')
     if (groupOverview) {
       const previouslyPlaced = groupNodes.every(n => browseWorldPositions.has(n.id))
-      if (transition?.mode === 'enter' && anchor && camera) {
-        // CHAPTER -> GROUPS is a camera PAN to a neighboring map district,
-        // not a child mesh expanding outward from the clicked chapter.
-        // Place groups at their FULL final size from the first frame, in the
-        // plane of the CURRENT camera. There is no reorientation jump.
+      if (transition?.mode === 'enter' && anchor && camera && controls) {
+        // Google-Maps-style drill-down: the group tiles have fixed world
+        // addresses INSIDE the clicked chapter, not in a second district a
+        // long horizontal pan away. The camera pans toward the clicked anchor
+        // AND zooms in on this local atlas in the same continuous flight.
+        // These are persistent positions, not mesh expansion keyframes.
         const originals = groupNodes.map(n => coords.get(n.id)).filter(
           (p): p is THREE.Vector3 => Boolean(p))
-        const bounds = new THREE.Box3().setFromPoints(originals)
-        const origin = bounds.getCenter(new THREE.Vector3())
-        const spread = bounds.getSize(new THREE.Vector3())
+        const origin = new THREE.Box3().setFromPoints(originals)
+          .getCenter(new THREE.Vector3())
+        const look = camera.position.clone().sub(controls.target).normalize()
         const cameraRight = new THREE.Vector3(1, 0, 0)
           .applyQuaternion(camera.quaternion).normalize()
         const cameraUp = new THREE.Vector3(0, 1, 0)
           .applyQuaternion(camera.quaternion).normalize()
         const cameraForward = new THREE.Vector3(0, 0, -1)
           .applyQuaternion(camera.quaternion).normalize()
-        // The whole new atlas begins outside the old chapter's visual
-        // footprint. The camera flies sideways to its center while old
-        // chapters remain as a dim orientation reference.
-        const pan = Math.max(370, spread.x * .64 + 180)
-        const destination = anchor.clone().addScaledVector(cameraRight, pan)
+        const unscaled = originals.map(p => anchor.clone()
+          .addScaledVector(cameraRight, p.x - origin.x)
+          .addScaledVector(cameraUp, p.y - origin.y)
+          .addScaledVector(cameraForward, (p.z - origin.z) * .12))
+        const safe = safeViewport()
+        const w = Math.max(1, mountPoint.value?.clientWidth ?? 1)
+        const h = Math.max(1, mountPoint.value?.clientHeight ?? 1)
+        const baseDistance = projectedFitDistance(
+          unscaled, anchor, look,
+          THREE.MathUtils.clamp((safe.right - safe.left) / w * .85, .25, .85),
+          THREE.MathUtils.clamp((safe.bottom - safe.top) / h * .78, .25, .82),
+          24, 30,
+        )
+        const currentDistance = camera.position.distanceTo(controls.target)
+        // A new zoom level has a smaller world footprint. Compute the map
+        // coordinate scale once, from the zoom that fits this viewport; it
+        // never changes during animation. This is *not* an expanding layer.
+        const targetDistance = Math.max(85, currentDistance * .48)
+        const scale = THREE.MathUtils.clamp(
+          targetDistance / Math.max(1, baseDistance) * .78, .045, .82)
         for (const node of groupNodes) {
           const local = coords.get(node.id)
           if (!local) continue
-          const world = destination.clone()
-            .addScaledVector(cameraRight, local.x - origin.x)
-            .addScaledVector(cameraUp, local.y - origin.y)
-            .addScaledVector(cameraForward, (local.z - origin.z) * .22)
+          const world = anchor.clone()
+            .addScaledVector(cameraRight, (local.x - origin.x) * scale)
+            .addScaledVector(cameraUp, (local.y - origin.y) * scale)
+            .addScaledVector(cameraForward, (local.z - origin.z) * scale * .12)
           coords.set(node.id, world)
           browseWorldPositions.set(node.id, world.clone())
-          // The dimmed-context layer must use the exact same map address.
-          // Otherwise, entering a group's knowledge layer would make its
-          // faint parent planet jump back near the old chapter.
           contextCacheCoordinates.set(node.id, world.clone())
         }
       } else if (previouslyPlaced) {
@@ -1390,9 +1403,10 @@ function focus(id: string | null, resetAtlasAngle = false) {
   if (localGroup) {
     // The labels in a group overview sit above the planets. Include that
     // screen-space extent when computing the framing center and zoom.
-    fitPoints = groupOverview
-      ? groupPoints.flatMap(p => [p, p.clone().add(new THREE.Vector3(0, 30, 0))])
-      : [...visibleKnowledge, ...groupPoints]
+    // Group captions are constant pixel size. Do not add 30 WORLD units
+    // above each point: that fake height inflated the camera distance and
+    // cancelled the intended zoom into the clicked chapter.
+    fitPoints = groupOverview ? groupPoints : [...visibleKnowledge, ...groupPoints]
   } else if (isSubset) {
     fitPoints = visibleKnowledge
   } else {
@@ -1487,12 +1501,11 @@ function focus(id: string | null, resetAtlasAngle = false) {
         (maxX + 38) / (tanHalf * camera.aspect),
       ) * 1.08, 74, 390)
     } else if (groupOverview) {
-      // The previous 3D bounding-sphere fit made 12 groups tiny, while a
-      // ring plus chapter hub still overlapped. Fit the planar grid and
-      // reserve space for each two-line label.
+      // Fit the fixed chapter-local tile footprint into the usable view.
+      // The *camera* does the enlarging; nodes do not move during the flight.
       distance = projectedFitDistance(
         fitPoints, overviewCenter, direction,
-        .80, .86, 25, 14,
+        .82, .85, 14, 15,
       )
     } else if (!localGroup) {
       // Course/chapters are arranged on the XZ atlas plane. Projected
