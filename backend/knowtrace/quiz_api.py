@@ -308,7 +308,7 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                  LEFT JOIN quiz_sessions s ON s.id=i.session_id AND s.user_id=?
                     AND s.course_id=?
                  LEFT JOIN answer_records a ON a.quiz_item_id=i.id AND s.id IS NOT NULL
-                    AND i.selection_reason != ?
+                    AND (i.selection_reason IS NULL OR i.selection_reason != ?)
                  WHERE kp.course_id=? AND kp.archived_at IS NULL
                  GROUP BY kp.id ORDER BY kp.canonical_name,kp.id""",
                  (USER_ID,MODEL_KEY,USER_ID,course_id,BLIND_REASON,course_id)))
