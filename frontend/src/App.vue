@@ -7,17 +7,14 @@ import {
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
   TrendingUp, X, XCircle, Orbit, FolderOpen, Plus, Upload, Settings,
 } from '@lucide/vue'
-import QuestionBank from './components/QuestionBank.vue'
+import CourseContentHub from './components/CourseContentHub.vue'
 import AITaskCenter from './components/AITaskCenter.vue'
-// Load the WebGL and Three.js bundle only when the user opens the graph.
-const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
-const DocumentLibrary = defineAsyncComponent(() => import('./components/DocumentLibrary.vue'))
 const AISettings = defineAsyncComponent(() => import('./components/AISettings.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession, type KnowledgePoint, type QuestionQuality } from './api'
 
-type View = 'overview' | 'practice' | 'report' | 'bank' | 'galaxy' | 'library' | 'settings'
+type View = 'overview' | 'practice' | 'report' | 'content' | 'settings'
 type Choice = string | boolean | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
@@ -25,8 +22,7 @@ const showCourseForm = ref(false)
 const newCourseName = ref('')
 const newCourseDescription = ref('')
 const creatingCourse = ref(false)
-const bankEntryTab = ref<'overview' | 'knowledge' | 'questions' | 'batch' | 'external'>('overview')
-const bankDocumentId = ref('')
+const contentSection = ref<'materials' | 'knowledge' | 'relations' | 'questions'>('materials')
 const loading = ref(true)
 const refreshing = ref(false)
 const starting = ref(false)
@@ -80,7 +76,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', bank: '题库管理', galaxy: '知识星系', library: '资料库', settings: '模型设置' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', content: '课程内容', settings: '模型设置' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -114,28 +110,21 @@ function firstUnanswered() {
   chooseIndex(next >= 0 ? next : Math.max(quiz.value.items.length - 1, 0))
 }
 function navigate(destination: View) {
-  if (destination === 'bank') bankEntryTab.value = 'overview'
   view.value = destination
   mobileMenu.value = false
   banner.value = ''
   if (destination === 'practice' && quiz.value?.status === 'active') firstUnanswered()
 }
-
+function openContentSection(target: 'materials' | 'knowledge' | 'relations' | 'questions') {
+  contentSection.value = target
+  navigate('content')
+}
 function startBlindFromBank() {
-  // Open a brand-new blind trial without exposing any pending answer on the
-  // administrative page. Previous sessions remain stored and can be resumed.
+  // Blind candidate trials do not update formal mastery estimates.
   quizMode.value = 'blind'
   quiz.value = null
   count.value = Math.max(1, Math.min(10, pendingCount.value))
   navigate('practice')
-}
-function openDocumentExternal(documentId: string) {
-  bankDocumentId.value = documentId
-  openBankTab('external')
-}
-function openBankTab(tab: 'overview' | 'knowledge' | 'questions' | 'batch' | 'external') {
-  navigate('bank')
-  bankEntryTab.value = tab
 }
 async function createCourse() {
   const title = newCourseName.value.trim()
@@ -152,7 +141,7 @@ async function createCourse() {
     localStorage.setItem('knowtrace:selected-course',course.id)
     if (courses.value.length === 1) await loadCourseData(course.id)
     await nextTick() // Allow the course-switch watcher to run before choosing the library.
-    navigate('library')
+    openContentSection('materials')
   } catch (e) { showError(e) }
   finally { creatingCourse.value = false }
 }
@@ -215,6 +204,7 @@ watch(courseId, (value, oldValue) => {
   if (!value || !oldValue || value === oldValue) return
   localStorage.setItem('knowtrace:selected-course', value)
   view.value = 'overview'
+  contentSection.value = 'materials'
   void loadCourseData(value)
 })
 async function refresh() {
@@ -353,14 +343,15 @@ onMounted(() => { void initialize() })
         <div class="brand-text"><strong>知迹</strong><span>KNOWTRACE</span></div>
         <button class="mobile-close icon-button" aria-label="关闭菜单" @click="mobileMenu = false"><X :size="20" /></button>
       </div>
-      <div class="sidebar-group-label">学习工作台</div>
-      <nav class="sidebar-nav" aria-label="主导航">
+      <div class="sidebar-group-label">学习</div>
+      <nav class="sidebar-nav" aria-label="学习导航">
         <button type="button" :class="{ active: view === 'overview' }" @click="navigate('overview')"><LayoutDashboard :size="19" /><span>学习总览</span></button>
         <button type="button" :class="{ active: view === 'practice' }" @click="navigate('practice')"><BookOpen :size="19" /><span>开始练习</span><span v-if="quiz?.status === 'active'" class="nav-dot"></span></button>
-        <button type="button" :class="{ active: view === 'bank' }" @click="navigate('bank')"><ClipboardCheck :size="19" /><span>题库管理</span><span v-if="pendingCount" class="nav-dot"></span></button>
-        <button type="button" :class="{ active: view === 'library' }" @click="navigate('library')"><FolderOpen :size="19" /><span>资料导入与管理</span></button>
-        <button type="button" :class="{ active: view === 'galaxy' }" @click="navigate('galaxy')"><Orbit :size="19" /><span>知识星系 · 3D</span></button>
         <button type="button" :class="{ active: view === 'report' }" @click="navigate('report')"><TrendingUp :size="19" /><span>学习报告</span></button>
+      </nav>
+      <div class="sidebar-group-label sidebar-content-label">课程管理</div>
+      <nav class="sidebar-nav" aria-label="课程管理导航">
+        <button type="button" :class="{ active: view === 'content' }" @click="navigate('content')"><FolderOpen :size="19" /><span>课程内容</span><span v-if="pendingCount" class="nav-dot"></span></button>
       </nav>
       <div class="sidebar-group-label course-label">正在学习</div>
       <div class="course-selector">
@@ -411,7 +402,7 @@ onMounted(() => { void initialize() })
                 <div class="hero-kicker"><Sparkles :size="15" /> 智能评测 · 让进步可见</div>
                 <h2>每一次练习，<br /><span>都让知识更清晰。</span></h2>
                 <p>从真实课件出发，用每一道题发现薄弱点，让学习不再凭感觉。</p>
-                <div class="hero-actions"><button class="button button-light" @click="navigate('library')"><Upload :size="18" /> 导入课件资料</button><button class="hero-secondary" @click="navigate('practice')">开始练习 <ChevronRight :size="18" /></button></div>
+                <div class="hero-actions"><button class="button button-light" @click="openContentSection('materials')"><Upload :size="18" /> 导入课件资料</button><button class="hero-secondary" @click="navigate('practice')">开始练习 <ChevronRight :size="18" /></button></div>
               </div>
               <div class="hero-art" aria-hidden="true">
                 <div class="orbit orbit-1"></div><div class="orbit orbit-2"></div>
@@ -445,7 +436,7 @@ onMounted(() => { void initialize() })
                   <p v-if="quiz?.status === 'active'">已经完成 {{ quiz.answered }}/{{ quiz.total }} 道题，可以从上次的位置继续。</p>
                   <p v-else-if="approvedCount">从 {{ currentCourse?.title }} 的已审核题库中出题，作答后即可查看解析。</p><p v-else>课程暂时没有已审核题目，请先完成 AI 出题和人工审核。</p>
                   <button class="button button-primary continue-button" @click="navigate('practice')">{{ quiz?.status === 'active' ? '继续上次测评' : '前往练习' }} <ArrowRight :size="18" /></button>
-                  <button v-if="pendingCount || !approvedCount" class="text-link pending-hint qb-home-link" @click="navigate('bank')">{{ pendingCount ? pendingCount + ' 道题待审核 · 去处理' : '去生成并审核题目' }} <ArrowRight :size="15" /></button>
+                  <button v-if="pendingCount || !approvedCount" class="text-link pending-hint qb-home-link" @click="openContentSection('questions')">{{ pendingCount ? pendingCount + ' 道题待审核 · 去处理' : '去生成并审核题目' }} <ArrowRight :size="15" /></button>
                 </div>
               </section>
             </div>
@@ -557,14 +548,11 @@ onMounted(() => { void initialize() })
             </template>
           </div>
 
-          <QuestionBank v-else-if="view === 'bank'" :course-id="courseId" :initial-tab="bankEntryTab"
-            :initial-document-id="bankDocumentId" @updated="refresh" @blind-trial="startBlindFromBank" />
+          <CourseContentHub v-else-if="view === 'content'" :course-id="courseId"
+            :course-name="currentCourse?.title || '课程'" :initial-section="contentSection"
+            @updated="refresh" @blind-trial="startBlindFromBank"
+            @open-practice="navigate('practice')" />
           <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
-          <DocumentLibrary v-else-if="view === 'library'" :course-id="courseId" :course-name="currentCourse?.title || '课程'"
-            @updated="refresh" @open-review="openBankTab('knowledge')" @open-external="openDocumentExternal" />
-          <KnowledgeGalaxy v-else-if="view === 'galaxy'" :course-id="courseId"
-            :course-name="currentCourse?.title || '课程'"
-            @open-bank="navigate('bank')" @open-practice="navigate('practice')" />
           <div v-else class="view-stack">
             <div class="section-heading"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>学习报告<span class="heading-dot">.</span></h1><p class="section-description">发现学习中的进步，也正视尚未掌握的部分。</p></div>
               <button class="button button-outline button-small" @click="refresh"><RefreshCw :size="17" :class="{ spinning: refreshing }" /> 更新报告</button></div>
