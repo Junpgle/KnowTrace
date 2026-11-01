@@ -103,6 +103,10 @@ const orbitMarkers: {
   count: number; kind: 'chapter' | 'group'
 }[] = []
 const orbitMarkerRadii = new Map<string, number>()
+// Overview captions belong to moving planets and keep a FIXED relative
+// position. The ordinary collision solver can jump between many candidate
+// offsets every frame, which looks like the name is shaking or teleporting.
+const stableOrbitCaptionOpacity = new Map<string, number>()
 type OrbitingPlanet = {
   id: string
   world: THREE.Vector3
@@ -337,11 +341,11 @@ function makeChapterLabel(title: string, subtitle: string) {
   canvas.height = 208
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
-  ctx.fillStyle = 'rgba(7, 29, 44, .90)'
+  ctx.fillStyle = 'rgba(7, 29, 44, .85)'
   ctx.beginPath()
   ctx.roundRect(5, 5, 710, 198, 26)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(120, 204, 204, .44)'
+  ctx.strokeStyle = 'rgba(120, 204, 204, .34)'
   ctx.lineWidth = 2
   ctx.stroke()
   const name = title.length > 26 ? title.slice(0, 25) + '…' : title
@@ -349,14 +353,14 @@ function makeChapterLabel(title: string, subtitle: string) {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillStyle = '#f0ffff'
-  ctx.font = '700 58px system-ui, sans-serif'
+  ctx.font = '650 53px system-ui, sans-serif'
   if (lines.length > 1) {
     ctx.fillText(lines[0], 360, 64, 668)
     ctx.fillText(lines[1], 360, 115, 668)
   } else {
     ctx.fillText(lines[0], 360, 82, 668)
   }
-  ctx.font = '600 38px system-ui, sans-serif'
+  ctx.font = '550 34px system-ui, sans-serif'
   ctx.fillStyle = '#8edacf'
   ctx.fillText(subtitle, 360, lines.length > 1 ? 166 : 155, 668)
   const texture = new THREE.CanvasTexture(canvas)
@@ -747,6 +751,7 @@ function clearGraph(animate = false) {
   orbitTracks.splice(0)
   orbitMarkers.splice(0)
   orbitMarkerRadii.clear()
+  stableOrbitCaptionOpacity.clear()
   orbitingPlanets.splice(0)
   movingLines.splice(0)
   orbitVisuals.clear()
@@ -1502,8 +1507,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
       if (label) {
         if (overview) {
           // Twice the previous screen-space label size at the overview camera.
-          label.scale.set(isCourse ? 43 : node.kind==='group' ? 49 : 50,
-            isCourse ? 12.4 : node.kind==='group' ? 14.2 : 14.5, 1)
+          label.scale.set(isCourse ? 34 : node.kind==='group' ? 37 : 39,
+            isCourse ? 9.8 : node.kind==='group' ? 10.7 : 11.3, 1)
         } else {
           label.scale.set(isCourse ? 22 : 24, 5.3, 1)
         }
@@ -1511,8 +1516,10 @@ function rebuild(animate = false, transition?: SceneTransition) {
         label.userData.nodeId = node.id
         const canvasWidth = mountPoint.value?.clientWidth ?? 1500
         const widthPx = node.kind === 'group'
-          ? Math.min(186, Math.max(135, canvasWidth / 7.6))
-          : Math.min(242, Math.max(150, canvasWidth / 6.5))
+          ? Math.min(166, Math.max(125, canvasWidth / 10))
+          : isCourse
+            ? Math.min(152, Math.max(114, canvasWidth / 11))
+            : Math.min(172, Math.max(128, canvasWidth / 9.5))
         labelAnchors.push({
           sprite: label, center: position,
           distance: radius + (overview ? 10.5 : 4),
@@ -1525,7 +1532,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
           ),
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
-            radius, gap: node.kind === 'group' ? 8 : 12,
+            radius, gap: node.kind === 'group' ? 7 : 9,
           } : undefined,
         })
         g.add(label)
