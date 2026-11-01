@@ -911,7 +911,7 @@ function rebuild(animate = false) {
             ? count + (groupOrder >= 0 && groupOrder < 6 ? 7 : 0) : 100,
           declutter: overview && (
             node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 7 ||
-            node.kind === 'chapter' && props.nodes.filter(n=>n.kind==='chapter').length > 10
+            node.kind === 'chapter' && props.nodes.filter(n=>n.kind==='chapter').length > 5
           ),
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
