@@ -1633,11 +1633,12 @@ function pointerMove(event: PointerEvent) {
     .find(n => n.id === hoveredNodeId)
   hoveredName.value = node?.name ?? ''
   const bounds = mountPoint.value.getBoundingClientRect()
+  const tooltipWidth = Math.min(340, Math.max(0, bounds.width - 24))
   hoveredPoint.value = {
-    x: Math.min(Math.max(10, event.clientX - bounds.left + 18),
-      Math.max(10, bounds.width - 280)),
-    y: Math.min(Math.max(10, event.clientY - bounds.top + 18),
-      Math.max(10, bounds.height - 72)),
+    x: Math.max(10, Math.min(event.clientX - bounds.left + 18,
+      bounds.width - tooltipWidth - 12)),
+    y: Math.max(10, Math.min(event.clientY - bounds.top + 18,
+      bounds.height - 100)),
   }
   renderer.domElement.style.cursor = hoveredNodeId ? 'pointer' : 'grab'
 }
