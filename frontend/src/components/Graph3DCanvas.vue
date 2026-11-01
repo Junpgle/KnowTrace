@@ -1657,7 +1657,12 @@ watch(() => ({
       cameraHistory.length = 0
     }
   }
-  rebuild(hierarchyChanged, hierarchyChanged ? {
+  const selectedChanged = next.selectedId !== previous.selectedId
+  // A local selection can rearrange the neighbor orbit even if the set of
+  // nodes stays the same. Blend those frames as well; swapping the meshes
+  // immediately would otherwise look like a pre-animation teleport.
+  const sceneChanged = layerChanged || selectedChanged
+  rebuild(sceneChanged, hierarchyChanged ? {
     mode: transitionMode,
     anchorId: action?.nodeId,
     restore: nextSceneFrame,
