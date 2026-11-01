@@ -886,18 +886,51 @@ function rebuild(animate = false, transition?: SceneTransition) {
       })
     }
   }
+  // Reflow the REAL verified one-hop neighborhood in the camera-facing
+  // plane. The previous layout could put three related concepts on nearly
+  // one screen-space line (or even one over another in depth). Keep the
+  // selected planet at its original map position, arrange ONLY its actual
+  // semantic neighbors around it, and let the camera fit that constellation.
+  const focusState = focusRelations()
+  const selectedId = props.selectedId
+  const focusCenter = selectedId ? coords.get(selectedId) : undefined
+  if (focusCenter && focusState.neighbors.size) {
+    const neighbors = [...focusState.neighbors].filter(id => coords.has(id)).sort()
+    const count = neighbors.length
+    const screenRight = new THREE.Vector3(1,0,0).applyQuaternion(camera?.quaternion ??
+      new THREE.Quaternion())
+    const screenUp = new THREE.Vector3(0,1,0).applyQuaternion(camera?.quaternion ??
+      new THREE.Quaternion())
+    const innerCount = count <= 8 ? count : Math.min(8, Math.ceil(count*.46))
+    // Deterministic polar sampling is not a rectangular grid. Two links
+    // deliberately occupy different vertical bands, not a horizontal row.
+    neighbors.forEach((id, i) => {
+      const outer = i >= innerCount
+      const ordinal = outer ? i - innerCount : i
+      const ringCount = outer ? count - innerCount : innerCount
+      const angle = count === 1 ? -Math.PI/4
+        : count === 2 ? (i === 0 ? -Math.PI/4 : 3*Math.PI/4)
+        : -Math.PI/3 + 2*Math.PI*(ordinal + (outer ? .35 : 0)) /
+          Math.max(1,ringCount)
+      const radius = outer ? Math.max(92,ringCount*15) :
+        Math.max(64,Math.min(94,innerCount*13))
+      coords.set(id,focusCenter.clone()
+        .addScaledVector(screenRight,Math.cos(angle)*radius)
+        .addScaledVector(screenUp,Math.sin(angle)*radius))
+    })
+  }
   for (const node of props.nodes) {
     const position = coords.get(node.id)
     if (position) positions.set(node.id, position)
   }
-  const focusState = focusRelations()
-  const selectedId = props.selectedId
   // Course / sibling chapter anchors may be present for structural context
   // in props.nodes, but must be shaded rather than treated as selected.
   const currentChapter = props.contextChapterId
-  const brightNodes = props.nodes.filter(n =>
-    !currentChapter || (n.kind !== 'course' && n.kind !== 'chapter') ||
-    n.id === currentChapter || n.id === props.selectedId)
+  const brightNodes = props.nodes.filter(n => {
+    if (focusState.active) return n.id === selectedId || focusState.neighbors.has(n.id)
+    return !currentChapter || (n.kind !== 'course' && n.kind !== 'chapter') ||
+      n.id === currentChapter || n.id === selectedId
+  })
   const activeIds = new Set(brightNodes.map(n => n.id))
   // Render the rest of the map below the active layer, keeping its original
   // location. Small spheres are instanced: thousands of dim points remain
@@ -923,8 +956,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
     const ids: string[] = []
     backKnowledge.forEach((node, index) => {
       const onChapter = belongsToContextChapter(node, props.contextChapterId)
-      const brightness = onChapter ? .52 : .30
-      const size = onChapter ? 1.95 : 1.5
+      const brightness = onChapter ? .18 : .085
+      const size = onChapter ? .55 : .35
       scale.setScalar(size)
       matrix.compose(backdrop.get(node.id)!, rotation, scale)
       cloud.setMatrixAt(index, matrix)
@@ -946,11 +979,11 @@ function rebuild(animate = false, transition?: SceneTransition) {
     const inChapter = belongsToContextChapter(node, props.contextChapterId)
     const base = node.kind === 'course' ? 0x62ecdf :
       node.kind === 'group' ? 0x88aac5 : 0x80bce7
-    const tint = new THREE.Color(base).multiplyScalar(inChapter ? .62 : .32)
-    const radius = node.kind === 'chapter' ? 6.8 : node.kind === 'course' ? 5.5 : 4.8
+    const tint = new THREE.Color(base).multiplyScalar(inChapter ? .23 : .12)
+    const radius = node.kind === 'chapter' ? 3.5 : node.kind === 'course' ? 3 : 2.8
     const planet = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12),
       new THREE.MeshBasicMaterial({
-        color: tint, transparent: true, opacity: inChapter ? .88 : .60,
+        color: tint, transparent: true, opacity: inChapter ? .42 : .24,
         depthWrite: false,
       }))
     planet.position.copy(p)
@@ -989,8 +1022,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
       cluster.setMatrixAt(index, matrix)
 
       const color = new THREE.Color(statusColor(node))
-      if (center) color.lerp(new THREE.Color(0xffffff), 0.7)
-      else if (neighbor) color.lerp(new THREE.Color(0x81f5ea), 0.65)
+      if (center) color.lerp(new THREE.Color(0xe7ffff), .96)
+      else if (neighbor) color.lerp(new THREE.Color(0x4cf8eb), .87)
       else if (focusState.active) color.multiplyScalar(0.16)
       cluster.setColorAt(index, color)
       ids.push(node.id)
