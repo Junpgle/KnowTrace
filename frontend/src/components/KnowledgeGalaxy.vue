@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   Activity, ArrowRight, BookOpen, CircleHelp, FileText, List,
   LoaderCircle, Maximize2, Network, Orbit, RefreshCw, RotateCcw, Search,
@@ -232,8 +232,9 @@ async function resetView() {
   selectedChapter.value = 'all'
   filter.value = 'all'
   query.value = ''
-  await nextTick()
-  canvas.value?.resetCamera()
+  // The graph watcher already restores or fits the previous camera pose.
+  // A second resetCamera() in the same tick used to restart that flight,
+  // creating a visible jerk just after the click.
 }
 watch(() => props.courseId, () => {
   ++detailToken
