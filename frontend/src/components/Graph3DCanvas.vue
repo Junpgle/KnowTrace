@@ -971,7 +971,10 @@ function initializeOrbitingPlanets() {
       center:new THREE.Vector3(0,pos.y,0),
       axisX:new THREE.Vector3(1,0,0),
       axisY:new THREE.Vector3(0,0,1),
-      major:lane.major,minor:lane.minor,phase:lane.phase,
+      major:lane.major,minor:lane.minor,
+      // A return flight restores a snapshot at its LAST orbital phase.
+      // Resume from that exact pose, not a deterministic initial timestamp.
+      phase:Math.atan2(pos.z/lane.minor,pos.x/lane.major),
       radiansPerSecond:2*Math.PI/lane.periodSeconds,
       elapsedSeconds:0,objects,
     })
@@ -1698,6 +1701,17 @@ function focus(id: string | null, resetAtlasAngle = false) {
     fitPoints = [...positions.values()]
   }
   if (!fitPoints.length) fitPoints = [...positions.values()]
+  if (!id && orbitingPlanets.length) {
+    // Fit the FULL trajectories, not only the planets' current positions.
+    // Otherwise half an orbit later the far side leaves the viewport.
+    const extrema = orbitingPlanets.flatMap(body => [
+      body.center.clone().addScaledVector(body.axisX, body.major),
+      body.center.clone().addScaledVector(body.axisX, -body.major),
+      body.center.clone().addScaledVector(body.axisY, body.minor),
+      body.center.clone().addScaledVector(body.axisY, -body.minor),
+    ])
+    fitPoints = [...fitPoints, ...extrema]
+  }
   // Selecting a concept is selecting its one-hop network, not a single
   // isolated planet. Fit the selected concept plus all visible, approved
   // semantic neighbors into the viewport (including the details sidebar).
@@ -2266,8 +2280,10 @@ function resize() {
   renderer.setSize(width, height, false)
   // Reflow the group atlas when the window materially changes shape.
   // Layout otherwise stays cached while the user pans, zooms or selects.
-  if (wasWidth && wasHeight && props.nodes.length > 0 &&
-    props.nodes.every(n => n.kind === 'group') &&
+  const overviewAtlas = props.nodes.length > 0 &&
+    props.nodes.every(n => n.kind === 'group' || n.kind === 'chapter' ||
+      n.kind === 'course')
+  if (wasWidth && wasHeight && overviewAtlas &&
     (Math.abs(width - wasWidth) > 42 || Math.abs(height - wasHeight) > 42)) {
     cachedNodes = null
     cachedEdges = null
