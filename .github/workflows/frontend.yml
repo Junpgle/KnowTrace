@@ -46,6 +46,11 @@ jobs:
           set -o pipefail
           npm run typecheck 2>&1 | tee -a frontend-ci.log
 
+      - name: Verify orbit radius and speed monotonicity
+        run: |
+          set -o pipefail
+          npm run test:orbit 2>&1 | tee -a frontend-ci.log
+
       - name: Vite production build
         run: |
           set -o pipefail

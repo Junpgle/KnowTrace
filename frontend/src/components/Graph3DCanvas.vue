@@ -6,6 +6,7 @@
  */
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as THREE from 'three'
+import { orbitMetrics } from '../orbitMetrics'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GraphEdge, GraphNode } from '../api'
 
@@ -86,6 +87,7 @@ const projectedPoint = new THREE.Vector3()
 const cameraFacing = new THREE.Vector3()
 let hoveredNodeId: string | null = null
 const hoveredName = ref('')
+const hoveredOrbitInfo = ref('')
 const hoveredPoint = ref({ x: 0, y: 0 })
 const labelAnchors: LabelAnchor[] = []
 // Visual tracks are intentionally browse-only and never become knowledge
@@ -95,8 +97,11 @@ const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[]
 // their radius is specified in SCREEN pixels, not permanent world units.
 // This prevents a 10-world-unit globe from covering neighboring orbit slots
 // when chapter-level camera zoom brings the group atlas into view.
-const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string; count: number }[] = []
-const groupMarkerRadii = new Map<string, number>()
+const orbitMarkers: {
+  planet: THREE.Mesh; aura: THREE.Sprite; id: string
+  count: number; kind: 'chapter' | 'group'
+}[] = []
+const orbitMarkerRadii = new Map<string, number>()
 type OrbitingPlanet = {
   id: string
   world: THREE.Vector3
@@ -108,7 +113,7 @@ type OrbitingPlanet = {
   minor: number
   phase: number
   radiansPerSecond: number
-  startedAt: number
+  elapsedSeconds: number
   objects: {object: THREE.Object3D; start: THREE.Vector3}[]
 }
 const orbitingPlanets: OrbitingPlanet[] = []
@@ -116,7 +121,6 @@ const movingLines: {
   geometry: THREE.BufferGeometry
   edges: {source:string;target:string}[]
 }[] = []
-let orbitalSeconds = 0
 let lastOrbitFrame = 0
 const orbitVisuals = new Map<string, {object:THREE.Object3D;start:THREE.Vector3}[]>()
 const screenUp = new THREE.Vector3()
@@ -733,15 +737,15 @@ function clearGraph(animate = false) {
   backdropPoints.splice(0)
   labelAnchors.splice(0)
   orbitTracks.splice(0)
-  groupMarkers.splice(0)
-  groupMarkerRadii.clear()
+  orbitMarkers.splice(0)
+  orbitMarkerRadii.clear()
   orbitingPlanets.splice(0)
   movingLines.splice(0)
   orbitVisuals.clear()
-  orbitalSeconds = 0
   lastOrbitFrame = 0
   hoveredNodeId = null
   hoveredName.value = ''
+  hoveredOrbitInfo.value = ''
   positions.clear()
   group = null
 }
@@ -928,17 +932,17 @@ function initializeOrbitingPlanets() {
       const individualCenter=center.clone().add(residual)
       const amount=node.kind==='group'?node.source_count:
         (cachedChapterTotals.get(node.id)??node.source_count)
-      // Stable pseudorandom differences avoid everyone moving in lockstep.
-      // A planet carrying more knowledge orbits measurably more slowly.
-      const periodSeconds=(48+6.8*Math.sqrt(Math.max(1,amount)))*
-        (.91+.18*ordinalHash(node.id+':orbital-speed'))
+      // Pixel size and orbital speed share one count-driven metric.
+      // The period is strictly increasing with count, even across IDs.
+      const {periodSeconds} = orbitMetrics(isGroup ? 'group' : 'chapter',
+        amount,node.id)
       orbitingPlanets.push({
         id:node.id, world:position, initialWorld:position.clone(),
         center:individualCenter,
         axisX:axisX.clone(), axisY:axisY.clone(),
         major:xRadius*ellipticalScale, minor:yRadius*ellipticalScale, phase,
         radiansPerSecond:2*Math.PI/periodSeconds,
-        startedAt:0,
+        elapsedSeconds:0,
         objects,
       })
     })
@@ -953,11 +957,14 @@ function animateOrbits(now:number) {
   if (!lastOrbitFrame) lastOrbitFrame=now
   const dt=Math.min(.05,Math.max(0,(now-lastOrbitFrame)/1000))
   lastOrbitFrame=now
-  if (reducedMotion() || hoveredNodeId || props.selectedId ||
-      outgoing.length || tween) return
-  orbitalSeconds+=dt
+  if (reducedMotion() || props.selectedId || outgoing.length || tween)
+    return
   for(const planet of orbitingPlanets){
-    const angle=planet.phase+planet.radiansPerSecond*orbitalSeconds
+    // Keep the hovered planet stationary for reliable clicking, but let
+    // EVERY OTHER planet continue its orbit. Do not catch up in one jump.
+    if (hoveredNodeId === planet.id) continue
+    planet.elapsedSeconds+=dt
+    const angle=planet.phase+planet.radiansPerSecond*planet.elapsedSeconds
     const destination=planet.center.clone()
       .addScaledVector(planet.axisX,planet.major*Math.cos(angle))
       .addScaledVector(planet.axisY,planet.minor*Math.sin(angle))
@@ -1424,8 +1431,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
     aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
     orbitDecorations.push(aura)
-    if (overview && node.kind === 'group') {
-      groupMarkers.push({planet, aura, id:node.id, count})
+    if (overview && (node.kind === 'group' || node.kind === 'chapter')) {
+      orbitMarkers.push({planet, aura, id:node.id, count, kind:node.kind})
     }
 
     if (!focusState.active && !(overview && node.kind === 'group')) {
@@ -1870,39 +1877,37 @@ defineExpose({ resetCamera, zoomIn, zoomOut })
 // Pixel-based marker sizing also takes real projected neighbor clearance
 // into account. At high zoom the camera sees more detail but planet meshes
 // must not grow until they mask the other orbit stops or their captions.
-function updateGroupMarkerSizes() {
-  if (!camera || !renderer || !groupMarkers.length) return
-  const height = Math.max(1, renderer.domElement.clientHeight)
-  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
-  const cameraForward = new THREE.Vector3(0, 0, -1)
-    .applyQuaternion(camera.quaternion)
-  const centers = groupMarkers.map(m => screenPosition(
+// Both chapter and browse-group planets use count-scaled SCREEN pixel
+// radii. Formerly chapter size depended on depth and group sizes were capped
+// at 18px; neither reflected the actual knowledge-point count reliably.
+function updateOrbitMarkerSizes() {
+  if (!camera || !renderer || !orbitMarkers.length) return
+  const height=Math.max(1,renderer.domElement.clientHeight)
+  const tanHalf=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2)
+  const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
+  const centers=orbitMarkers.map(m=>screenPosition(
     m.planet.getWorldPosition(new THREE.Vector3())))
-  groupMarkers.forEach(({planet,aura,id,count}, i) => {
-    const here = centers[i]
-    let closest = Infinity
-    if (here.visible) {
-      for (let j = 0; j < centers.length; j++) {
-        if (i === j || !centers[j].visible) continue
-        closest = Math.min(closest,
-          Math.hypot(here.x-centers[j].x,here.y-centers[j].y))
+  orbitMarkers.forEach(({planet,aura,id,count,kind},i)=>{
+    const here=centers[i]
+    let closest=Infinity
+    if(here.visible) {
+      for(let j=0;j<centers.length;j++) {
+        if(i===j||!centers[j].visible)continue
+        closest=Math.min(closest,Math.hypot(
+          here.x-centers[j].x,here.y-centers[j].y))
       }
     }
-    // Leave a generous clearance for strokes and labels. A narrow projection
-    // can shrink a marker, but can NEVER make adjacent planets overlap.
-    // Concept-heavy browsing groups are visibly larger; the nearest
-    // neighbor screen-space limit always wins to prevent overlaps.
-    const preferredRadius = THREE.MathUtils.clamp(
-      6.7+2.0*Math.sqrt(Math.max(1,count)), 8.8, 18)
-    const radiusPixels = Math.max(3.8,Math.min(
-      preferredRadius, closest * .28))
-    const depth = Math.max(1, planet.getWorldPosition(new THREE.Vector3())
-      .sub(camera!.position).dot(cameraForward))
-    const worldPerPixel = 2*tanHalf*depth/height
-    const worldRadius = radiusPixels*worldPerPixel
+    const ideal=orbitMetrics(kind,count,id).idealRadiusPx
+    // Overlap is prevented when crowded, but the count-derived ideal is
+    // NOT flattened to a universal 18-pixel cap. In normal spacing, a
+    // 303-point chapter is visibly larger than a 106-point chapter.
+    const radiusPixels=Math.max(1.8,Math.min(ideal,closest*.42))
+    const world=planet.getWorldPosition(new THREE.Vector3())
+    const depth=Math.max(1,world.sub(camera!.position).dot(forward))
+    const worldRadius=radiusPixels*2*tanHalf*depth/height
     planet.scale.setScalar(worldRadius)
-    aura.scale.setScalar(worldRadius*3.1)
-    groupMarkerRadii.set(id,worldRadius)
+    aura.scale.setScalar(worldRadius*(kind==='chapter'?2.65:2.85))
+    orbitMarkerRadii.set(id,worldRadius)
   })
 }
 
@@ -1955,8 +1960,8 @@ function arrangeScreenLabels() {
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * depth)
     const worldRadius = node.kind === 'knowledge'
       ? node.id === selected ? 3.5 : 2.7
-      : node.kind === 'group' ? (groupMarkerRadii.get(node.id) ?? 8)
-      : node.kind === 'chapter' ? 13 : 10
+      : node.kind === 'group' ? (orbitMarkerRadii.get(node.id) ?? 8)
+       : node.kind === 'chapter' ? (orbitMarkerRadii.get(node.id) ?? 13) : 10
     planets.push({id:node.id,x:p.x,y:p.y,
       radius:Math.max(11, Math.min(40, pxPerWorld * worldRadius + 6))})
   }
@@ -2199,10 +2204,10 @@ function draw() {
   // Labels and click targets must respect animated parent-group
   // transforms in both forward and reverse transitions.
   scene.updateMatrixWorld(true)
-  updateGroupMarkerSizes()
+  updateOrbitMarkerSizes()
   for (const anchor of labelAnchors) {
-    if (anchor.nodeId && anchor.screen && groupMarkerRadii.has(anchor.nodeId))
-      anchor.screen.radius = groupMarkerRadii.get(anchor.nodeId)!
+    if (anchor.nodeId && anchor.screen && orbitMarkerRadii.has(anchor.nodeId))
+      anchor.screen.radius = orbitMarkerRadii.get(anchor.nodeId)!
   }
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
   for (const anchor of labelAnchors) placeLabel(anchor)
@@ -2260,6 +2265,13 @@ function pointerMove(event: PointerEvent) {
   const node = [...props.nodes, ...(props.contextNodes ?? [])]
     .find(n => n.id === hoveredNodeId)
   hoveredName.value = node?.name ?? ''
+  const body=orbitingPlanets.find(p=>p.id===hoveredNodeId)
+  if (node && body && (node.kind==='chapter'||node.kind==='group')) {
+    const count=node.kind==='group' ? node.source_count :
+      (cachedChapterTotals.get(node.id)??0)
+    const metrics=orbitMetrics(node.kind,count,node.id)
+    hoveredOrbitInfo.value=`${count} 个知识点 · 公转约 ${Math.round(metrics.periodSeconds)} 秒/圈`
+  } else hoveredOrbitInfo.value=''
   const bounds = mountPoint.value.getBoundingClientRect()
   const tooltipWidth = Math.min(340, Math.max(0, bounds.width - 24))
   hoveredPoint.value = {
@@ -2273,6 +2285,7 @@ function pointerMove(event: PointerEvent) {
 function pointerLeave() {
   hoveredNodeId = null
   hoveredName.value = ''
+  hoveredOrbitInfo.value = ''
   if (renderer) renderer.domElement.style.cursor = 'grab'
 }
 function pointerDown(event: PointerEvent) {
@@ -2487,7 +2500,10 @@ onBeforeUnmount(() => {
       <strong>无法使用 3D 加速</strong><p>{{ error }}</p>
     </div>
     <div v-if="hoveredName" class="galaxy-hover-name" role="tooltip"
-      :style="{left: hoveredPoint.x + 'px', top: hoveredPoint.y + 'px'}">{{ hoveredName }}</div>
+      :style="{left: hoveredPoint.x + 'px', top: hoveredPoint.y + 'px'}">
+      <span>{{ hoveredName }}</span>
+      <small v-if="hoveredOrbitInfo" class="galaxy-hover-meta">{{ hoveredOrbitInfo }}</small>
+    </div>
     <span v-if="supported" class="galaxy-watermark">3D GALAXY · THREE.JS</span>
   </div>
 </template>
@@ -2497,6 +2513,7 @@ onBeforeUnmount(() => {
 .galaxy-canvas :deep(canvas) { display:block;width:100%;height:100%;outline:none;cursor:grab }
 .galaxy-canvas :deep(canvas):active { cursor:grabbing }
 .galaxy-hover-name {position:absolute;z-index:9;pointer-events:none;max-width:min(340px,calc(100% - 24px));padding:9px 13px;border:1px solid #83dccbab;border-radius:11px;background:#061c2ef2;color:#f1ffff;box-shadow:0 8px 24px #0008;font-size:14px;font-weight:650;line-height:1.55;overflow-wrap:anywhere}
+.galaxy-hover-meta {display:block;margin-top:4px;color:#7ed9dd;font-size:12px;font-weight:500}
 .galaxy-watermark { pointer-events:none;position:absolute;left:19px;bottom:17px;font-size:10px;letter-spacing:2px;color:#6687a8 }
 .galaxy-unsupported { color:#b4dce8;display:grid;place-content:center;text-align:center;height:100%;padding:26px;font-size:13px }
 .galaxy-unsupported p { max-width:270px;line-height:1.8 }
