@@ -88,7 +88,8 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
                              "elapsed_ms": record["elapsed_ms"]}
         items.append(obj)
     answered_count = sum(item["answered"] for item in items)
-    correct_count = sum(bool(item["result"]["is_correct"]) for item in items if item["answered"])
+    correct_count = sum(bool(item["result"]["is_correct"]) for item in items
+                        if item["answered"] and "result" in item)
     return {"id": session["id"], "course_id": session["course_id"],
             "mode": session["mode"], "blind_pending": blind, "status": session["status"],
             "started_at": session["started_at"], "finished_at": session["finished_at"],
