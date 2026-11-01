@@ -147,6 +147,24 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                 AND v.version_no=(SELECT MAX(v2.version_no)
                                    FROM question_versions v2 WHERE v2.question_id=q.id)
                 ORDER BY v.created_at,v.id""", (course_id,payload.source)))
+            if payload.source == "pending":
+                # Prefer previously untouched candidates. Once all have been
+                # attempted, older blind attempts may be repeated for practice.
+                # Among equally fresh candidates show newly generated items
+                # first, so browsing an older admin item need not dominate.
+                prior_attempts = {
+                    row["question_version_id"]: row["attempts"]
+                    for row in db.execute("""SELECT i.question_version_id,
+                        COUNT(a.id) AS attempts
+                        FROM quiz_items i JOIN quiz_sessions s ON s.id=i.session_id
+                        JOIN answer_records a ON a.quiz_item_id=i.id
+                        WHERE s.course_id=? AND s.user_id=?
+                        AND i.selection_reason=?
+                        GROUP BY i.question_version_id""",
+                        (course_id, USER_ID, BLIND_REASON))
+                }
+                rows.reverse()
+                rows.sort(key=lambda item: prior_attempts.get(item["version_id"], 0))
             if payload.mode == "adaptive":
                 # Reliable adaptive diagnosis only uses questions that measure
                 # exactly one reviewed concept. A compound answer is not a
