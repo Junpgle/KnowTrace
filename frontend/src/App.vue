@@ -70,11 +70,15 @@ const currentOptions = computed(() => {
 const effectiveChoice = computed<Choice>(() =>
   currentItem.value?.answered ? (currentResult.value?.response ?? currentItem.value.submitted_response ?? null)
     : selected.value)
-const avgMastery = computed<number | null>(() => {
-  const values = (report.value?.knowledge_points ?? [])
-    .filter(p => p.observations && p.p_mastery !== null)
+const evidenceSummary = computed(() => report.value?.evidence_summary)
+const revealExperimentalBkt = ref(false)
+const bktExperimentalMean = computed<number | null>(() => {
+  // Not a course-level mastery rate. Never pool a sparse set of BKT states
+  // into an official skill percentage; show this only as optional diagnostic.
+  const vals = (report.value?.knowledge_points ?? [])
+    .filter(p => p.evidence_level === 'repeated' && p.p_mastery !== null)
     .map(p => p.p_mastery as number)
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null
+  return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null
 })
 const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? [])].sort((a, b) => {
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
@@ -96,8 +100,9 @@ function masteryClass(value: number | null): string {
   return value === null ? 'unknown' : value >= .8 ? 'strong' : value >= .5 ? 'growing' : 'needs-work'
 }
 function masteryLabel(point: KnowledgeReport): string {
-  return !point.observations || point.p_mastery === null ? '尚未测评'
-    : point.p_mastery >= .8 ? '掌握较好' : point.p_mastery >= .5 ? '持续巩固' : '建议复习'
+  if (point.evidence_level === 'unobserved') return '尚未测评'
+  if (point.evidence_level === 'limited') return '数据不足'
+  return '重复观测 · 未校准'
 }
 function showError(error: unknown) {
   banner.value = error instanceof Error ? error.message : '操作失败，请稍后再试。'
@@ -635,23 +640,46 @@ onMounted(() => { void initialize() })
             <div class="section-heading"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>学习报告<span class="heading-dot">.</span></h1><p class="section-description">发现学习中的进步，也正视尚未掌握的部分。</p></div>
               <button class="button button-outline button-small" @click="refresh"><RefreshCw :size="17" :class="{ spinning: refreshing }" /> 更新报告</button></div>
             <section class="report-top-grid">
-              <div class="panel report-feature"><div class="report-feature-heading"><div class="stat-icon white-icon"><Activity :size="23" /></div><span>知识掌握度 · BKT 模型</span></div><div class="report-big-value">{{ percent(avgMastery) }}<span v-if="avgMastery !== null"> / 100%</span></div>
-                <p>已练习知识点的平均估计掌握概率</p><div class="report-feature-bottom"><Sparkles :size="17" /> {{ avgMastery === null ? '完成一次测评，就能建立你的第一条学习轨迹。' : '持续练习，观察掌握度随作答变化。' }}</div></div>
+              <div class="panel report-feature"><div class="report-feature-heading"><div class="stat-icon white-icon"><Activity :size="23" /></div><span>测评证据覆盖 · 非掌握率</span></div>
+                <div class="report-big-value">{{ evidenceSummary?.observed_points ?? 0 }}<span> / {{ evidenceSummary?.approved_points ?? 0 }} 个知识点</span></div>
+                <p>这是已有客观诊断记录的知识点数量，不代表已经掌握的比例。</p>
+                <div class="report-feature-bottom"><Sparkles :size="17"/> 满足跨日重复观察要求：{{ evidenceSummary?.repeated_evidence_points ?? 0 }} 个知识点。未充分观察的 BKT 概率不会显示为可靠结论。</div></div>
               <div class="report-stat-stack"><div class="panel report-stat"><div class="stat-icon blue-bg"><ClipboardList :size="21" /></div><div><span>累计作答</span><strong>{{ report?.answered ?? 0 }} <small>道</small></strong></div></div>
                 <div class="panel report-stat"><div class="stat-icon orange-bg"><Target :size="21" /></div><div><span>累计正确率</span><strong>{{ percent(report?.accuracy) }}</strong></div></div></div>
             </section>
             <section class="panel mastery-table-panel">
               <div class="panel-heading"><div><p class="eyebrow">PER KNOWLEDGE POINT</p><h2>知识点掌握分析</h2></div><span class="table-count">{{ report?.knowledge_points.length ?? 0 }} 个知识点</span></div>
               <div v-if="!report?.knowledge_points.length" class="empty-preview report-empty"><CircleHelp :size="30" /><strong>暂无知识点</strong><p>先从课件提取并审核知识点，再开始练习。</p></div>
-              <template v-else><div class="table-head"><span>知识点</span><span>掌握度估计</span><span>练习次数</span><span>状态</span></div>
+              <template v-else>
+                <div class="qb-hint bkt-evidence-header">
+                  <span>基础模型使用固定参数，所有百分比均未经课程数据校准。观察不足时默认隐藏试验值。</span>
+                  <button type="button" class="button button-outline button-small" @click="revealExperimentalBkt=!revealExperimentalBkt">
+                    {{ revealExperimentalBkt ? '隐藏原始 BKT 概率' : '查看原始 BKT（实验）' }}
+                  </button>
+                  <span v-if="revealExperimentalBkt && bktExperimentalMean !== null">
+                    重复观测子集的试验均值 {{ percent(bktExperimentalMean) }}，不可外推为课程掌握率
+                  </span>
+                </div>
+                <div class="table-head"><span>知识点</span><span>BKT 实验估计</span><span>证据数量</span><span>数据状态</span></div>
                 <div v-for="point in sortedKnowledge" :key="point.knowledge_point_id" class="mastery-row">
                   <div class="mastery-row-name"><div class="mastery-row-icon"><BookOpen :size="17" /></div><strong>{{ point.canonical_name }}</strong></div>
-                  <div class="mastery-cell"><span class="mastery-score" :class="masteryClass(point.p_mastery)">{{ point.observations ? percent(point.p_mastery) : '—' }}</span><div class="progress-track"><span :class="masteryClass(point.p_mastery)" :style="{ width: point.observations ? percent(point.p_mastery) : '0%' }"></span></div></div>
-                  <div class="mastery-row-count">{{ point.observations ?? 0 }} 次<span v-if="point.answered"> · 正确 {{ point.correct }}</span></div>
-                  <div><span class="mastery-status" :class="masteryClass(point.p_mastery)">{{ masteryLabel(point) }}</span></div>
+                  <div class="mastery-cell">
+                    <span class="mastery-score" :class="masteryClass(point.display_mastery)" :title="point.evidence_level === 'limited' ? '样本不足，暂不使用模型数值衡量掌握情况' : '未经参数校准的 BKT 计算值'">
+                      {{ point.display_mastery !== null || revealExperimentalBkt ? percent(point.p_mastery) : '证据不足' }}
+                    </span>
+                    <div v-if="point.display_mastery !== null || revealExperimentalBkt" class="progress-track">
+                      <span :class="masteryClass(point.p_mastery)" :style="{width: percent(point.p_mastery)}"></span>
+                    </div>
+                  </div>
+                  <div class="mastery-row-count">
+                    {{ point.observations ?? 0 }} 次 BKT 更新
+                    <span> · {{point.distinct_questions}} 道独立题 · {{point.practice_days}} 天</span>
+                    <span v-if="point.answered"> · 客观题正确 {{point.correct}}/{{point.answered}}</span>
+                  </div>
+                  <div><span class="mastery-status" :class="masteryClass(point.display_mastery)">{{ masteryLabel(point) }}</span></div>
                 </div></template>
             </section>
-            <div class="report-disclaimer"><AlertCircle :size="18" /><span>BKT 使用初始教学参数，属于概率估计；数据较少时结果可能波动，不应作为正式成绩或真实能力的绝对判断。</span></div>
+            <div class="report-disclaimer"><AlertCircle :size="18" /><span>当前 BKT 仍使用未经数据校准的固定教学参数。至少 5 次诊断更新、3 道不同的题、跨 2 个日期，才展示该知识点的实验概率；这一阈值只是展示规则，不代表测评结果已获得科学验证。候选题、主观题、综合题不计 BKT。</span></div>
             <div class="report-bottom-action"><button class="button button-primary" @click="navigate('practice')">继续练习 <ArrowRight :size="18" /></button></div>
           </div>
         </template>
