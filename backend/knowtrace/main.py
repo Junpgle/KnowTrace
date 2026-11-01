@@ -33,6 +33,7 @@ from .settings_api import providers as configured_providers, public_status, regi
 from .batch_api import register_batch_routes
 from .knowledge_ai_review import register_ai_knowledge_review_routes
 from .bulk_review_api import register_direct_bulk_review
+from .question_bulk_review import register_bulk_question_review
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 LOW_TEXT_THRESHOLD = 80  # heuristic: flag for review, not proof of missing content
@@ -790,6 +791,7 @@ def create_app(*, db_path: str | Path | None = None,
     recover_relations = register_relation_routes(app, database, resolve_provider)
     recover_ai_reviews = register_ai_knowledge_review_routes(app, database, resolve_provider)
     register_direct_bulk_review(app, database)
+    register_bulk_question_review(app, database)
     return app
 
 
