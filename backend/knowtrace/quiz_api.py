@@ -1,8 +1,9 @@
 """Local single-user quizzes, immutable answer events, and BKT mastery estimates.
 
-Only approved *latest* question versions may enter quizzes. Learners never
-receive answers before submitting an item. This prototype has no auth: the
-separate administrative question-version endpoint is still accessible locally.
+Approved questions power normal/BKT assessments. Pending questions may
+optionally be used in a separate blind trial: answers are hidden until the
+WHOLE trial is submitted and never update mastery. This prototype has no
+auth; the administrative review endpoint remains accessible locally.
 """
 from __future__ import annotations
 
@@ -20,12 +21,14 @@ from .db import transaction
 
 USER_ID = "local"
 MODEL_KEY = "bkt_v1"
+BLIND_REASON = "blind_pending_v1"
 BKT = BKTParameters()
 
 
 class QuizStart(BaseModel):
     count: int = Field(default=5, ge=1, le=20)
     mode: Literal["normal", "adaptive"] = "normal"
+    source: Literal["approved", "pending"] = "approved"
 
 
 class SubmitAnswer(BaseModel):
@@ -54,12 +57,14 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
     session = _session(db, session_id)
     records = _rows(db.execute("""SELECT i.id AS quiz_item_id,i.position,i.shown_at,
                 i.question_version_id,i.primary_knowledge_point_id,
-                i.selection_reason,v.question_type,v.stem,
+                i.selection_reason,v.question_type,v.stem,v.review_status,
                 v.options_json,v.explanation,v.correct_answer_json,
                 a.id AS answer_id,a.response_json,a.is_correct,a.answered_at,a.elapsed_ms
                 FROM quiz_items i JOIN question_versions v ON v.id=i.question_version_id
                 LEFT JOIN answer_records a ON a.quiz_item_id=i.id
                 WHERE i.session_id=? ORDER BY i.position""", (session_id,)))
+    blind = bool(records and all(record["selection_reason"] == BLIND_REASON for record in records))
+    reveal = not blind or session["status"] == "completed"
     items = []
     for record in records:
         answered = record["answer_id"] is not None
@@ -68,8 +73,12 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
                "primary_knowledge_point_id": record["primary_knowledge_point_id"],
                "question_type": record["question_type"], "stem": record["stem"],
                "options": json.loads(record["options_json"]), "answered": answered,
-               "selection_reason": record["selection_reason"]}
+               "provisional": record["review_status"] != "approved",
+               "selection_reason": ("待审核题目盲测：完成整套后揭晓答案"
+                                    if blind else record["selection_reason"])}
         if answered:
+            obj["submitted_response"] = json.loads(record["response_json"])
+        if answered and reveal:
             obj["result"] = {"answer_id": record["answer_id"],
                              "response": json.loads(record["response_json"]),
                              "is_correct": bool(record["is_correct"]),
@@ -81,9 +90,10 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
     answered_count = sum(item["answered"] for item in items)
     correct_count = sum(bool(item["result"]["is_correct"]) for item in items if item["answered"])
     return {"id": session["id"], "course_id": session["course_id"],
-            "mode": session["mode"], "status": session["status"],
+            "mode": session["mode"], "blind_pending": blind, "status": session["status"],
             "started_at": session["started_at"], "finished_at": session["finished_at"],
-            "total": len(items), "answered": answered_count, "correct": correct_count,
+            "total": len(items), "answered": answered_count,
+            "correct": correct_count if reveal else None,
             "items": items}
 
 
@@ -91,13 +101,20 @@ def _answer_result(db: sqlite3.Connection, answer_id: str) -> dict:
     row = db.execute("""SELECT a.id AS answer_id,a.quiz_item_id,a.response_json,
            a.is_correct,a.answered_at,v.correct_answer_json,v.explanation,
            e.p_before,e.p_posterior,e.p_after,
-           i.primary_knowledge_point_id AS knowledge_point_id
+           i.primary_knowledge_point_id AS knowledge_point_id,
+           i.selection_reason,s.status AS session_status
            FROM answer_records a JOIN quiz_items i ON i.id=a.quiz_item_id
+           JOIN quiz_sessions s ON s.id=i.session_id
            JOIN question_versions v ON v.id=i.question_version_id
            LEFT JOIN mastery_events e ON e.answer_record_id=a.id AND e.model_key=?
            WHERE a.id=?""", (MODEL_KEY, answer_id)).fetchone()
     if row is None:
         raise HTTPException(404, "Answer not found")
+    if row["selection_reason"] == BLIND_REASON and row["session_status"] != "completed":
+        return {"answer_id": row["answer_id"], "quiz_item_id": row["quiz_item_id"],
+                "response": json.loads(row["response_json"]),
+                "answered_at": row["answered_at"], "deferred": True,
+                "mastery": None, "diagnostic": False}
     return {"answer_id": row["answer_id"], "quiz_item_id": row["quiz_item_id"],
             "response": json.loads(row["response_json"]),
             "is_correct": bool(row["is_correct"]),
@@ -117,16 +134,18 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
             if db.execute("SELECT 1 FROM courses WHERE id=? AND status='active'",
                           (course_id,)).fetchone() is None:
                 raise HTTPException(404, "Course not found")
+            if payload.source == "pending" and payload.mode != "normal":
+                raise HTTPException(422, "Blind pending questions cannot use adaptive BKT mode")
             rows = _rows(db.execute("""SELECT v.id AS version_id,k.knowledge_point_id
                 FROM question_versions v
                 JOIN questions q ON q.id=v.question_id
                 JOIN question_knowledge_points k ON k.question_version_id=v.id AND k.is_primary=1
                 JOIN knowledge_points kp ON kp.id=k.knowledge_point_id
-                WHERE q.course_id=? AND q.archived_at IS NULL AND v.review_status='approved'
+                WHERE q.course_id=? AND q.archived_at IS NULL AND v.review_status=?
                 AND kp.review_status='approved' AND kp.archived_at IS NULL
                 AND v.version_no=(SELECT MAX(v2.version_no)
                                    FROM question_versions v2 WHERE v2.question_id=q.id)
-                ORDER BY v.created_at,v.id""", (course_id,)))
+                ORDER BY v.created_at,v.id""", (course_id,payload.source)))
             if payload.mode == "adaptive":
                 # Reliable adaptive diagnosis only uses questions that measure
                 # exactly one reviewed concept. A compound answer is not a
@@ -190,7 +209,8 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                            primary_knowledge_point_id,position,selection_reason)
                            VALUES (?,?,?,?,?,?)""",
                            (_uuid(), session_id, row["version_id"], row["knowledge_point_id"],
-                            position, ("优先复习未掌握或尚未测评知识点" if payload.mode=="adaptive"
+                            position, (BLIND_REASON if payload.source=="pending"
+                                       else "优先复习未掌握或尚未测评知识点" if payload.mode=="adaptive"
                                        else "正常顺序练习")))
             return _quiz_detail(db, session_id)
 
@@ -204,7 +224,8 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
         serialized = json.dumps(payload.response, ensure_ascii=False)
         with transaction(database) as db:
             item = db.execute("""SELECT i.id,i.session_id,i.primary_knowledge_point_id,
-                v.question_type,v.correct_answer_json,s.status AS session_status,
+                v.question_type,v.correct_answer_json,v.review_status,
+                i.selection_reason,s.status AS session_status,
                 (SELECT COUNT(*) FROM question_knowledge_points x
                  WHERE x.question_version_id=i.question_version_id) AS concept_count,
                 s.user_id FROM quiz_items i
@@ -241,7 +262,9 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                        (record_id, quiz_item_id, payload.client_request_id, serialized, int(correct), payload.elapsed_ms))
             # Multi-concept questions provide practice feedback, NOT an
             # independent BKT observation (including on the primary point).
-            if item["concept_count"] == 1:
+            if (item["concept_count"] == 1
+                    and item["review_status"] == "approved"
+                    and item["selection_reason"] != BLIND_REASON):
                 kp_id = item["primary_knowledge_point_id"]
                 state = db.execute("""SELECT p_mastery,observations FROM mastery_states
                     WHERE user_id=? AND knowledge_point_id=? AND model_key=?""",
@@ -284,17 +307,24 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                  LEFT JOIN quiz_sessions s ON s.id=i.session_id AND s.user_id=?
                     AND s.course_id=?
                  LEFT JOIN answer_records a ON a.quiz_item_id=i.id AND s.id IS NOT NULL
+                    AND i.selection_reason != ?
                  WHERE kp.course_id=? AND kp.archived_at IS NULL
                  GROUP BY kp.id ORDER BY kp.canonical_name,kp.id""",
-                 (USER_ID,MODEL_KEY,USER_ID,course_id,course_id)))
+                 (USER_ID,MODEL_KEY,USER_ID,course_id,BLIND_REASON,course_id)))
             for row in per_kp:
                 row["accuracy"] = round(row["correct"] / row["answered"], 4) if row["answered"] else None
             answered = sum(row["answered"] for row in per_kp)
             correct = sum(row["correct"] for row in per_kp)
             sessions = db.execute("SELECT COUNT(*) FROM quiz_sessions WHERE course_id=? AND user_id=?",
                                   (course_id,USER_ID)).fetchone()[0]
+            provisional = db.execute("""SELECT COUNT(*) FROM answer_records a
+                JOIN quiz_items i ON i.id=a.quiz_item_id
+                JOIN quiz_sessions s ON s.id=i.session_id
+                WHERE s.course_id=? AND s.user_id=? AND i.selection_reason=?""",
+                (course_id,USER_ID,BLIND_REASON)).fetchone()[0]
             return {"course_id":course_id,"user_id":USER_ID,"sessions":sessions,
                     "answered":answered,"correct":correct,
                     "accuracy":round(correct / answered,4) if answered else None,
+                    "provisional_answers":provisional,
                     "mastery_model":MODEL_KEY,"bkt_warning":"Model estimate, not a validated ability score.",
                     "knowledge_points":per_kp}
