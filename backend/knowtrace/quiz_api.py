@@ -210,15 +210,28 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                          WHERE question_version_id=v.id)=1
                     GROUP BY v.id,k.knowledge_point_id,m.p_mastery,m.observations,v.difficulty
                     """, (BKT.p_initial,USER_ID,MODEL_KEY,course_id)))
+                evidence = evidence_by_knowledge_point(db, USER_ID, course_id, MODEL_KEY)
                 def priority(item):
-                    # Unseen/weak concepts before well-mastered or repeated
-                    # questions. Stable tie-breaking makes this auditable.
-                    initial_bonus = .45 if item["observations"] == 0 else 0
-                    retry_penalty = min(item["attempts"],8) * .15
+                    # Before there is a diverse cross-day observation history,
+                    # rank by evidence gap / question novelty, not the raw
+                    # uncalibrated BKT probability (e.g. first correct = 58%).
+                    observed = evidence.get(item["knowledge_point_id"], {})
+                    level = evidence_level(
+                        observations=observed.get("observations",0),
+                        distinct_questions=observed.get("distinct_questions",0),
+                        practice_days=observed.get("practice_days",0))
+                    retry_penalty = min(item["attempts"],8)*.18
+                    if level != "repeated":
+                        progress = min(observed.get("observations",0), 5)
+                        target_difficulty = 1 if progress == 0 else 2
+                        return (3.0 - progress*.22 - retry_penalty -
+                                abs(item["difficulty"]-target_difficulty)*.06)
+                    # Repeated evidence is still only a *tentative* model
+                    # result; it can be used to rank practice, not grade skill.
                     target_difficulty = 1 if item["mastery"] < .4 else (
                         2 if item["mastery"] < .75 else 3)
-                    return (2*(1-item["mastery"]) + initial_bonus -
-                            retry_penalty - abs(item["difficulty"]-target_difficulty)*.06)
+                    return (2*(1-item["mastery"]) - retry_penalty -
+                            abs(item["difficulty"]-target_difficulty)*.06)
                 ranked = sorted(eligible, key=lambda item:
                     (-priority(item), item["last_answered"] or "", item["version_id"]))
                 # Pass 1 ensures breadth across weak concepts. Pass 2 fills
@@ -245,7 +258,7 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                            VALUES (?,?,?,?,?,?)""",
                            (_uuid(), session_id, row["version_id"], row["knowledge_point_id"],
                             position, (BLIND_REASON if payload.source=="pending"
-                                       else "优先复习未掌握或尚未测评知识点" if payload.mode=="adaptive"
+                                       else "证据不足时优先多样化练习；跨天多题后仅参考实验BKT排序" if payload.mode=="adaptive"
                                        else "正常顺序练习")))
             return _quiz_detail(db, session_id)
 
