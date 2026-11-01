@@ -443,3 +443,6 @@ h1,h2,h3,p { margin-top: 0; }
   outline: 2px solid #45baa8; outline-offset: 0;
 }
 .course-modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* The knowledge graph is a first-class page rather than a small course-content card. */
+.page-content.page-content-galaxy { width: 100%; max-width: none; padding: 22px clamp(16px,2vw,36px) 44px; }
