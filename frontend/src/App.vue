@@ -5,16 +5,17 @@ import {
   CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
-  TrendingUp, X, XCircle, FolderOpen, Plus, Upload, Settings,
+  TrendingUp, X, XCircle, FolderOpen, Network, Plus, Upload, Settings,
 } from '@lucide/vue'
 const CourseContentHub = defineAsyncComponent(() => import('./components/CourseContentHub.vue'))
+const KnowledgeGalaxy = defineAsyncComponent(() => import('./components/KnowledgeGalaxy.vue'))
 import AITaskCenter from './components/AITaskCenter.vue'
 const AISettings = defineAsyncComponent(() => import('./components/AISettings.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type LearningReport, type QuestionSummary, type QuizAnswerResult,
   type QuizItem, type QuizSession, type KnowledgePoint, type QuestionQuality } from './api'
 
-type View = 'overview' | 'practice' | 'report' | 'content' | 'settings'
+type View = 'overview' | 'practice' | 'report' | 'content' | 'galaxy' | 'settings'
 type Choice = string | boolean | string[] | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
@@ -84,7 +85,7 @@ const sortedKnowledge = computed(() => [...(report.value?.knowledge_points ?? []
   if (Boolean(a.observations) !== Boolean(b.observations)) return a.observations ? -1 : 1
   return (a.p_mastery ?? 1) - (b.p_mastery ?? 1)
 }))
-const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', content: '课程内容', settings: '模型设置' })[view.value])
+const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项练习', report: '学习分析', content: '课程内容', galaxy: '知识图谱', settings: '模型设置' })[view.value])
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
@@ -386,6 +387,7 @@ onMounted(() => { void initialize() })
       <div class="sidebar-group-label sidebar-content-label">课程管理</div>
       <nav class="sidebar-nav" aria-label="课程管理导航">
         <button type="button" :class="{ active: view === 'content' }" @click="navigate('content')"><FolderOpen :size="19" /><span>课程内容</span><span v-if="pendingCount" class="nav-dot"></span></button>
+        <button type="button" :class="{ active: view === 'galaxy' }" @click="navigate('galaxy')"><Network :size="19" /><span>知识图谱</span></button>
       </nav>
       <div class="sidebar-group-label course-label">正在学习</div>
       <div class="course-selector">
@@ -638,6 +640,9 @@ onMounted(() => { void initialize() })
             @updated="refresh" @blind-trial="startBlindFromBank"
             @section-change="contentSection = $event"
             @open-practice="navigate('practice')" />
+          <KnowledgeGalaxy v-else-if="view === 'galaxy'" :key="courseId" :course-id="courseId"
+            :course-name="currentCourse?.title || '课程'"
+            @open-bank="openContentSection('questions')" @open-practice="navigate('practice')" />
           <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
           <div v-else class="view-stack">
             <div class="section-heading"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>学习报告<span class="heading-dot">.</span></h1><p class="section-description">发现学习中的进步，也正视尚未掌握的部分。</p></div>
