@@ -59,6 +59,7 @@ type LabelAnchor = {
   nodeId?: string
   priority?: number
   declutter?: boolean
+  focused?: boolean
   // Atlas captions maintain a readable size in screen pixels while zooming.
   screen?: { width: number; height: number; radius: number; gap: number }
 }
@@ -202,6 +203,43 @@ function makeLeafLabel(title: string): THREE.Sprite | null {
   }))
   label.scale.set(44, 12.7, 1)
   return label
+}
+
+// Readable concept captions for the selected one-hop network. Real names
+// are kept over two lines where possible, rather than rendered as 3px text
+// when the camera fits distant approved neighbors into a single viewport.
+function makeFocusLabel(name: string, selected: boolean): THREE.Sprite | null {
+  const canvas = document.createElement('canvas')
+  canvas.width = 640
+  canvas.height = 180
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.fillStyle = selected ? 'rgba(9, 53, 61, .96)' : 'rgba(9, 33, 52, .94)'
+  ctx.beginPath()
+  ctx.roundRect(4, 4, 632, 172, 22)
+  ctx.fill()
+  ctx.lineWidth = selected ? 5 : 3
+  ctx.strokeStyle = selected ? '#67f4dc' : 'rgba(134, 209, 229, .77)'
+  ctx.stroke()
+  const shown = name.length > 30 ? name.slice(0, 29) + '…' : name
+  const lines = shown.length > 15
+    ? [shown.slice(0, 15), shown.slice(15)] : [shown]
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = selected ? '#f4fffc' : '#e7f6ff'
+  ctx.font = '700 58px system-ui, sans-serif'
+  if (lines.length === 1) {
+    ctx.fillText(lines[0], 320, 90, 584)
+  } else {
+    ctx.fillText(lines[0], 320, 59, 584)
+    ctx.fillText(lines[1], 320, 123, 584)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthWrite: false,
+    depthTest: false, fog: false,
+  }))
 }
 
 // Chapter labels use a larger, high-resolution canvas than knowledge labels.
@@ -643,10 +681,24 @@ function rebuild(animate = false) {
 
       if ((smallGroup && !focusState.active) || center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
-        const label = smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
+        const label = focusState.active
+          ? makeFocusLabel(node.name, center)
+          : smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
         if (label) {
           label.position.copy(position)
-          labelAnchors.push({ sprite: label, center: position, distance: radius + (smallGroup ? 6.5 : 4.5) })
+          label.userData.nodeId = node.id
+          const width = center ? 274 : 242
+          labelAnchors.push({
+            sprite: label, center: position, nodeId: node.id,
+            distance: radius + (smallGroup ? 6.5 : 4.5),
+            focused: focusState.active,
+            priority: center ? 10000 : 1000,
+            screen: focusState.active
+              ? {width, height: width * 180 / 640, radius, gap: 14}
+              : smallGroup
+                ? {width: 218, height: 218 * 150 / 520, radius, gap: 12}
+                : undefined,
+          })
           g.add(label)
         }
       }
@@ -1134,13 +1186,21 @@ function placeLabel(anchor: LabelAnchor) {
   }
   // Screen-size labels: world-space sprite scales based on their own depth.
   // This avoids illegible 8px chapter names whenever the 3D camera zooms out.
-  const depth = Math.max(1, camera.position.distanceTo(anchor.center))
+  const worldCenter = anchor.sprite.parent
+    ? anchor.sprite.parent.localToWorld(anchor.center.clone())
+    : anchor.center
+  const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion)
+  const depth = Math.max(1, worldCenter.clone().sub(camera.position).dot(cameraForward))
   const worldPerPx = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
     * depth / Math.max(1, mountPoint.value.clientHeight)
+  // Scene transition groups can be scaled: compensate so the caption stays
+  // legible during zooming and crossfades too.
+  const parentScale = Math.max(.05, anchor.sprite.parent?.scale.x ?? 1)
+  const localPerPx = worldPerPx / parentScale
   const { width, height, radius, gap } = anchor.screen
-  anchor.sprite.scale.set(width * worldPerPx, height * worldPerPx, 1)
+  anchor.sprite.scale.set(width * localPerPx, height * localPerPx, 1)
   anchor.sprite.position.copy(anchor.center).addScaledVector(
-    screenUp, radius + (height / 2 + gap) * worldPerPx,
+    screenUp, radius + (height / 2 + gap) * localPerPx,
   )
 }
 
@@ -1236,6 +1296,7 @@ function draw() {
   if (outgoing) for (const anchor of outgoing.anchors) placeLabel(anchor)
   scene.updateMatrixWorld(true)
   declutterGroupLabels()
+  arrangeFocusedLabels()
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
 }
