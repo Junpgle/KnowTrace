@@ -76,19 +76,9 @@ type FadePart = { material: THREE.Material; opacity: number; transparent: boolea
 type FadeGroup = { group: THREE.Group; parts: FadePart[]; anchors: LabelAnchor[] }
 let outgoing: FadeGroup | null = null
 let incoming: FadeGroup | null = null
-let layerTransitionStart = 0
-const incomingStartOffset = new THREE.Vector3()
-let pendingTransitionOrigin: THREE.Vector3 | null = null
 type CameraSnapshot = { sceneKey: string; position: THREE.Vector3; target: THREE.Vector3 }
 const cameraHistory: CameraSnapshot[] = []
 let transitionMode: 'enter' | 'back' | 'jump' = 'jump'
-const transitionOrigin = new THREE.Vector3()
-const transitionReturnAnchor = new THREE.Vector3()
-const outgoingCenter = new THREE.Vector3()
-const outgoingTargetOffset = new THREE.Vector3()
-const outgoingStartOffset = new THREE.Vector3()
-let outgoingStartScale = 1
-let outgoingEndScale = 1
 const CAMERA_DURATION = 1120
 const LAYER_REVEAL_START = .24
 const LAYER_REVEAL_END = .86
@@ -629,10 +619,7 @@ function clearGraph(animate = false) {
     incoming = null
   }
   if (group && animate && !reducedMotion()) {
-    outgoingStartOffset.copy(group.position)
-    outgoingStartScale = group.scale.x
     outgoing = fadeGroup(group, [...labelAnchors])
-    layerTransitionStart = performance.now()
   } else {
     disposeGraph(group)
   }
@@ -1022,7 +1009,6 @@ function rebuild(animate = false, transition?: SceneTransition) {
     incoming = fadeGroup(g, [...labelAnchors])
     setFade(incoming, 0)
   }
-  pendingTransitionOrigin = null
 }
 
 // Automatic selection should move the camera to the chosen node, NOT dive
@@ -1528,8 +1514,6 @@ function pointerUp(event: PointerEvent) {
   pressed = null
   if (movement > 6) return
   const id = pickNode(event.clientX, event.clientY)
-  // Remember the exact clicked position for the next hierarchy transition.
-  pendingTransitionOrigin = id ? positions.get(id)?.clone() ?? null : null
   emit('select', id)
 }
 function initialize() {
@@ -1646,10 +1630,6 @@ watch(() => ({
         target: (tween ? desiredTarget : controls.target).clone(),
       })
       if (cameraHistory.length > 12) cameraHistory.shift()
-      transitionOrigin.copy(
-        (action?.nodeId && positions.get(action.nodeId)) ||
-        pendingTransitionOrigin || controls.target,
-      )
     } else if (transitionMode === 'back') {
       // Match the *destination* scene, not just the last stack entry. This
       // also supports a direct jump from a leaf to the course overview.
@@ -1662,10 +1642,6 @@ watch(() => ({
     } else {
       cameraHistory.length = 0
     }
-    const oldPositions = [...positions.values()]
-    if (oldPositions.length)
-      new THREE.Box3().setFromPoints(oldPositions).getCenter(outgoingCenter)
-    else outgoingCenter.set(0, 0, 0)
   }
   rebuild(hierarchyChanged, hierarchyChanged ? {
     mode: transitionMode,
@@ -1673,21 +1649,11 @@ watch(() => ({
     restore: nextSceneFrame,
   } : undefined)
   if (hierarchyChanged && transitionMode === 'back') {
-    transitionReturnAnchor.copy(
-      (action?.nodeId && positions.get(action.nodeId)) ||
-      controls?.target || new THREE.Vector3(),
-    )
-    // Rebuild now knows the destination scene's true coordinates.
-    if (outgoing) {
-      outgoingTargetOffset.copy(transitionReturnAnchor)
-        .addScaledVector(outgoingCenter, -outgoingEndScale)
-    }
     if (returnCamera) restoreCamera(returnCamera)
     else focus(next.selectedId, true)
   } else if (layerChanged || next.selectedId !== previous.selectedId) {
     focus(next.selectedId, layerChanged)
   }
-  pendingTransitionOrigin = null
 })
 onBeforeUnmount(() => {
   disposed = true
