@@ -14,6 +14,8 @@ const maxGroups = ref(1)
 const questionsPerGroup = ref(1)
 const single = ref(true)
 const bool = ref(true)
+const multi = ref(true)
+const short = ref(true)
 const confirmed = ref(false)
 const chapters = ref<Chapter[]>([])
 const providers = ref<AIProviderStatus | null>(null)
@@ -65,7 +67,7 @@ async function load(full = false) {
   }
 }
 async function start() {
-  if(operating.value || active.value || !confirmed.value || !single.value && !bool.value)return
+  if(operating.value || active.value || !confirmed.value || !single.value && !bool.value && !multi.value && !short.value)return
   error.value = '';success.value = '';operating.value = true
   try{
     const result = await api.startQuestionBatch(props.courseId,{
@@ -73,7 +75,9 @@ async function start() {
       group_size:groupSize.value,max_groups:maxGroups.value,
       questions_per_group:questionsPerGroup.value,
       question_types:[...(single.value ? ['single_choice' as const] : []),
-        ...(bool.value ? ['true_false' as const] : [])],
+        ...(bool.value ? ['true_false' as const] : []),
+        ...(multi.value ? ['multiple_choice' as const] : []),
+        ...(short.value ? ['short_answer' as const] : [])],
       confirmed:true,
     })
     success.value = '已建立 ' + result.total_groups + ' 个生成检查点，结果均进入待审核。'
@@ -158,6 +162,8 @@ onBeforeUnmount(()=>{if(poller)clearInterval(poller);version++})
         <fieldset :disabled="Boolean(active)"><legend>题型</legend>
           <label><input type="checkbox" v-model="single"/> 单选题</label>
           <label><input type="checkbox" v-model="bool"/> 判断题</label>
+          <label><input type="checkbox" v-model="multi"/> 多选题</label>
+          <label><input type="checkbox" v-model="short"/> 简答题</label>
         </fieldset>
       </div>
       <div class="bqs-preview">
@@ -175,7 +181,7 @@ onBeforeUnmount(()=>{if(poller)clearInterval(poller);version++})
         <span>我确认开始调用所选 AI（MiMo 可能按 Token 收费）；生成结果只进入待审核题库，不能自动证明题目正确。</span>
       </label>
       <button type="button" class="button button-primary" :disabled="operating || fetching || Boolean(active) ||
-        !confirmed || !preview?.uncovered || !single && !bool" @click="start">
+        !confirmed || !preview?.uncovered || !single && !bool && !multi && !short" @click="start">
         <LoaderCircle v-if="operating" :size="17" class="spinning"/><Play v-else :size="17"/>
         开始批量生成候选题
       </button>
