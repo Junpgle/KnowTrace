@@ -65,6 +65,10 @@ let contextCacheParents = new Map<string, string>()
 // positions makes back navigation return to the SAME places rather than
 // rebuilding a constellation at the world origin.
 const sceneFrames = new Map<string, Map<string, THREE.Vector3>>()
+// Browse groups live in a neighboring map region. Preserve their world
+// addresses when selection, line visibility or a rapid click rebuilds a scene;
+// otherwise they snap back to the origin and appear to "expand" once again.
+const browseWorldPositions = new Map<string, THREE.Vector3>()
 type SceneTransition = {
   mode: 'enter' | 'back' | 'jump'
   anchorId?: string
@@ -793,7 +797,9 @@ function resolveContextLayout() {
         new THREE.Vector3()
       for (const node of groups) {
         const p = localGroups.get(node.id)
-        if (p) contextCacheCoordinates.set(node.id, chapterCenter.clone()
+        const saved = browseWorldPositions.get(node.id)
+        if (saved) contextCacheCoordinates.set(node.id, saved.clone())
+        else if (p) contextCacheCoordinates.set(node.id, chapterCenter.clone()
           .add(p.clone()))
       }
     }
@@ -835,18 +841,55 @@ function rebuild(animate = false, transition?: SceneTransition) {
   } else {
     const anchor = transition?.anchorId ? previous.get(transition.anchorId) : undefined
     const groupNodes = props.nodes.filter(n => n.kind === 'group')
-    if (anchor && groupNodes.length) {
-      // Fullscreen browse groups have local layout coordinates. Translate and
-      // scale them INTO their clicked chapter / subgroup, like map tiles.
+    const groupOverview = groupNodes.length > 0 &&
+      props.nodes.every(n => n.kind === 'group')
+    if (groupOverview) {
+      const previouslyPlaced = groupNodes.every(n => browseWorldPositions.has(n.id))
+      if (transition?.mode === 'enter' && anchor && camera) {
+        // CHAPTER -> GROUPS is a camera PAN to a neighboring map district,
+        // not a child mesh expanding outward from the clicked chapter.
+        // Place groups at their FULL final size from the first frame, in the
+        // plane of the CURRENT camera. There is no reorientation jump.
+        const originals = groupNodes.map(n => coords.get(n.id)).filter(
+          (p): p is THREE.Vector3 => Boolean(p))
+        const bounds = new THREE.Box3().setFromPoints(originals)
+        const origin = bounds.getCenter(new THREE.Vector3())
+        const spread = bounds.getSize(new THREE.Vector3())
+        const cameraRight = new THREE.Vector3(1, 0, 0)
+          .applyQuaternion(camera.quaternion).normalize()
+        const cameraUp = new THREE.Vector3(0, 1, 0)
+          .applyQuaternion(camera.quaternion).normalize()
+        const cameraForward = new THREE.Vector3(0, 0, -1)
+          .applyQuaternion(camera.quaternion).normalize()
+        // The whole new atlas begins outside the old chapter's visual
+        // footprint. The camera flies sideways to its center while old
+        // chapters remain as a dim orientation reference.
+        const pan = Math.max(370, spread.x * .64 + 180)
+        const destination = anchor.clone().addScaledVector(cameraRight, pan)
+        for (const node of groupNodes) {
+          const local = coords.get(node.id)
+          if (!local) continue
+          const world = destination.clone()
+            .addScaledVector(cameraRight, local.x - origin.x)
+            .addScaledVector(cameraUp, local.y - origin.y)
+            .addScaledVector(cameraForward, (local.z - origin.z) * .22)
+          coords.set(node.id, world)
+          browseWorldPositions.set(node.id, world.clone())
+        }
+      } else if (previouslyPlaced) {
+        // Non-navigation updates must not reposition the group atlas.
+        for (const node of groupNodes)
+          coords.set(node.id, browseWorldPositions.get(node.id)!.clone())
+      }
+    } else if (anchor && groupNodes.length) {
+      // Once a browse group is clicked, its actual concepts occupy the
+      // existing planet's neighborhood (a separate camera flight).
       const parent = coords.get(transition!.anchorId!) ??
         (groupNodes.length === 1 ? coords.get(groupNodes[0].id) : undefined)
       const origin = parent?.clone() ?? new THREE.Box3().setFromPoints(
         groupNodes.map(n => coords.get(n.id)!).filter(Boolean),
       ).getCenter(new THREE.Vector3())
-      // The tiny .30 group scale used for the old enter animation is NOT
-      // a valid final atlas scale: it shrinks 26 groups into the center.
-      // Camera zoom and crossfade handle navigation; preserve final span.
-      const scale = props.nodes.some(n => n.kind === 'knowledge') ? .29 : 1
+      const scale = .29
       for (const [id, position] of coords) {
         if (!props.nodes.some(n => n.id === id)) continue
         coords.set(id, position.sub(origin).multiplyScalar(scale).add(anchor))
@@ -1389,9 +1432,12 @@ function focus(id: string | null, resetAtlasAngle = false) {
     direction.set(0, 1, .30)
   } else if (!id && (resetAtlasAngle || overview)) {
     if (localGroup) {
-      // Browsing groups and leaf networks are laid out in the XY plane.
-      // Show them face-on instead of projecting their rows onto each other.
-      direction.set(groupOverview ? .22 : 0, groupOverview ? .34 : .16, 1)
+      if (!groupOverview) {
+        // A leaf can have its own small semantic detail plane. On entry to
+        // the chapter's GROUP ATLAS, however, keep the current orientation:
+        // that is a lateral map pan, never a 90-degree camera turn.
+        direction.set(0, .16, 1)
+      }
     } else {
       // The chapter/course systems occupy the XZ plane: use a high
       // overhead perspective for both chapter AND "all concepts" views.
@@ -2116,6 +2162,7 @@ onBeforeUnmount(() => {
   contextCacheEdges = undefined
   cameraHistory.length = 0
   sceneFrames.clear()
+  browseWorldPositions.clear()
 })
 </script>
 
