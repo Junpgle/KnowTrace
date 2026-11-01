@@ -232,7 +232,7 @@ def test_question_one_click_approve_respects_risk_and_audits(setup):
         db.commit()
     changed = http.get(f"/api/courses/{course}/questions/bulk-approval-preview").json()
     assert changed["eligible"] == 1 and changed["flagged"] == 1
-    assert changed["questions"][1]["issues"]
+    assert next(q["issues"] for q in changed["questions"] if q["id"] == ids[1])
     route = f"/api/courses/{course}/questions/bulk-approve"
     assert http.post(route, json={
         "confirmed":False, "accept_unverified_answers":True,
