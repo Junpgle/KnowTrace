@@ -17,8 +17,8 @@ import {
   type SourceEvidence, type AIProviderId, type AIProviderStatus,
 } from '../api'
 
-const props = defineProps<{ courseId: string; initialTab?: 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string }>()
-const emit = defineEmits<{ updated: []; 'blind-trial': [] }>()
+const props = defineProps<{ courseId: string; initialTab?: 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'; initialDocumentId?: string; embedded?: boolean }>()
+const emit = defineEmits<{ updated: []; 'blind-trial': []; 'navigate-tab': [tab: Tab] }>()
 
 type Tab = 'overview' | 'knowledge' | 'questions' | 'external' | 'batch'
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
@@ -136,10 +136,12 @@ watch(() => props.courseId, () => {
 
 watch(() => props.initialTab, value => {
   if (value && tab.value !== value) {
-    switchTab(value)
+    tab.value = value
+    resetFeedback()
   }
 })
 function switchTab(value: Tab) {
+  if (props.embedded) { emit('navigate-tab', value); return }
   tab.value = value
   showTools.value = false
   showBatchReview.value = false
@@ -158,11 +160,13 @@ async function importedExternal(payload: { kind: 'questions' | 'knowledge'; ids:
   if (payload.kind === 'questions') {
     filter.value = 'pending'
     await reload(selectedKpId.value, payload.ids[0] || '')
-    tab.value = 'questions'
+    if (props.embedded) emit('navigate-tab', 'questions')
+    else tab.value = 'questions'
     success.value = '已导入 ' + payload.created + ' 道候选题。可以先盲测，再选择批量审核或核对风险题。'
   } else {
     await reload(payload.ids[0] || '', selectedQuestionId.value)
-    tab.value = 'knowledge'
+    if (props.embedded) emit('navigate-tab', 'knowledge')
+    else tab.value = 'knowledge'
     success.value = '已导入 ' + payload.created + ' 个新知识点，复用 ' + (payload.reused || 0) + ' 个；请核对并审核。'
   }
   emit('updated')
@@ -275,7 +279,8 @@ async function generate() {
       // reload clears generation message when selecting another knowledge point;
       // retain it here for explicit feedback.
       generated.value = result
-      tab.value = 'questions'
+      if (props.embedded) emit('navigate-tab', 'questions')
+      else tab.value = 'questions'
       filter.value = 'pending'
       const firstId = result.question_version_ids[0]
       if (firstId) await selectQuestion(firstId)
@@ -323,7 +328,8 @@ async function saveQuestion() {
     const next = await api.reviseQuestion(q.id, revision)
     await reload(selectedKpId.value, next.id)
     filter.value = 'pending'
-    tab.value = 'questions'
+    if (props.embedded) emit('navigate-tab', 'questions')
+    else tab.value = 'questions'
     editingQuestion.value = false
     success.value = '已创建第 ' + next.version_no + ' 版。新版本仍需审核，旧版本不会被覆盖。'
     emit('updated')
@@ -357,7 +363,7 @@ function previewAvailable(source: SourceEvidence): boolean {
 
 <template>
   <div class="qb">
-    <div class="section-heading qb-heading">
+    <div v-if="!props.embedded" class="section-heading qb-heading">
       <div>
         <p class="eyebrow">QUESTION WORKSPACE</p>
         <h1>题库工作台<span class="heading-dot">.</span></h1>
@@ -377,7 +383,7 @@ function previewAvailable(source: SourceEvidence): boolean {
       </div>
     </div>
 
-    <div class="qb-workspace-nav" role="tablist" aria-label="题库工作区">
+    <div v-if="!props.embedded" class="qb-workspace-nav" role="tablist" aria-label="题库工作区">
       <button role="tab" :aria-selected="tab === 'overview'" :class="{active:tab==='overview'}" @click="switchTab('overview')"><LayoutDashboard :size="17"/> 概览</button>
       <button role="tab" :aria-selected="tab === 'batch'" :class="{active:tab==='batch'}" @click="switchTab('batch')"><Sparkles :size="17"/> 生成题目</button>
       <button role="tab" :aria-selected="tab === 'questions'" :class="{active:tab==='questions'}" @click="switchTab('questions')"><ClipboardCheck :size="17"/> 审核与题库 <span v-if="pendingQuestions" class="qb-count">{{pendingQuestions}}</span></button>
