@@ -10,7 +10,7 @@ from typing import Any
 
 from .ai import AIServiceError, compact
 
-VALID_TYPES = ("single_choice", "true_false")
+VALID_TYPES = ("single_choice", "multiple_choice", "true_false", "short_answer")
 CHOICE_KEYS = ("A", "B", "C", "D")
 
 
@@ -25,15 +25,27 @@ def validate_question_fields(question_type: Any, stem: Any, options: Any,
         return "invalid explanation"
     if type(difficulty) is not int or difficulty not in (1, 2, 3):
         return "invalid difficulty"
-    if question_type == "single_choice":
+    if question_type in ("single_choice", "multiple_choice"):
         if (not isinstance(options, dict) or set(options) != set(CHOICE_KEYS)
                 or any(not isinstance(options[key], str) or not options[key].strip()
                        or len(options[key]) > 250 for key in CHOICE_KEYS)):
             return "single-choice requires four labeled options A, B, C, D"
         if len({compact(options[key]) for key in CHOICE_KEYS}) != 4:
             return "duplicate choices"
-        if not isinstance(answer, str) or answer not in CHOICE_KEYS:
-            return "single-choice answer must be A, B, C or D"
+        if question_type == "single_choice":
+            if not isinstance(answer, str) or answer not in CHOICE_KEYS:
+                return "single-choice answer must be A, B, C or D"
+        else:
+            if (not isinstance(answer,list) or not 2 <= len(answer) <= 4
+                or len(set(map(str,answer))) != len(answer)
+                or any(type(x) is not str or x not in CHOICE_KEYS for x in answer)
+                or answer != sorted(answer)):
+                return "multiple-choice answer must be sorted unique letters, e.g. ['A','C']"
+    elif question_type == "short_answer":
+        if options not in ({},None):
+            return "short-answer options must be empty"
+        if not isinstance(answer,str) or not 8 <= len(answer.strip()) <= 2000:
+            return "short-answer reference answer must be 8-2000 characters"
     else:
         if options not in ({"true": "正确", "false": "错误"}, {}, None):
             return "true/false options must be empty or the standard labels"
@@ -84,8 +96,8 @@ def validate_generated_questions(response: str, sources: dict[str, dict],
         seen.add(stem_key)
         accepted.append({
             "question_type": question_type, "stem": item["stem"].strip(),
-            "options": (dict(item["options"]) if question_type == "single_choice"
-                        else {"true": "正确", "false": "错误"}),
+            "options": (dict(item["options"]) if question_type in ("single_choice","multiple_choice")
+                        else {"true": "正确", "false": "错误"} if question_type == "true_false" else {}),
             "correct_answer": item["correct_answer"],
             "explanation": item["explanation"].strip(),
             "difficulty": item["difficulty"], "source_chunk_id": chunk_id,
