@@ -23,6 +23,7 @@ const emit = defineEmits<{
   updated: []
   'blind-trial': []
   'open-practice': []
+  'section-change': [section: Section]
 }>()
 
 const section = ref<Section>(props.initialSection ?? 'materials')
@@ -55,6 +56,7 @@ function fromDocumentExternal(id: string) {
   chooseQuestionMode('external')
 }
 
+watch(section, current => emit('section-change', current))
 watch(() => props.initialSection, next => {
   if (next) section.value = next
 })
