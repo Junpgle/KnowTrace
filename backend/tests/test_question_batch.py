@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from knowtrace.db import transaction
 from knowtrace.main import create_app
-from knowtrace.question_batch_api import validate_cluster_reply
+from knowtrace.question_batch_api import validate_cluster_reply, parse_batch_json
 
 
 FIRST = "The sender encodes data into electrical signals before transmission."
@@ -134,3 +134,34 @@ def test_mapping_requires_source_for_each_concept():
         allowed_ids={"p1","p2"},chunks=chunks,seen_stems=set(),
         count=2,types={"true_false"})
     assert len(accepted)==1 and warnings==[]
+
+
+def test_wrapped_json_is_accepted_but_truncated_json_is_rejected():
+    from knowtrace.ai import AIServiceError
+    import pytest
+    obj = '{"items":[]}'
+    assert parse_batch_json(obj)["items"] == []
+    assert parse_batch_json("```json\\n" + obj + "\\n```")["items"] == []
+    assert parse_batch_json("结果如下：\\n" + obj)["items"] == []
+    with pytest.raises(AIServiceError, match="不完整"):
+        parse_batch_json('{"items":[{"question_type":"single_choice"')
+    with pytest.raises(AIServiceError, match="JSON"):
+        parse_batch_json("No structured output")
+
+
+def test_valid_string_boolean_is_normalized_only_for_true_false():
+    src = {"a":{"chunk_id":"a","content_text":FIRST,"knowledge_point_ids":["p1"]}}
+    record = {
+        "question_type":"true_false",
+        "stem":"The sender encodes data before transmission.",
+        "options":{},"correct_answer":"true",
+        "explanation":"The sender encodes data into electrical signals.",
+        "difficulty":2,"knowledge_point_ids":["p1"],
+        "primary_knowledge_point_id":"p1",
+        "evidence":[{"source_chunk_id":"a","quote":FIRST}]
+    }
+    result,issues=validate_cluster_reply(json.dumps({"items":[record]}),
+        allowed_ids={"p1"},chunks=src,seen_stems=set(),count=1,
+        types={"true_false"})
+    assert len(result)==1, issues
+    assert result[0]["correct_answer"] is True
