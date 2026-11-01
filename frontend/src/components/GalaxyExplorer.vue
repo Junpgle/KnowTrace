@@ -165,17 +165,11 @@ const nodes = computed<GraphNode[]>(()=>{
  // screen-space grid layout can use the complete viewport without a huge hub.
  if(chapter&&displayMode.value==='groups')return browseGroups.value.map(groupNode)
  if(chapter&&activeBrowseGroup.value&&level.value==='knowledge'&&!term.value.trim()){
+  // The visible browse neighborhood is a persistent map. Selecting any of
+  // its planets must never add/remove nodes or relayout their coordinates.
+  // Cross-group verified neighbors remain accessible through the detail
+  // panel, but don't replace the current map until explicitly navigated.
   const ids=new Set(activeBrowseGroup.value.members)
-  if(selectedId.value){
-   ids.add(selectedId.value)
-   for(const edge of props.graph.edges){
-    if(edge.structural||!edge.verified)continue
-    if(edge.source===selectedId.value)ids.add(edge.target)
-    if(edge.target===selectedId.value)ids.add(edge.source)
-   }
-  }
-  // The chapter remains in the breadcrumb and drawer. Rendering another
-  // chapter planet inside a leaf neighborhood wastes space and crowds labels.
   return [groupNode(activeBrowseGroup.value),
    ...props.graph.nodes.filter(n=>n.kind==='knowledge'&&ids.has(n.id))]
  }
@@ -188,7 +182,8 @@ const edges = computed(()=>{
   const g=activeBrowseGroup.value,ids=new Set(nodes.value.map(n=>n.id))
   return [
    ...nodes.value.filter(n=>n.kind==='knowledge').map(n=>syntheticEdge(g.id,n.id)),
-   ...props.graph.edges.filter(e=>!e.structural&&ids.has(e.source)&&ids.has(e.target)&&
+   ...props.graph.edges.filter(e=>!e.structural&&e.verified&&
+    ids.has(e.source)&&ids.has(e.target)&&
     (relationView.value==='all'||relationView.value==='selected'&&!!selectedId.value&&
      (e.source===selectedId.value||e.target===selectedId.value)))]
  }
@@ -312,6 +307,13 @@ function selectCanvasNode(id: string | null) {
   selectedId.value = id
 }
 function focusKnowledge(id: string, fromCanvas = false) {
+  // Staying inside the current browse neighborhood is a selection, not a
+  // navigation to a new scene. Preserve every planet's world position.
+  if (level.value === 'knowledge' && activeBrowseGroup.value?.members.includes(id)
+      && !term.value.trim()) {
+    selectedId.value = id
+    return
+  }
   // Preserve a visible map anchor when opening a concept from the directory:
   // before expansion the concept may not yet have a rendered world position.
   const wasVisible = nodes.value.some(n => n.id === id)
@@ -476,7 +478,7 @@ onBeforeUnmount(() => {
         <Graph3DCanvas ref="canvas" :nodes="nodes" :edges="edges" :selected-id="selectedId"
           :show-relations="relationView!=='none'" :show-structure="showStructure"
           :relation-edges="graph.edges" :navigation="navigation" :layout-nodes="chapterChoice==='all' ? graph.nodes : nodes"
-          :layout-edges="chapterChoice==='all' ? graph.edges : edges"
+          :layout-edges="graph.edges" :preserve-positions-on-select="true"
           :context-nodes="contextNodes" :context-edges="graph.edges" :context-chapter-id="chapterChoice==='all' ? null : chapterChoice"
           @select="selectCanvasNode" />
         <div class="gx-stage-nav">

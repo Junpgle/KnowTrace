@@ -25,6 +25,7 @@ const props = defineProps<{
   contextNodes?: GraphNode[]
   contextEdges?: GraphEdge[]
   contextChapterId?: string | null
+  preservePositionsOnSelect?: boolean
   navigation?: { serial: number; mode: 'enter' | 'back' | 'jump'; nodeId?: string }
 }>()
 const emit = defineEmits<{ select: [id: string | null] }>()
@@ -94,8 +95,30 @@ const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[]
 // their radius is specified in SCREEN pixels, not permanent world units.
 // This prevents a 10-world-unit globe from covering neighboring orbit slots
 // when chapter-level camera zoom brings the group atlas into view.
-const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string }[] = []
+const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string; count: number }[] = []
 const groupMarkerRadii = new Map<string, number>()
+type OrbitingPlanet = {
+  id: string
+  world: THREE.Vector3
+  initialWorld: THREE.Vector3
+  center: THREE.Vector3
+  axisX: THREE.Vector3
+  axisY: THREE.Vector3
+  major: number
+  minor: number
+  phase: number
+  radiansPerSecond: number
+  startedAt: number
+  objects: {object: THREE.Object3D; start: THREE.Vector3}[]
+}
+const orbitingPlanets: OrbitingPlanet[] = []
+const movingLines: {
+  geometry: THREE.BufferGeometry
+  edges: {source:string;target:string}[]
+}[] = []
+let orbitalSeconds = 0
+let lastOrbitFrame = 0
+const orbitVisuals = new Map<string, {object:THREE.Object3D;start:THREE.Vector3}[]>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
@@ -558,56 +581,36 @@ function layout(nodes: GraphNode[], edges: GraphEdge[]) {
     byChapter.get(owner)!.push(node)
   }
 
-  // Two staggered orbital belts use the four quadrants, not rigid radial
-  // spokes. Their centers are repelled in projection to avoid collisions.
+  // Whole-course overview uses the SAME elliptical design language as
+  // the chapter browse-group overview. Chapters orbit the course core in
+  // the XZ plane; concept counts determine their visual weight/speed.
   const top = chapters.filter(c => !chapterIds.has(parent.get(c.id) ?? ''))
+    .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans')||a.id.localeCompare(b.id))
   const nested = chapters.filter(c => chapterIds.has(parent.get(c.id) ?? ''))
-  top.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans') || a.id.localeCompare(b.id))
-  const total = top.length
-  const sizes = top.map(c => byChapter.get(c.id)?.length ?? 0)
-  const large = Math.max(1, ...sizes)
-  const orbit = Math.max(105, 74 + Math.sqrt(large) * 7 + total * 3.4)
-  const innerCount = total >= 7 ? Math.max(3, Math.round(total * .40)) : 0
-  const outerCount = total - innerCount
-  const chapterCoords: THREE.Vector3[] = []
-  top.forEach((ch, i) => {
-    const inner = i < innerCount
-    const index = inner ? i : i - innerCount
-    const count = inner ? innerCount : outerCount
-    const angle = -Math.PI / 2 + (index + (inner ? 0 : .48)) * 2 * Math.PI / Math.max(1, count)
-      + (ordinalHash(ch.id + ':angle') - .5) * .12
-    const radius = orbit * (inner ? .60 : 1.02) *
-      (.96 + ordinalHash(ch.id + ':radius') * .08)
-    chapterCoords.push(new THREE.Vector3(
-      Math.cos(angle) * radius,
-      (ordinalHash(ch.id + ':elevation') - .5) * 10,
-      Math.sin(angle) * radius,
-    ))
+  const count=top.length
+  const large=Math.max(1,...top.map(ch=>byChapter.get(ch.id)?.length ?? 0))
+  const viewport=safeViewport()
+  const aspect=THREE.MathUtils.clamp(
+    (viewport.right-viewport.left)/Math.max(1,viewport.bottom-viewport.top),
+    1.30, 2.30)
+  const orbit = Math.max(128, 125 + Math.sqrt(large)*2.8 + count*3)
+  const chapterBands=browseOrbitBands(top)
+  chapterBands.forEach((band,ring)=>{
+    const fraction=chapterBands.length===1 ? 1 :
+      .56+.44*ring/Math.max(1,chapterBands.length-1)
+    const a=orbit*fraction*aspect*.82
+    const b=orbit*fraction*.76
+    const at=ellipseArcAngles(a,b)
+    const phase=ring*.37+.09
+    band.forEach((ch,i)=>{
+      const angle=at((i+phase)/band.length)
+      pos.set(ch.id,new THREE.Vector3(
+        Math.cos(angle)*a,
+        (ordinalHash(ch.id+':altitude')-.5)*4,
+        Math.sin(angle)*b,
+      ))
+    })
   })
-  for (let pass = 0; pass < 22; pass++) {
-    for (let i = 0; i < chapterCoords.length; i++) {
-      for (let j = i + 1; j < chapterCoords.length; j++) {
-        const a = chapterCoords[i], b = chapterCoords[j]
-        const dx = b.x - a.x, dz = b.z - a.z
-        const d = Math.hypot(dx, dz)
-        if (d >= 54) continue
-        const theta = (i + 1) * G + j
-        const ux = d > .001 ? dx / d : Math.cos(theta)
-        const uz = d > .001 ? dz / d : Math.sin(theta)
-        const shift = (54 - d) * .30
-        a.x -= ux * shift; a.z -= uz * shift
-        b.x += ux * shift; b.z += uz * shift
-      }
-    }
-    for (const point of chapterCoords) {
-      const d = Math.hypot(point.x, point.z)
-      if (d < 55 && d > .001) {
-        point.x *= 55 / d
-        point.z *= 55 / d
-      }
-    }
-  }
-  top.forEach((ch, i) => pos.set(ch.id, chapterCoords[i]))
   // Nested chapters stay near their real parent but get their own system.
   const pending = new Map(nested.map(c => [c.id, c]))
   for (let pass = 0; pending.size && pass <= nested.length; pass++) {
@@ -732,6 +735,11 @@ function clearGraph(animate = false) {
   orbitTracks.splice(0)
   groupMarkers.splice(0)
   groupMarkerRadii.clear()
+  orbitingPlanets.splice(0)
+  movingLines.splice(0)
+  orbitVisuals.clear()
+  orbitalSeconds = 0
+  lastOrbitFrame = 0
   hoveredNodeId = null
   hoveredName.value = ''
   positions.clear()
@@ -877,6 +885,108 @@ function belongsToContextChapter(node: GraphNode, chapterId: string | null | und
   return node.chapter_id === chapterId
 }
 
+// Orbital paths apply to the two OVERVIEW maps, never to a knowledge
+// neighborhood. During a concept selection every planet keeps its position.
+function initializeOrbitingPlanets() {
+  orbitingPlanets.splice(0)
+  if (!camera || props.selectedId || props.nodes.some(n=>n.kind==='knowledge'))
+    return
+  const isGroup = props.nodes.length>0 &&
+    props.nodes.every(n=>n.kind==='group')
+  const bodies = isGroup ? props.nodes :
+    props.nodes.filter(n=>n.kind==='chapter')
+  if (bodies.length < 2) return
+  const groupAxis = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion)
+  const groupVertical = new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion)
+  const axisX = isGroup ? groupAxis : new THREE.Vector3(1,0,0)
+  const axisY = isGroup ? groupVertical : new THREE.Vector3(0,0,1)
+  const bands=browseOrbitBands(bodies)
+  bands.forEach(band=>{
+    const points=band.map(n=>positions.get(n.id))
+      .filter((p):p is THREE.Vector3 => Boolean(p))
+    if(points.length<2)return
+    const center=new THREE.Vector3()
+    points.forEach(p=>center.add(p))
+    center.multiplyScalar(1/points.length)
+    const xRadius=Math.max(5,...points.map(p=>
+      Math.abs(p.clone().sub(center).dot(axisX))))
+    const yRadius=Math.max(5,...points.map(p=>
+      Math.abs(p.clone().sub(center).dot(axisY))))
+    band.forEach(node=>{
+      const position=positions.get(node.id)
+      const objects=orbitVisuals.get(node.id)
+      if(!position||!objects?.length)return
+      const delta=position.clone().sub(center)
+      const x=delta.dot(axisX), y=delta.dot(axisY)
+      const phase=Math.atan2(y/yRadius,x/xRadius)
+      const ellipticalScale=Math.hypot(x/xRadius,y/yRadius)
+      // Recover the EXACT initial point, including tiny depth offsets.
+      // Without this the first animation frame snaps every planet onto an
+      // approximate common ellipse and ruins the continuous-map feeling.
+      const residual=delta.clone().addScaledVector(axisX,-x)
+        .addScaledVector(axisY,-y)
+      const individualCenter=center.clone().add(residual)
+      const amount=node.kind==='group'?node.source_count:
+        (cachedChapterTotals.get(node.id)??node.source_count)
+      // Stable pseudorandom differences avoid everyone moving in lockstep.
+      // A planet carrying more knowledge orbits measurably more slowly.
+      const periodSeconds=(48+6.8*Math.sqrt(Math.max(1,amount)))*
+        (.91+.18*ordinalHash(node.id+':orbital-speed'))
+      orbitingPlanets.push({
+        id:node.id, world:position, initialWorld:position.clone(),
+        center:individualCenter,
+        axisX:axisX.clone(), axisY:axisY.clone(),
+        major:xRadius*ellipticalScale, minor:yRadius*ellipticalScale, phase,
+        radiansPerSecond:2*Math.PI/periodSeconds,
+        startedAt:0,
+        objects,
+      })
+    })
+  })
+}
+
+// This is an actual position update: moving planets remain pickable, labels
+// track the same shared Vector3, and course-contains edges remain connected.
+// Motion stops on hover and respects reduced-motion preference.
+function animateOrbits(now:number) {
+  if (!orbitingPlanets.length) return
+  if (!lastOrbitFrame) lastOrbitFrame=now
+  const dt=Math.min(.05,Math.max(0,(now-lastOrbitFrame)/1000))
+  lastOrbitFrame=now
+  if (reducedMotion() || hoveredNodeId || props.selectedId ||
+      outgoing.length || tween) return
+  orbitalSeconds+=dt
+  for(const planet of orbitingPlanets){
+    const angle=planet.phase+planet.radiansPerSecond*orbitalSeconds
+    const destination=planet.center.clone()
+      .addScaledVector(planet.axisX,planet.major*Math.cos(angle))
+      .addScaledVector(planet.axisY,planet.minor*Math.sin(angle))
+    // Object transforms are relative to the INITIAL orbit coordinates,
+    // not the previous frame; otherwise only the tiny per-frame delta is
+    // applied and a moving marker never follows its actual orbit.
+    const shift=destination.clone().sub(planet.initialWorld)
+    planet.world.copy(destination)
+    for(const item of planet.objects)
+      item.object.position.copy(item.start).add(shift)
+    if(planet.id.startsWith('view-group:')){
+      browseWorldPositions.set(planet.id,destination.clone())
+      contextCacheCoordinates.set(planet.id,destination.clone())
+    }
+  }
+  for(const lines of movingLines){
+    const attr=lines.geometry.getAttribute('position') as THREE.BufferAttribute
+    if(!attr)continue
+    lines.edges.forEach((edge,i)=>{
+      const a=positions.get(edge.source),b=positions.get(edge.target)
+      if(!a||!b)return
+      attr.setXYZ(i*2,a.x,a.y,a.z)
+      attr.setXYZ(i*2+1,b.x,b.y,b.z)
+    })
+    attr.needsUpdate=true
+    lines.geometry.computeBoundingSphere()
+  }
+}
+
 function rebuild(animate = false, transition?: SceneTransition) {
   if (!scene) return
   // Clicks on dimmed chapters / concepts are valid navigation too. Their
@@ -990,7 +1100,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     const selected = props.nodes.find(n => n.kind === 'knowledge' && n.id === props.selectedId)
     const local = props.nodes.every(n => n.kind === 'knowledge') && !!selected &&
       props.nodes.length <= 26
-    if (local && selected) {
+    if (local && selected && !props.preservePositionsOnSelect) {
       const center = previous.get(selected.id) ?? coords.get(selected.id) ??
         new THREE.Vector3()
       coords.set(selected.id, center.clone())
@@ -1021,7 +1131,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
   const focusState = focusRelations()
   const selectedId = props.selectedId
   const focusCenter = selectedId ? coords.get(selectedId) : undefined
-  if (focusCenter && focusState.neighbors.size) {
+  if (focusCenter && focusState.neighbors.size &&
+      !props.preservePositionsOnSelect) {
     const neighbors = [...focusState.neighbors].filter(id => coords.has(id)).sort()
     const count = neighbors.length
     const screenRight = new THREE.Vector3(1,0,0).applyQuaternion(camera?.quaternion ??
@@ -1046,6 +1157,14 @@ function rebuild(animate = false, transition?: SceneTransition) {
         .addScaledVector(screenUp,Math.sin(angle)*radius))
     })
   }
+  if (props.preservePositionsOnSelect && !transition) {
+    // Previous *rendered* coordinates are the source of truth, not a fresh
+    // orbit/relationship layout from the newly selected node.
+    for (const node of props.nodes) {
+      const old = previous.get(node.id)
+      if (old) coords.set(node.id, old.clone())
+    }
+  }
   for (const node of props.nodes) {
     const position = coords.get(node.id)
     if (position) positions.set(node.id, position)
@@ -1054,7 +1173,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
   // in props.nodes, but must be shaded rather than treated as selected.
   const currentChapter = props.contextChapterId
   const brightNodes = props.nodes.filter(n => {
-    if (focusState.active) return n.id === selectedId || focusState.neighbors.has(n.id)
+    if (focusState.active)
+      return props.preservePositionsOnSelect || n.id === selectedId ||
+        focusState.neighbors.has(n.id)
     return !currentChapter || (n.kind !== 'course' && n.kind !== 'chapter') ||
       n.id === currentChapter || n.id === selectedId
   })
@@ -1155,27 +1276,36 @@ function rebuild(animate = false, transition?: SceneTransition) {
       cluster.setColorAt(index, color)
       ids.push(node.id)
 
-      if ((smallGroup && !focusState.active) ||
+      if ((smallGroup && (!focusState.active || props.preservePositionsOnSelect)) ||
           (!focusState.active && !smallGroup && index < 32) ||
           center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
-        const label = focusState.active
+        const subdued = props.preservePositionsOnSelect &&
+          focusState.active && !center && !neighbor
+        const label = focusState.active && !subdued
           ? makeFocusLabel(node.name, center)
           : smallGroup ? makeLeafLabel(node.name) : makeLabel(node.name)
         if (label) {
+          if (focusState.active && props.preservePositionsOnSelect &&
+              !center && !neighbor) {
+            label.material.opacity = .23
+            label.material.transparent = true
+          }
           label.position.copy(position)
           label.userData.nodeId = node.id
-          const width = focusState.active
+          const width = subdued ? 128 : focusState.active
             ? (center ? 208 : knowledge.length > 9 ? 148 : 178)
             : 154
           labelAnchors.push({
             sprite: label, center: position, nodeId: node.id,
             distance: radius + (smallGroup ? 6.5 : 4.5),
             focused: focusState.active,
-            priority: center ? 10000 : 1000,
+            priority: center ? 10000 : neighbor ? 2000 : subdued ? 30 : 1000,
             declutter: !focusState.active && !smallGroup,
-            screen: focusState.active
-              ? {width, height: width * 180 / 640, radius, gap: 12}
+            screen: subdued
+              ? {width, height: width*150/520, radius, gap: 11}
+              : focusState.active
+                ? {width, height: width * 180 / 640, radius, gap: 12}
               : smallGroup
                 ? {width: 218, height: 218 * 150 / 520, radius, gap: 12}
                 : {width: 154, height: 39, radius, gap: 11},
@@ -1203,10 +1333,13 @@ function rebuild(animate = false, transition?: SceneTransition) {
     g.add(cluster)
     meshes.push(cluster)
   }
-  // One faint CONTINUOUS track per elliptical belt is a clearer orbital
-  // cue than a separate miniature Saturn ring around every group planet.
-  if (props.nodes.length && props.nodes.every(n => n.kind === 'group')) {
-    const bands = browseOrbitBands(props.nodes)
+  // Both course chapters and local browse groups inhabit faint elliptical
+  // belts. Lines are navigational decoration, not artificial knowledge edges.
+  const orbitBodies = props.nodes.every(n=>n.kind==='group') ? props.nodes :
+    props.nodes.some(n=>n.kind==='knowledge') ? [] :
+      props.nodes.filter(n=>n.kind==='chapter')
+  if (orbitBodies.length >= 3) {
+    const bands = browseOrbitBands(orbitBodies)
     bands.forEach((band,index) => {
       const points = band.map(n=>positions.get(n.id))
         .filter((p):p is THREE.Vector3 => Boolean(p))
@@ -1230,6 +1363,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     })
   }
   for (const node of brightNodes.filter(n => n.kind !== 'knowledge')) {
+    const orbitDecorations: THREE.Object3D[] = []
     const position = positions.get(node.id)
     if (!position) continue
     const isCourse = node.kind === 'course'
@@ -1251,7 +1385,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
         : 6.8)
       : isCourse ? (overview ? 9.8 : 6.0)
       : (overview
-          ? 11.7 + Math.min(4.1, Math.log2(count + 1) * .53)
+          ? 7.3 + Math.min(17, 2.65 * Math.sqrt(Math.max(1,count)/10))
           : 3.6 + Math.min(2.5, Math.log2(count + 1) * .35))
         * (chapterSelected ? 1.12 : 1)
     // Front and back stars get different brightness and actual projected
@@ -1273,6 +1407,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     planet.userData.nodeId = node.id
     g.add(planet)
     meshes.push(planet)
+    orbitDecorations.push(planet)
 
     // Restrained luminous atmosphere: one soft glow and an orbital ring
     // instead of hundreds of fake chapter dots.
@@ -1288,8 +1423,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
     aura.position.copy(position)
     aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
+    orbitDecorations.push(aura)
     if (overview && node.kind === 'group') {
-      groupMarkers.push({planet, aura, id:node.id})
+      groupMarkers.push({planet, aura, id:node.id, count})
     }
 
     if (!focusState.active && !(overview && node.kind === 'group')) {
@@ -1313,6 +1449,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
       }
       ring.position.copy(position)
       g.add(ring)
+      orbitDecorations.push(ring)
       // Sparse decorative halo is intentionally NOT part of the knowledge
       // graph: its dots cannot be selected or mistaken for knowledge nodes.
       if (overview && !isCourse && count > 0) {
@@ -1331,10 +1468,12 @@ function rebuild(animate = false, transition?: SceneTransition) {
         }
         const dustGeom = new THREE.BufferGeometry()
         dustGeom.setAttribute('position', new THREE.Float32BufferAttribute(particles, 3))
-        g.add(new THREE.Points(dustGeom, new THREE.PointsMaterial({
+        const dust=new THREE.Points(dustGeom, new THREE.PointsMaterial({
           color: baseColor, size: .65, transparent: true,
           opacity: .6, depthWrite: false,
-        })))
+        }))
+        g.add(dust)
+        orbitDecorations.push(dust)
       }
     }
 
@@ -1378,7 +1517,11 @@ function rebuild(animate = false, transition?: SceneTransition) {
         g.add(label)
       }
     }
+    orbitVisuals.set(node.id,orbitDecorations.map(object=>({
+      object,start:object.position.clone(),
+    })))
   }
+  initializeOrbitingPlanets()
 
   const structural: number[] = []
   const ordinary: number[] = []
@@ -1398,17 +1541,26 @@ function rebuild(animate = false, transition?: SceneTransition) {
     if (bucket) bucket.push(a.x, a.y, a.z, b.x, b.y, b.z)
   }
   function addLines(points: number[], color: number, opacity: number) {
-    if (!points.length) return
+    if (!points.length) return null
     const geom = new THREE.BufferGeometry()
     geom.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
     const lines = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
       color, transparent: true, opacity, depthWrite: false,
     }))
     g.add(lines)
+    return lines
   }
-  if (!focusState.active &&
+  if ((!focusState.active || props.preservePositionsOnSelect) &&
       (props.showStructure !== false || props.nodes.some(n=>n.kind==='group'))) {
-    addLines(structural, 0x7b9aad, 0.3)
+    const structuralLine = addLines(structural, 0x7b9aad, focusState.active ? .09 : .3)
+    if (structuralLine && orbitingPlanets.length) {
+      movingLines.push({
+        geometry:structuralLine.geometry,
+        edges:props.edges.filter(e=>e.structural &&
+          positions.has(e.source)&&positions.has(e.target))
+          .map(e=>({source:e.source,target:e.target})),
+      })
+    }
   }
   addLines(ordinary, 0xffd184, focusState.active ? 0.085 : 0.79)
   for (const [type, points] of highlightedByType) {
@@ -1726,9 +1878,7 @@ function updateGroupMarkerSizes() {
     .applyQuaternion(camera.quaternion)
   const centers = groupMarkers.map(m => screenPosition(
     m.planet.getWorldPosition(new THREE.Vector3())))
-  const preferredRadius = groupMarkers.length > 28 ? 10 :
-    groupMarkers.length > 18 ? 12 : 14
-  groupMarkers.forEach(({planet,aura,id}, i) => {
+  groupMarkers.forEach(({planet,aura,id,count}, i) => {
     const here = centers[i]
     let closest = Infinity
     if (here.visible) {
@@ -1740,6 +1890,10 @@ function updateGroupMarkerSizes() {
     }
     // Leave a generous clearance for strokes and labels. A narrow projection
     // can shrink a marker, but can NEVER make adjacent planets overlap.
+    // Concept-heavy browsing groups are visibly larger; the nearest
+    // neighbor screen-space limit always wins to prevent overlaps.
+    const preferredRadius = THREE.MathUtils.clamp(
+      6.7+2.0*Math.sqrt(Math.max(1,count)), 8.8, 18)
     const radiusPixels = Math.max(3.8,Math.min(
       preferredRadius, closest * .28))
     const depth = Math.max(1, planet.getWorldPosition(new THREE.Vector3())
@@ -2031,6 +2185,7 @@ function draw() {
     if (travel >= 1) finishFade()
   }
   controls.update()
+  animateOrbits(now)
   if (!outgoing.length) {
     for (const track of orbitTracks) {
       const hovered = !!hoveredNodeId && track.ids.has(hoveredNodeId)
@@ -2222,6 +2377,7 @@ watch(() => ({
   contextNodes: props.contextNodes,
   contextEdges: props.contextEdges,
   contextChapterId: props.contextChapterId,
+  preservePositionsOnSelect: props.preservePositionsOnSelect,
 }), (next, previous) => {
   const beforeKey = sceneSignature(previous.nodes)
   const afterKey = sceneSignature(next.nodes)
@@ -2268,7 +2424,8 @@ watch(() => ({
   // A local selection can rearrange the neighbor orbit even if the set of
   // nodes stays the same. Blend those frames as well; swapping the meshes
   // immediately would otherwise look like a pre-animation teleport.
-  const sceneChanged = layerChanged || selectedChanged
+  const sceneChanged = layerChanged ||
+    (selectedChanged && !props.preservePositionsOnSelect)
   rebuild(sceneChanged, hierarchyChanged ? {
     mode: transitionMode,
     anchorId: action?.nodeId,
@@ -2278,7 +2435,8 @@ watch(() => ({
     if (returnCamera) restoreCamera(returnCamera)
     else focus(next.selectedId, true)
   } else if (layerChanged || next.selectedId !== previous.selectedId) {
-    focus(next.selectedId, layerChanged)
+    if (!(props.preservePositionsOnSelect && !layerChanged && selectedChanged))
+      focus(next.selectedId, layerChanged)
   }
 }, { flush: 'post' })
 onBeforeUnmount(() => {
