@@ -731,7 +731,11 @@ function belongsToContextChapter(node: GraphNode, chapterId: string | null | und
 
 function rebuild(animate = false, transition?: SceneTransition) {
   if (!scene) return
-  const previous = new Map([...positions].map(([id, p]) => [id, p.clone()]))
+  // Clicks on dimmed chapters / concepts are valid navigation too. Their
+  // original atlas coordinates must be usable as the next camera anchor.
+  const previous = new Map([...resolveContextLayout()]
+    .map(([id, p]) => [id, p.clone()] as [string, THREE.Vector3]))
+  for (const [id, p] of positions) previous.set(id, p.clone())
   clearGraph(animate)
   const g = new THREE.Group()
   group = g
