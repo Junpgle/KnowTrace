@@ -810,7 +810,13 @@ function rebuild(animate = false, transition?: SceneTransition) {
   }
   const focusState = focusRelations()
   const selectedId = props.selectedId
-  const activeIds = new Set(props.nodes.map(n => n.id))
+  // Course / sibling chapter anchors may be present for structural context
+  // in props.nodes, but must be shaded rather than treated as selected.
+  const currentChapter = props.contextChapterId
+  const brightNodes = props.nodes.filter(n =>
+    !currentChapter || (n.kind !== 'course' && n.kind !== 'chapter') ||
+    n.id === currentChapter || n.id === props.selectedId)
+  const activeIds = new Set(brightNodes.map(n => n.id))
   // Render the rest of the map below the active layer, keeping its original
   // location. Small spheres are instanced: thousands of dim points remain
   // cheap to draw. Only active nodes get labels, rings and bright halos.
@@ -870,7 +876,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
   const planetSphere = new THREE.SphereGeometry(1, 40, 28)
   const palette = chapterColors(props.layoutNodes ?? props.nodes)
   const overview = !props.nodes.some(n => n.kind === 'knowledge')
-  const knowledge = props.nodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
+  const knowledge = brightNodes.filter(n => n.kind === 'knowledge' && positions.has(n.id))
   const smallGroup=props.nodes.some(n=>n.kind==='group') && knowledge.length>0 && knowledge.length<=18
   if (knowledge.length) {
     const material = new THREE.MeshPhongMaterial({
@@ -949,7 +955,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     g.add(cluster)
     meshes.push(cluster)
   }
-  for (const node of props.nodes.filter(n => n.kind !== 'knowledge')) {
+  for (const node of brightNodes.filter(n => n.kind !== 'knowledge')) {
     const position = positions.get(node.id)
     if (!position) continue
     const isCourse = node.kind === 'course'
