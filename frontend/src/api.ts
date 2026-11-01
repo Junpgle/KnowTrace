@@ -210,7 +210,7 @@ export interface QuestionQuality {
   coverage: number
   latest_questions: {
     total:number; approved:number;pending:number;draft:number;rejected:number
-    diagnostic:number;composite:number;without_source:number;visual_evidence:number
+    diagnostic:number;approved_diagnostic:number;composite:number;without_source:number;visual_evidence:number
     duplicate_stems:number
   }
   chapters: {
