@@ -33,7 +33,7 @@ class QuizStart(BaseModel):
 
 class SubmitAnswer(BaseModel):
     client_request_id: str = Field(min_length=8, max_length=100)
-    response: StrictStr | StrictBool
+    response: StrictStr | StrictBool | list[StrictStr]
     elapsed_ms: int | None = Field(default=None, ge=0, le=86_400_000)
 
 
@@ -59,9 +59,11 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
                 i.question_version_id,i.primary_knowledge_point_id,
                 i.selection_reason,v.question_type,v.stem,v.review_status,
                 v.options_json,v.explanation,v.correct_answer_json,
-                a.id AS answer_id,a.response_json,a.is_correct,a.answered_at,a.elapsed_ms
+                a.id AS answer_id,a.response_json,a.is_correct,a.answered_at,a.elapsed_ms,
+                ev.mode AS evaluation_mode,ev.verdict AS evaluation_verdict,ev.feedback AS evaluation_feedback
                 FROM quiz_items i JOIN question_versions v ON v.id=i.question_version_id
                 LEFT JOIN answer_records a ON a.quiz_item_id=i.id
+                LEFT JOIN short_answer_evaluations ev ON ev.quiz_item_id=i.id
                 WHERE i.session_id=? ORDER BY i.position""", (session_id,)))
     blind = bool(records and all(record["selection_reason"] == BLIND_REASON for record in records))
     reveal = not blind or session["status"] == "completed"
@@ -79,22 +81,33 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
         if answered:
             obj["submitted_response"] = json.loads(record["response_json"])
         if answered and reveal:
+            if record["question_type"] == "short_answer":
+                obj["evaluation"] = ({
+                    "mode":record["evaluation_mode"],"verdict":record["evaluation_verdict"],
+                    "feedback":record["evaluation_feedback"]
+                } if record["evaluation_verdict"] is not None else None)
             obj["result"] = {"answer_id": record["answer_id"],
                              "response": json.loads(record["response_json"]),
-                             "is_correct": bool(record["is_correct"]),
+                             "is_correct": (None if record["question_type"] == "short_answer"
+                                            else bool(record["is_correct"])),
                              "correct_answer": json.loads(record["correct_answer_json"]),
                              "explanation": record["explanation"],
                              "answered_at": record["answered_at"],
                              "elapsed_ms": record["elapsed_ms"]}
         items.append(obj)
     answered_count = sum(item["answered"] for item in items)
-    correct_count = sum(bool(item["result"]["is_correct"]) for item in items
+    correct_count = sum(item["result"]["is_correct"] is True for item in items
                         if item["answered"] and "result" in item)
+    objective_total = sum(item["question_type"] != "short_answer" for item in items)
+    subjective_total = len(items) - objective_total
+    evaluated_subjective = sum(item.get("evaluation") is not None for item in items)
     return {"id": session["id"], "course_id": session["course_id"],
             "mode": session["mode"], "blind_pending": blind, "status": session["status"],
             "started_at": session["started_at"], "finished_at": session["finished_at"],
             "total": len(items), "answered": answered_count,
             "correct": correct_count if reveal else None,
+            "objective_total":objective_total,"subjective_total":subjective_total,
+            "evaluated_subjective":evaluated_subjective if reveal else None,
             "items": items}
 
 
@@ -103,7 +116,7 @@ def _answer_result(db: sqlite3.Connection, answer_id: str) -> dict:
            a.is_correct,a.answered_at,v.correct_answer_json,v.explanation,
            e.p_before,e.p_posterior,e.p_after,
            i.primary_knowledge_point_id AS knowledge_point_id,
-           i.selection_reason,s.status AS session_status
+           v.question_type,i.selection_reason,s.status AS session_status
            FROM answer_records a JOIN quiz_items i ON i.id=a.quiz_item_id
            JOIN quiz_sessions s ON s.id=i.session_id
            JOIN question_versions v ON v.id=i.question_version_id
@@ -118,7 +131,8 @@ def _answer_result(db: sqlite3.Connection, answer_id: str) -> dict:
                 "mastery": None, "diagnostic": False}
     return {"answer_id": row["answer_id"], "quiz_item_id": row["quiz_item_id"],
             "response": json.loads(row["response_json"]),
-            "is_correct": bool(row["is_correct"]),
+            "is_correct": (None if row["question_type"] == "short_answer"
+                           else bool(row["is_correct"])),
             "correct_answer": json.loads(row["correct_answer_json"]),
             "explanation": row["explanation"], "knowledge_point_id": row["knowledge_point_id"],
             "mastery": {"model": MODEL_KEY, "before": row["p_before"],
@@ -269,19 +283,30 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
             if item["question_type"] == "single_choice":
                 if type(payload.response) is not str or payload.response not in ("A", "B", "C", "D"):
                     raise HTTPException(422, "Single-choice response must be A, B, C or D")
+            elif item["question_type"] == "multiple_choice":
+                if (type(payload.response) is not list or
+                    not 1 <= len(payload.response) <= 4 or
+                    any(type(x) is not str or x not in ("A","B","C","D") for x in payload.response) or
+                    len(set(payload.response)) != len(payload.response) or
+                    payload.response != sorted(payload.response)):
+                    raise HTTPException(422, "Multiple choice must be a sorted unique array of A-D")
+            elif item["question_type"] == "short_answer":
+                if type(payload.response) is not str or not 1 <= len(payload.response.strip()) <= 3000:
+                    raise HTTPException(422, "Short answer text must be 1-3000 characters")
             elif item["question_type"] == "true_false":
                 if type(payload.response) is not bool:
                     raise HTTPException(422, "True/false response must be JSON boolean")
             else:
                 raise HTTPException(422, "Unsupported question type")
-            correct = payload.response == answer
+            correct = False if item["question_type"] == "short_answer" else payload.response == answer
             record_id = _uuid()
             db.execute("""INSERT INTO answer_records(id,quiz_item_id,client_request_id,
                        response_json,is_correct,elapsed_ms) VALUES (?,?,?,?,?,?)""",
                        (record_id, quiz_item_id, payload.client_request_id, serialized, int(correct), payload.elapsed_ms))
             # Multi-concept questions provide practice feedback, NOT an
             # independent BKT observation (including on the primary point).
-            if (item["concept_count"] == 1
+            if (item["question_type"] in ("single_choice","true_false")
+                    and item["concept_count"] == 1
                     and item["review_status"] == "approved"
                     and item["selection_reason"] != BLIND_REASON):
                 kp_id = item["primary_knowledge_point_id"]
@@ -323,10 +348,12 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                  LEFT JOIN mastery_states m ON m.knowledge_point_id=kp.id
                     AND m.user_id=? AND m.model_key=?
                  LEFT JOIN quiz_items i ON i.primary_knowledge_point_id=kp.id
+                 LEFT JOIN question_versions v ON v.id=i.question_version_id
                  LEFT JOIN quiz_sessions s ON s.id=i.session_id AND s.user_id=?
                     AND s.course_id=?
                  LEFT JOIN answer_records a ON a.quiz_item_id=i.id AND s.id IS NOT NULL
                     AND (i.selection_reason IS NULL OR i.selection_reason != ?)
+                    AND v.question_type != 'short_answer'
                  WHERE kp.course_id=? AND kp.archived_at IS NULL
                  GROUP BY kp.id ORDER BY kp.canonical_name,kp.id""",
                  (USER_ID,MODEL_KEY,USER_ID,course_id,BLIND_REASON,course_id)))
