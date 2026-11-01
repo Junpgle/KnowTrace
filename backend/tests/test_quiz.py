@@ -329,3 +329,72 @@ def test_mastery_evidence_display_threshold_is_not_a_confidence_interval():
     assert summary["observed_points"]==2
     assert summary["repeated_evidence_points"]==1
     assert summary["observation_coverage"]==pytest.approx(2/3,abs=.0001)
+
+
+def test_quiz_type_and_unanswered_filters_share_exact_availability(env):
+    http, _ = env
+    course, _, versions = seed(http)
+    approve(http, versions)
+    base = f"/api/courses/{course}"
+    url = base + "/quiz-availability"
+    start = base + "/quiz-sessions"
+
+    assert http.get(url).json()["available"] == 2
+    assert http.get(url, params={"question_types":"single_choice"}).json()["available"] == 1
+    assert http.get(url, params={"question_types":"multiple_choice"}).json()["available"] == 0
+    assert http.get(url, params={"unanswered_only":"true"}).json()["available"] == 2
+
+    # Merely including a question in a session does not make it attempted.
+    skipped = http.post(start, json={"count":1, "question_types":["single_choice"],
+                                     "unanswered_only":True})
+    assert skipped.status_code == 201, skipped.text
+    assert http.get(url, params={"unanswered_only":"true"}).json()["available"] == 2
+
+    answered = http.post(f"/api/quiz-items/{skipped.json()['items'][0]['quiz_item_id']}/answer",
+                         json={"client_request_id":"filter-answer-111", "response":"A"})
+    assert answered.status_code == 200, answered.text
+    assert http.get(url, params={"unanswered_only":"true"}).json()["available"] == 1
+    assert http.get(url, params={"unanswered_only":"true",
+                                  "question_types":"single_choice"}).json()["available"] == 0
+    assert http.post(start, json={"count":1,"unanswered_only":True,
+                                  "question_types":["single_choice"]}).status_code == 409
+    untried = http.post(start, json={"count":1,"unanswered_only":True,
+                                     "question_types":["true_false"]})
+    assert untried.status_code == 201, untried.text
+    assert untried.json()["items"][0]["question_type"] == "true_false"
+    assert http.post(start, json={"count":1,"question_types":[]}).status_code == 422
+
+    # Revising/approving a new version must not turn an answered logical
+    # question back into an "unanswered" one.
+    revised = http.post(f"/api/question-versions/{versions[0]}/revise",
+                        json={"stem":"Which component sends data to the network?"})
+    assert revised.status_code == 201, revised.text
+    assert http.post(f"/api/question-versions/{revised.json()['id']}/review",
+                     json={"decision":"approved"}).status_code == 200
+    assert http.get(url, params={"unanswered_only":"true",
+                                  "question_types":"single_choice"}).json()["available"] == 0
+
+
+def test_quiz_filter_validation_and_pending_scope(env):
+    http, _ = env
+    course, _, versions = seed(http)
+    url = f"/api/courses/{course}/quiz-availability"
+    start = f"/api/courses/{course}/quiz-sessions"
+    assert http.get(url, params={"source":"pending"}).json()["available"] == 2
+    assert http.get(url, params={"mode":"adaptive","source":"pending"}).status_code == 422
+    assert http.post(start, json={"mode":"adaptive","source":"pending",
+                                  "count":1}).status_code == 422
+    assert http.get(url, params={"question_types":"not_a_type"}).status_code == 422
+    assert http.get("/api/courses/missing/quiz-availability").status_code == 404
+
+    trial = http.post(start, json={"count":1,"source":"pending",
+                                   "question_types":["single_choice"],
+                                   "unanswered_only":True})
+    assert trial.status_code == 201, trial.text
+    assert trial.json()["items"][0]["question_type"] == "single_choice"
+    assert http.get(url, params={"source":"pending","unanswered_only":"true",
+                                 "question_types":"single_choice"}).json()["available"] == 1
+    assert http.post(f"/api/quiz-items/{trial.json()['items'][0]['quiz_item_id']}/answer",
+                     json={"client_request_id":"pending-filter-111", "response":"A"}).status_code == 200
+    assert http.get(url, params={"source":"pending","unanswered_only":"true",
+                                 "question_types":"single_choice"}).json()["available"] == 0
