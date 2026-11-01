@@ -16,7 +16,8 @@ function fixture(){
   const outerB=Math.max(245,100+bands.length*55)
   const outerA=outerB*1.7
   const right=new Vector3(.91,.10,.32).normalize()
-  const up=new Vector3(-.20,.96,.05).normalize()
+  const up=new Vector3(-.20,.96,.05).addScaledVector(
+    right,-new Vector3(-.20,.96,.05).dot(right)).normalize()
   const center=new Vector3(180,47,-330)
   const scale=.66
   const samples=[]
