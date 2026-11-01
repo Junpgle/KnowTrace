@@ -194,6 +194,16 @@ async function select(id: string | null) {
     await resetView()
     return
   }
+  // Clicking the empty sky backs out one level instead of leaving a
+  // partially expanded chapter with no sensible camera target.
+  if (!id && previous?.kind === 'knowledge' && selectedChapter.value !== 'all') {
+    await select(selectedChapter.value)
+    return
+  }
+  if (!id && previous?.kind === 'chapter') {
+    await resetView()
+    return
+  }
   if (node?.kind === 'chapter') {
     selectedChapter.value = node.id
     markNavigation('enter', node.id)
