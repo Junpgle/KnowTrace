@@ -85,8 +85,8 @@ class KnowledgePointUpdate(BaseModel):
 class GenerateQuestionsRequest(BaseModel):
     provider: Literal['default', 'ollama', 'mimo'] = 'default'
     count: int = Field(default=2, ge=1, le=4)
-    question_types: list[Literal["single_choice", "true_false"]] = Field(
-        default_factory=lambda: ["single_choice", "true_false"], min_length=1, max_length=2)
+    question_types: list[Literal["single_choice", "multiple_choice", "true_false", "short_answer"]] = Field(
+        default_factory=lambda: ["single_choice", "true_false"], min_length=1, max_length=4)
 
 
 class QuestionRevisionRequest(BaseModel):
@@ -94,7 +94,7 @@ class QuestionRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stem: str | None = None
     options: dict[str, str] | None = None
-    correct_answer: str | bool | None = None
+    correct_answer: str | bool | list[str] | None = None
     explanation: str | None = None
     difficulty: int | None = None
 
