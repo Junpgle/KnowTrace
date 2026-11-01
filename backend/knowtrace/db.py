@@ -43,8 +43,8 @@ def initialize(path: Path) -> None:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 replacement = re.sub(
-                    r"^(CREATE\\s+TABLE\\s+)(?:IF\\s+NOT\\s+EXISTS\\s+)?[\\x22\\x60]?question_versions[\\x22\\x60]?",
-                    r"\\1question_versions_v2", table_sql, count=1, flags=re.I)
+                    r"^(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?[\"\x60]?question_versions[\"\x60]?",
+                    r"\1question_versions_v2", table_sql, count=1, flags=re.I)
                 if replacement == table_sql:
                     raise RuntimeError("Unable to safely migrate question_versions")
                 replacement = replacement.replace(
