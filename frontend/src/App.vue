@@ -642,7 +642,8 @@ onMounted(() => { void initialize() })
             @open-practice="navigate('practice')" />
           <KnowledgeGalaxy v-else-if="view === 'galaxy'" :key="courseId" :course-id="courseId"
             :course-name="currentCourse?.title || '课程'"
-            @open-bank="openContentSection('questions')" @open-practice="navigate('practice')" />
+            @open-bank="openContentSection('questions')" @open-manage="openContentSection('knowledge')"
+            @open-practice="navigate('practice')" />
           <AISettings v-else-if="view === 'settings'" :course-name="currentCourse?.title" />
           <div v-else class="view-stack">
             <div class="section-heading"><div><p class="eyebrow">LEARNING ANALYTICS</p><h1>学习报告<span class="heading-dot">.</span></h1><p class="section-description">发现学习中的进步，也正视尚未掌握的部分。</p></div>
