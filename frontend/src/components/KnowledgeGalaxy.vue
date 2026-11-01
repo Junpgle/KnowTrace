@@ -13,7 +13,7 @@ import {
 } from '../api'
 
 const props = defineProps<{ courseId: string; courseName: string; embedded?: boolean }>()
-const emit = defineEmits<{ openBank: []; openPractice: [] }>()
+const emit = defineEmits<{ openBank: []; openManage: []; openPractice: [] }>()
 const graph = ref<KnowledgeGraph | null>(null)
 const detail = ref<KnowledgePointDetail | null>(null)
 const loading = ref(true)
@@ -188,8 +188,8 @@ watch(() => props.courseId, () => {
       </div>
       <div class="kg-top-actions">
         <button type="button" class="button button-primary button-small" :disabled="loading || !graph" @click="explorerOpen=true"><Maximize2 :size="16" /> 全屏探索</button>
-        <button type="button" class="button button-outline button-small" @click="emit('openBank')">
-          <BookOpen :size="16" /> 前往课程内容管理
+        <button type="button" class="button button-outline button-small" @click="emit('openManage')">
+          <BookOpen :size="16" /> 前往知识点管理
         </button>
         <button type="button" class="button button-outline button-small" :disabled="loading" @click="refresh"><RefreshCw :size="16" /> 刷新</button>
         <button type="button" class="button button-outline button-small" @click="resetView"><RotateCcw :size="16" /> 返回总览</button>
