@@ -2,12 +2,12 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import {
   Activity, AlertCircle, ArrowRight, Award, BookOpen, Check,
-  CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList, ClipboardCheck,
+  CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardList,
   Clock3, FileQuestion, GraduationCap, LayoutDashboard, Lightbulb,
   LoaderCircle, Menu, Play, RefreshCw, RotateCcw, Sparkles, Target,
-  TrendingUp, X, XCircle, Orbit, FolderOpen, Plus, Upload, Settings,
+  TrendingUp, X, XCircle, FolderOpen, Plus, Upload, Settings,
 } from '@lucide/vue'
-import CourseContentHub from './components/CourseContentHub.vue'
+const CourseContentHub = defineAsyncComponent(() => import('./components/CourseContentHub.vue'))
 import AITaskCenter from './components/AITaskCenter.vue'
 const AISettings = defineAsyncComponent(() => import('./components/AISettings.vue'))
 import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
