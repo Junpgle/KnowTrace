@@ -977,6 +977,10 @@ function animateOrbits(now:number) {
     planet.world.copy(destination)
     for(const item of planet.objects)
       item.object.position.copy(item.start).add(shift)
+    // Captions are re-positioned by placeLabel() every frame. Update their
+    // anchor as well, otherwise the name stays at the old orbital coordinate.
+    for(const anchor of labelAnchors)
+      if(anchor.nodeId===planet.id)anchor.center.copy(destination)
     if(planet.id.startsWith('view-group:')){
       browseWorldPositions.set(planet.id,destination.clone())
       contextCacheCoordinates.set(planet.id,destination.clone())
@@ -1874,30 +1878,18 @@ defineExpose({ resetCamera, zoomIn, zoomOut })
 // radii. Formerly chapter size depended on depth and group sizes were capped
 // at 18px; neither reflected the actual knowledge-point count reliably.
 function updateOrbitMarkerSizes() {
-  if (!camera || !renderer || !orbitMarkers.length) return
+  if(!camera||!renderer||!orbitMarkers.length)return
   const height=Math.max(1,renderer.domElement.clientHeight)
   const tanHalf=Math.tan(THREE.MathUtils.degToRad(camera.fov)/2)
   const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion)
-  const centers=orbitMarkers.map(m=>screenPosition(
-    m.planet.getWorldPosition(new THREE.Vector3())))
-  orbitMarkers.forEach(({planet,aura,id,count,kind},i)=>{
-    const here=centers[i]
-    let closest=Infinity
-    if(here.visible) {
-      for(let j=0;j<centers.length;j++) {
-        if(i===j||!centers[j].visible)continue
-        closest=Math.min(closest,Math.hypot(
-          here.x-centers[j].x,here.y-centers[j].y))
-      }
-    }
-    const ideal=orbitMetrics(kind,count,id).idealRadiusPx
-    // Overlap is prevented when crowded, but the count-derived ideal is
-    // NOT flattened to a universal 18-pixel cap. In normal spacing, a
-    // 303-point chapter is visibly larger than a 106-point chapter.
-    const radiusPixels=Math.max(1.8,Math.min(ideal,closest*.42))
-    const world=planet.getWorldPosition(new THREE.Vector3())
-    const depth=Math.max(1,world.sub(camera!.position).dot(forward))
-    const worldRadius=radiusPixels*2*tanHalf*depth/height
+  orbitMarkers.forEach(({planet,aura,id,count,kind})=>{
+    // Each body has an individual clearance-planned orbit. Collision
+    // avoidance belongs to the LANE PLANNER, never in this size function:
+    // a 303-point chapter must not suddenly shrink when a neighbor passes.
+    const radiusPx=orbitMetrics(kind,count,id).idealRadiusPx
+    const position=planet.getWorldPosition(new THREE.Vector3())
+    const depth=Math.max(1,position.sub(camera!.position).dot(forward))
+    const worldRadius=radiusPx*2*tanHalf*depth/height
     planet.scale.setScalar(worldRadius)
     aura.scale.setScalar(worldRadius*(kind==='chapter'?2.65:2.85))
     orbitMarkerRadii.set(id,worldRadius)
