@@ -70,7 +70,10 @@ def register_question_quality_routes(app: FastAPI, database: Path):
                 continue
             counters[q["review_status"]] += 1
             if q["concept_count"]>1: counters["composite"]+=1
-            if q["concept_count"]==1: counters["diagnostic"]+=1
+            if q["concept_count"]==1:
+                counters["diagnostic"]+=1
+                if q["review_status"]=="approved":
+                    counters["approved_diagnostic"]+=1
             if q["source_count"]==0: counters["without_source"]+=1
             if q["visual_count"]: counters["visual_evidence"]+=1
             # A normalized duplicate is an editorial signal, not an automatic rejection.
@@ -111,7 +114,9 @@ def register_question_quality_routes(app: FastAPI, database: Path):
             "latest_questions":{"total":sum(counters[k] for k in ("approved","pending","draft","rejected")),
                 "approved":counters["approved"],"pending":counters["pending"],
                 "draft":counters["draft"],"rejected":counters["rejected"],
-                "diagnostic":counters["diagnostic"],"composite":counters["composite"],
+                "diagnostic":counters["diagnostic"],
+                "approved_diagnostic":counters["approved_diagnostic"],
+                "composite":counters["composite"],
                 "without_source":counters["without_source"],
                 "visual_evidence":counters["visual_evidence"],
                 "duplicate_stems":sum(v-1 for v in duplicates.values() if v>1)},
