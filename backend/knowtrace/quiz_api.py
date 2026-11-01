@@ -259,7 +259,7 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
         serialized = json.dumps(payload.response, ensure_ascii=False)
         with transaction(database) as db:
             item = db.execute("""SELECT i.id,i.session_id,i.primary_knowledge_point_id,
-                v.question_type,v.correct_answer_json,v.review_status,
+                v.question_type,v.question_id AS question_id,v.correct_answer_json,v.review_status,
                 i.selection_reason,s.status AS session_status,
                 (SELECT COUNT(*) FROM question_knowledge_points x
                  WHERE x.question_version_id=i.question_version_id) AS concept_count,
@@ -305,12 +305,26 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
             db.execute("""INSERT INTO answer_records(id,quiz_item_id,client_request_id,
                        response_json,is_correct,elapsed_ms) VALUES (?,?,?,?,?,?)""",
                        (record_id, quiz_item_id, payload.client_request_id, serialized, int(correct), payload.elapsed_ms))
-            # Multi-concept questions provide practice feedback, NOT an
-            # independent BKT observation (including on the primary point).
-            if (item["question_type"] in ("single_choice","true_false")
-                    and item["concept_count"] == 1
-                    and item["review_status"] == "approved"
-                    and item["selection_reason"] != BLIND_REASON):
+            # Multi-concept questions are not independent BKT observations.
+            # Repeating the SAME question (including a revised version) inside
+            # 24h also adds no independent evidence. It remains a real practice
+            # answer and is graded, but cannot inflate a mastery probability.
+            eligible = (item["question_type"] in ("single_choice","true_false")
+                        and item["concept_count"] == 1
+                        and item["review_status"] == "approved"
+                        and item["selection_reason"] != BLIND_REASON)
+            if eligible:
+                kp_id = item["primary_knowledge_point_id"]
+                recent = db.execute("""SELECT 1 FROM mastery_events e
+                    JOIN answer_records old_a ON old_a.id=e.answer_record_id
+                    JOIN quiz_items old_i ON old_i.id=old_a.quiz_item_id
+                    JOIN question_versions old_v ON old_v.id=old_i.question_version_id
+                    WHERE e.user_id=? AND e.knowledge_point_id=?
+                      AND e.model_key=? AND old_v.question_id=?
+                      AND old_a.answered_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-24 hours')
+                    LIMIT 1""", (USER_ID,kp_id,MODEL_KEY,item["question_id"])).fetchone()
+                eligible = recent is None
+            if eligible:
                 kp_id = item["primary_knowledge_point_id"]
                 state = db.execute("""SELECT p_mastery,observations FROM mastery_states
                     WHERE user_id=? AND knowledge_point_id=? AND model_key=?""",
