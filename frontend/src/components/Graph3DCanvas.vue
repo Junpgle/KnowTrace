@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import { orbitMetrics } from '../orbitMetrics'
 import { planCenteredCourseOrbits } from '../centeredCourseOrbits'
 import { placeOrbitCaptions } from '../orbitCaptionPlacement'
+import { tightAtlasDistance } from '../tightAtlasViewport'
 import type { OrbitCaptionSlot } from '../orbitCaptionPlacement'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GraphEdge, GraphNode } from '../api'
@@ -1697,6 +1698,9 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const isSubset = visibleKnowledge.length > 0 && visibleKnowledge.length < allKnowledgeCount
   const overview = props.nodes.every(n => n.kind !== 'knowledge')
   const groupOverview = localGroup && visibleKnowledge.length === 0
+  const courseAtlasOverview = !id && overview && !localGroup &&
+    props.nodes.some(n => n.kind === 'course') &&
+    orbitingPlanets.some(planet => planet.major > 0)
 
   // Group detail: fit only the actual neighborhood and its group anchor,
   // not a far-away chapter planet. This is what keeps 3-point views legible.
@@ -1859,22 +1863,47 @@ function focus(id: string | null, resetAtlasAngle = false) {
     (coordinate ?? overviewCenter)
   const framePoints = relationFocus || chapterFocus ? focusedPoints :
     coordinate ? [coordinate] : fitPoints
-  distance = Math.max(distance, projectedFitDistance(
-    framePoints, frameCenter, viewDirection,
-    THREE.MathUtils.clamp(safeWidth/width*.90,.19,.94),
-    THREE.MathUtils.clamp(safeHeight/height*.89,.19,.94),
-    relationFocus ? 22 : groupOverview ? 0 : 12,
-    relationFocus ? 30 : groupOverview ? 0 : 18,
-    groupOverview ? 36 : 72,
-  ))
-  const unitsPerPixel = 2 *
-    Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * distance/height
-  // Move the camera TARGET, not any planets. Positive screen-right travel
-  // moves the entire constellation to the left, away from the side drawer.
-  desiredTarget.addScaledVector(screenRight,
-    (width/2-(safe.left+safe.right)/2)*unitsPerPixel)
-  desiredTarget.addScaledVector(screenTop,
-    ((safe.top+safe.bottom)/2-height/2)*unitsPerPixel)
+  if (courseAtlasOverview) {
+    // The previous generic pass reserved a full-width band for the
+    // top-left title and added world-space padding TWICE. That made the
+    // seven chapter orbits occupy only ~60% of the available screen.
+    // Fit the actual pixels of the COMPLETE future orbital paths once.
+    const orbitalSamples = orbitingPlanets.flatMap(body =>
+      Array.from({length:32},(_,i)=>{
+        const angle=i*Math.PI*2/32
+        return body.center.clone()
+          .addScaledVector(body.axisX,body.major*Math.cos(angle))
+          .addScaledVector(body.axisY,body.minor*Math.sin(angle))
+      }),
+    )
+    distance = tightAtlasDistance({
+      points:[...framePoints,...orbitalSamples],
+      center:overviewCenter,
+      eyeDirection:viewDirection,
+      viewportWidth:width,viewportHeight:height,
+      fovDegrees:camera.fov,aspect:camera.aspect,
+    },distance)
+    // Course overview doesn't have a detail drawer. Keep its ellipse
+    // centered instead of shifting it away from a title occupying only
+    // the upper-left corner.
+    desiredTarget.copy(overviewCenter)
+  } else {
+    distance = Math.max(distance, projectedFitDistance(
+      framePoints, frameCenter, viewDirection,
+      THREE.MathUtils.clamp(safeWidth/width*.90,.19,.94),
+      THREE.MathUtils.clamp(safeHeight/height*.89,.19,.94),
+      relationFocus ? 22 : groupOverview ? 0 : 12,
+      relationFocus ? 30 : groupOverview ? 0 : 18,
+      groupOverview ? 36 : 72,
+    ))
+    const unitsPerPixel = 2 *
+      Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * distance/height
+    // Other views DO need a safe-area shift to avoid the detail drawer.
+    desiredTarget.addScaledVector(screenRight,
+      (width/2-(safe.left+safe.right)/2)*unitsPerPixel)
+    desiredTarget.addScaledVector(screenTop,
+      ((safe.top+safe.bottom)/2-height/2)*unitsPerPixel)
+  }
   // A visible fog pop before the camera starts moving looks like a jump
   // even if the camera transform itself is continuous.
   prepareFlightRange(distance)
