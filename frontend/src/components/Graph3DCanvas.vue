@@ -1010,10 +1010,20 @@ function animateOrbits(now:number) {
   lastOrbitFrame=now
   if (reducedMotion() || props.selectedId || outgoing.length || tween)
     return
+  const hoveredOrbit=hoveredNodeId
+    ? orbitingPlanets.find(planet=>planet.id===hoveredNodeId)
+    : undefined
   for(const planet of orbitingPlanets){
-    // Keep the hovered planet stationary for reliable clicking, but let
-    // EVERY OTHER planet continue its orbit. Do not catch up in one jump.
-    if (hoveredNodeId === planet.id) continue
+    // Members of a browse belt have ONE angular speed. Freeze the WHOLE
+    // belt while hovering a group, not just one planet: freezing only one
+    // caused its neighbors to pass it and invalidate the spacing.
+    const sharedHoveredBelt=hoveredOrbit &&
+      hoveredOrbit.id.startsWith('view-group:') &&
+      planet.id.startsWith('view-group:') &&
+      Math.abs(planet.major-hoveredOrbit.major)<1e-5 &&
+      Math.abs(planet.minor-hoveredOrbit.minor)<1e-5 &&
+      planet.center.distanceToSquared(hoveredOrbit.center)<1e-6
+    if (hoveredNodeId === planet.id || sharedHoveredBelt) continue
     planet.elapsedSeconds+=dt
     const angle=planet.phase+planet.radiansPerSecond*planet.elapsedSeconds
     const destination=planet.center.clone()
