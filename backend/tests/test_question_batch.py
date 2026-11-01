@@ -127,13 +127,37 @@ def test_mapping_requires_source_for_each_concept():
     accepted,warnings=validate_cluster_reply(json.dumps({"items":[base]}),
         allowed_ids={"p1","p2"},chunks=chunks,seen_stems=set(),
         count=2,types={"true_false"})
-    assert accepted==[]
-    assert "lack source evidence" in warnings[0]
+    assert len(accepted)==1, warnings
+    assert accepted[0]["ids"]==["p1"]
+    assert accepted[0]["primary"]=="p1"
+    assert accepted[0]["mapping_note"] and "剔除" in accepted[0]["mapping_note"]
+    assert len(warnings)==1 and "需复核" in warnings[0]
+    assert accepted[0]["sources"]==[("a", FIRST)]
     base["evidence"].append({"source_chunk_id":"b","quote":SECOND})
     accepted,warnings=validate_cluster_reply(json.dumps({"items":[base]}),
         allowed_ids={"p1","p2"},chunks=chunks,seen_stems=set(),
         count=2,types={"true_false"})
     assert len(accepted)==1 and warnings==[]
+    assert accepted[0]["ids"]==["p1","p2"]
+    assert accepted[0]["mapping_note"] is None
+
+
+def test_unsubstantiated_primary_remains_rejected():
+    chunks={"a":{"chunk_id":"a","content_text":FIRST,"knowledge_point_ids":["p1"]},
+            "b":{"chunk_id":"b","content_text":SECOND,"knowledge_point_ids":["p2"]}}
+    response={"items":[{
+        "question_type":"true_false","stem":"The sender encodes data.",
+        "options":{},"correct_answer":True,
+        "explanation":"The sender encodes data into electrical signals.",
+        "difficulty":2,"primary_knowledge_point_id":"p2",
+        "knowledge_point_ids":["p2","p1"],
+        "evidence":[{"source_chunk_id":"a","quote":FIRST}]
+    }]}
+    accepted,warnings=validate_cluster_reply(json.dumps(response),
+        allowed_ids={"p1","p2"},chunks=chunks,seen_stems=set(),
+        count=1,types={"true_false"})
+    assert accepted==[]
+    assert len(warnings)==1 and "primary concept lacks source evidence" in warnings[0]
 
 
 def test_wrapped_json_is_accepted_but_truncated_json_is_rejected():
