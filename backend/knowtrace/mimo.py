@@ -335,6 +335,8 @@ class MimoProvider:
             "\"explanation\":\"解析至少8字符\",\"difficulty\":2,"
             "\"source_chunk_id\":\"已读取的chunk_id\",\"quote\":\"逐字引文\"}]}。"
             "判断题 question_type=true_false，options={}，correct_answer 为 JSON true/false。"
+            "多选题 multiple_choice，options 必须为 A-D 四项，correct_answer 使用排序数组例如 [\\\"A\\\",\\\"C\\\"]。"
+            "简答题 short_answer，options={}，correct_answer 为可以直接核对的参考答案文本，解析指出关键得分要点。"
             "不能核实则输出 {\"items\":[]}，不要试图跳过证据检查。"
         )
         initial = {"knowledge_point": knowledge_name,
