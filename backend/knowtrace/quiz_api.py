@@ -25,7 +25,7 @@ BKT = BKTParameters()
 
 class QuizStart(BaseModel):
     count: int = Field(default=5, ge=1, le=20)
-    mode: Literal["normal"] = "normal"  # Adaptive selection is planned for later.
+    mode: Literal["normal", "adaptive"] = "normal"
 
 
 class SubmitAnswer(BaseModel):
@@ -53,7 +53,8 @@ def _session(db: sqlite3.Connection, session_id: str) -> dict:
 def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
     session = _session(db, session_id)
     records = _rows(db.execute("""SELECT i.id AS quiz_item_id,i.position,i.shown_at,
-                i.question_version_id,i.primary_knowledge_point_id,v.question_type,v.stem,
+                i.question_version_id,i.primary_knowledge_point_id,
+                i.selection_reason,v.question_type,v.stem,
                 v.options_json,v.explanation,v.correct_answer_json,
                 a.id AS answer_id,a.response_json,a.is_correct,a.answered_at,a.elapsed_ms
                 FROM quiz_items i JOIN question_versions v ON v.id=i.question_version_id
@@ -66,7 +67,8 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
                "question_version_id": record["question_version_id"],
                "primary_knowledge_point_id": record["primary_knowledge_point_id"],
                "question_type": record["question_type"], "stem": record["stem"],
-               "options": json.loads(record["options_json"]), "answered": answered}
+               "options": json.loads(record["options_json"]), "answered": answered,
+               "selection_reason": record["selection_reason"]}
         if answered:
             obj["result"] = {"answer_id": record["answer_id"],
                              "response": json.loads(record["response_json"]),
@@ -88,7 +90,8 @@ def _quiz_detail(db: sqlite3.Connection, session_id: str) -> dict:
 def _answer_result(db: sqlite3.Connection, answer_id: str) -> dict:
     row = db.execute("""SELECT a.id AS answer_id,a.quiz_item_id,a.response_json,
            a.is_correct,a.answered_at,v.correct_answer_json,v.explanation,
-           e.p_before,e.p_posterior,e.p_after,e.knowledge_point_id
+           e.p_before,e.p_posterior,e.p_after,
+           i.primary_knowledge_point_id AS knowledge_point_id
            FROM answer_records a JOIN quiz_items i ON i.id=a.quiz_item_id
            JOIN question_versions v ON v.id=i.question_version_id
            LEFT JOIN mastery_events e ON e.answer_record_id=a.id AND e.model_key=?
@@ -101,7 +104,9 @@ def _answer_result(db: sqlite3.Connection, answer_id: str) -> dict:
             "correct_answer": json.loads(row["correct_answer_json"]),
             "explanation": row["explanation"], "knowledge_point_id": row["knowledge_point_id"],
             "mastery": {"model": MODEL_KEY, "before": row["p_before"],
-                        "posterior": row["p_posterior"], "after": row["p_after"]},
+                        "posterior": row["p_posterior"], "after": row["p_after"]}
+                        if row["p_before"] is not None else None,
+            "diagnostic": row["p_before"] is not None,
             "answered_at": row["answered_at"]}
 
 
@@ -122,17 +127,71 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
                 AND v.version_no=(SELECT MAX(v2.version_no)
                                    FROM question_versions v2 WHERE v2.question_id=q.id)
                 ORDER BY v.created_at,v.id""", (course_id,)))
+            if payload.mode == "adaptive":
+                # Reliable adaptive diagnosis only uses questions that measure
+                # exactly one reviewed concept. A compound answer is not a
+                # valid independent BKT observation for every Q-matrix entry.
+                eligible = _rows(db.execute("""SELECT v.id AS version_id,
+                    k.knowledge_point_id,
+                    COALESCE(m.p_mastery, ?) AS mastery,
+                    COALESCE(m.observations,0) AS observations,
+                    COUNT(a.id) AS attempts,
+                    MAX(a.answered_at) AS last_answered,
+                    v.difficulty
+                    FROM question_versions v
+                    JOIN questions q ON q.id=v.question_id
+                    JOIN question_knowledge_points k ON k.question_version_id=v.id
+                       AND k.is_primary=1
+                    JOIN knowledge_points kp ON kp.id=k.knowledge_point_id
+                    LEFT JOIN mastery_states m ON m.knowledge_point_id=k.knowledge_point_id
+                       AND m.user_id=? AND m.model_key=?
+                    LEFT JOIN quiz_items i ON i.question_version_id=v.id
+                    LEFT JOIN answer_records a ON a.quiz_item_id=i.id
+                    WHERE q.course_id=? AND q.archived_at IS NULL
+                    AND v.review_status='approved'
+                    AND kp.review_status='approved' AND kp.archived_at IS NULL
+                    AND v.version_no=(SELECT MAX(v2.version_no)
+                                     FROM question_versions v2 WHERE v2.question_id=q.id)
+                    AND (SELECT COUNT(*) FROM question_knowledge_points
+                         WHERE question_version_id=v.id)=1
+                    GROUP BY v.id,k.knowledge_point_id,m.p_mastery,m.observations,v.difficulty
+                    """, (BKT.p_initial,USER_ID,MODEL_KEY,course_id)))
+                def priority(item):
+                    # Unseen/weak concepts before well-mastered or repeated
+                    # questions. Stable tie-breaking makes this auditable.
+                    initial_bonus = .45 if item["observations"] == 0 else 0
+                    retry_penalty = min(item["attempts"],8) * .15
+                    target_difficulty = 1 if item["mastery"] < .4 else (
+                        2 if item["mastery"] < .75 else 3)
+                    return (2*(1-item["mastery"]) + initial_bonus -
+                            retry_penalty - abs(item["difficulty"]-target_difficulty)*.06)
+                ranked = sorted(eligible, key=lambda item:
+                    (-priority(item), item["last_answered"] or "", item["version_id"]))
+                # Pass 1 ensures breadth across weak concepts. Pass 2 fills
+                # any remaining slots with other diagnostic questions.
+                chosen, seen_points = [], set()
+                for item in ranked:
+                    if item["knowledge_point_id"] not in seen_points:
+                        chosen.append(item)
+                        seen_points.add(item["knowledge_point_id"])
+                if len(chosen) < payload.count:
+                    selected_ids = {x["version_id"] for x in chosen}
+                    chosen += [x for x in ranked if x["version_id"] not in selected_ids]
+                rows = chosen
             if len(rows) < payload.count:
-                raise HTTPException(409, f"Only {len(rows)} approved latest questions available; requested {payload.count}")
+                raise HTTPException(409, f"Only {len(rows)} eligible {payload.mode} questions available; requested {payload.count}")
             session_id = _uuid()
             db.execute("""INSERT OR IGNORE INTO users (id,username,display_name)
                        VALUES ('local','local','Local learner')""")
-            db.execute("INSERT INTO quiz_sessions(id,user_id,course_id,mode) VALUES (?,?,?,'normal')",
-                       (session_id, USER_ID, course_id))
+            db.execute("INSERT INTO quiz_sessions(id,user_id,course_id,mode) VALUES (?,?,?,?)",
+                       (session_id, USER_ID, course_id, payload.mode))
             for position, row in enumerate(rows[:payload.count], start=1):
                 db.execute("""INSERT INTO quiz_items(id,session_id,question_version_id,
-                           primary_knowledge_point_id,position) VALUES (?,?,?,?,?)""",
-                           (_uuid(), session_id, row["version_id"], row["knowledge_point_id"], position))
+                           primary_knowledge_point_id,position,selection_reason)
+                           VALUES (?,?,?,?,?,?)""",
+                           (_uuid(), session_id, row["version_id"], row["knowledge_point_id"],
+                            position, ("优先复习未掌握或尚未测评知识点" if payload.mode=="adaptive"
+                                       else "正常顺序练习")))
             return _quiz_detail(db, session_id)
 
     @app.get("/api/quiz-sessions/{session_id}")
@@ -146,6 +205,8 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
         with transaction(database) as db:
             item = db.execute("""SELECT i.id,i.session_id,i.primary_knowledge_point_id,
                 v.question_type,v.correct_answer_json,s.status AS session_status,
+                (SELECT COUNT(*) FROM question_knowledge_points x
+                 WHERE x.question_version_id=i.question_version_id) AS concept_count,
                 s.user_id FROM quiz_items i
                 JOIN quiz_sessions s ON s.id=i.session_id
                 JOIN question_versions v ON v.id=i.question_version_id
@@ -178,24 +239,27 @@ def register_quiz_routes(app: FastAPI, database: Path) -> None:
             db.execute("""INSERT INTO answer_records(id,quiz_item_id,client_request_id,
                        response_json,is_correct,elapsed_ms) VALUES (?,?,?,?,?,?)""",
                        (record_id, quiz_item_id, payload.client_request_id, serialized, int(correct), payload.elapsed_ms))
-            kp_id = item["primary_knowledge_point_id"]
-            state = db.execute("""SELECT p_mastery,observations FROM mastery_states
-                WHERE user_id=? AND knowledge_point_id=? AND model_key=?""",
-                (USER_ID, kp_id, MODEL_KEY)).fetchone()
-            prior = state["p_mastery"] if state else BKT.p_initial
-            observations = state["observations"] if state else 0
-            posterior, after = update_mastery(prior, correct, BKT)
-            db.execute("""INSERT INTO mastery_states(user_id,knowledge_point_id,model_key,p_mastery,observations)
-                VALUES (?,?,?,?,?) ON CONFLICT(user_id,knowledge_point_id,model_key)
-                DO UPDATE SET p_mastery=excluded.p_mastery,observations=excluded.observations,
-                updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')""",
-                (USER_ID,kp_id,MODEL_KEY,after,observations+1))
-            db.execute("""INSERT INTO mastery_events(id,user_id,knowledge_point_id,
-                answer_record_id,model_key,p_before,p_posterior,p_after,parameters_json)
-                VALUES (?,?,?,?,?,?,?,?,?)""",
-                (_uuid(),USER_ID,kp_id,record_id,MODEL_KEY,prior,posterior,after,
-                 json.dumps({"p_initial":BKT.p_initial,"p_learn":BKT.p_learn,
-                             "p_guess":BKT.p_guess,"p_slip":BKT.p_slip})))
+            # Multi-concept questions provide practice feedback, NOT an
+            # independent BKT observation (including on the primary point).
+            if item["concept_count"] == 1:
+                kp_id = item["primary_knowledge_point_id"]
+                state = db.execute("""SELECT p_mastery,observations FROM mastery_states
+                    WHERE user_id=? AND knowledge_point_id=? AND model_key=?""",
+                    (USER_ID, kp_id, MODEL_KEY)).fetchone()
+                prior = state["p_mastery"] if state else BKT.p_initial
+                observations = state["observations"] if state else 0
+                posterior, after = update_mastery(prior, correct, BKT)
+                db.execute("""INSERT INTO mastery_states(user_id,knowledge_point_id,model_key,p_mastery,observations)
+                    VALUES (?,?,?,?,?) ON CONFLICT(user_id,knowledge_point_id,model_key)
+                    DO UPDATE SET p_mastery=excluded.p_mastery,observations=excluded.observations,
+                    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')""",
+                    (USER_ID,kp_id,MODEL_KEY,after,observations+1))
+                db.execute("""INSERT INTO mastery_events(id,user_id,knowledge_point_id,
+                    answer_record_id,model_key,p_before,p_posterior,p_after,parameters_json)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (_uuid(),USER_ID,kp_id,record_id,MODEL_KEY,prior,posterior,after,
+                     json.dumps({"p_initial":BKT.p_initial,"p_learn":BKT.p_learn,
+                                 "p_guess":BKT.p_guess,"p_slip":BKT.p_slip})))
             missing = db.execute("""SELECT COUNT(*) FROM quiz_items i
                 LEFT JOIN answer_records a ON a.quiz_item_id=i.id
                 WHERE i.session_id=? AND a.id IS NULL""", (item["session_id"],)).fetchone()[0]
