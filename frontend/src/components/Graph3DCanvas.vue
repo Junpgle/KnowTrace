@@ -10,6 +10,8 @@ import { orbitMetrics } from '../orbitMetrics'
 import { planCenteredCourseOrbits } from '../centeredCourseOrbits'
 import { placeOrbitCaptions } from '../orbitCaptionPlacement'
 import { tightAtlasDistance } from '../tightAtlasViewport'
+import { snapshotOrbitFrame, restoreOrbitFrame } from '../orbitNavigationFrame'
+import type { SavedOrbit } from '../orbitNavigationFrame'
 import type { OrbitCaptionSlot } from '../orbitCaptionPlacement'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { GraphEdge, GraphNode } from '../api'
@@ -71,6 +73,8 @@ let contextCacheParents = new Map<string, string>()
 // positions makes back navigation return to the SAME places rather than
 // rebuilding a constellation at the world origin.
 const sceneFrames = new Map<string, Map<string, THREE.Vector3>>()
+// A valid return needs the saved axes, center and phase, not only positions.
+const orbitFrames = new Map<string, Map<string, SavedOrbit>>()
 // Browse groups live in a neighboring map region. Preserve their world
 // addresses when selection, line visibility or a rapid click rebuilds a scene;
 // otherwise they snap back to the origin and appear to "expand" once again.
@@ -79,6 +83,7 @@ type SceneTransition = {
   mode: 'enter' | 'back' | 'jump'
   anchorId?: string
   restore?: Map<string, THREE.Vector3>
+  restoreOrbits?: Map<string, SavedOrbit>
 }
 const meshes: THREE.Mesh[] = []
 const contextMeshes: THREE.Mesh[] = []
@@ -912,11 +917,29 @@ function belongsToContextChapter(node: GraphNode, chapterId: string | null | und
 
 // Orbital paths apply to the two OVERVIEW maps, never to a knowledge
 // neighborhood. During a concept selection every planet keeps its position.
-function initializeOrbitingPlanets() {
+function initializeOrbitingPlanets(saved?: ReadonlyMap<string, SavedOrbit>) {
   orbitingPlanets.splice(0)
   if(!camera||props.selectedId||props.nodes.some(n=>n.kind==='knowledge'))
     return
   const isGroup=props.nodes.length>0&&props.nodes.every(n=>n.kind==='group')
+  const orbitNodes=isGroup?props.nodes:
+    props.nodes.filter(n=>n.kind==='chapter')
+  const restored=restoreOrbitFrame(saved,orbitNodes.map(n=>n.id),positions)
+  if(restored) {
+    for(const pose of restored.values()){
+      const position=positions.get(pose.id)!
+      const objects=orbitVisuals.get(pose.id)
+      if(!objects?.length)continue
+      orbitingPlanets.push({
+        id:pose.id,world:position,initialWorld:position.clone(),
+        center:pose.center.clone(),axisX:pose.axisX.clone(),
+        axisY:pose.axisY.clone(),major:pose.major,minor:pose.minor,
+        phase:pose.phase,radiansPerSecond:pose.radiansPerSecond,
+        elapsedSeconds:0,objects,
+      })
+    }
+    return
+  }
   if(isGroup){
     // Busy group views use a few coherent elliptical belts. Each belt
     // rotates as a whole so the 35 labels cannot catch and overtake one
@@ -1049,6 +1072,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
   const previous = new Map([...resolveContextLayout()]
     .map(([id, p]) => [id, p.clone()] as [string, THREE.Vector3]))
   for (const [id, p] of positions) previous.set(id, p.clone())
+  const previousOrbitFrame = snapshotOrbitFrame(orbitingPlanets)
   clearGraph(animate)
   const g = new THREE.Group()
   group = g
@@ -1056,9 +1080,16 @@ function rebuild(animate = false, transition?: SceneTransition) {
   let coords = new Map([...resolveLayout()].map(([id, p]) => [id, p.clone()]))
 
   if (transition?.restore) {
-    // Backwards camera travel is possible because the previous layer is
-    // restored at exactly the original world positions.
-    for (const [id, position] of transition.restore) coords.set(id, position.clone())
+    // Restore the actual previous coordinates, including the same group
+    // atlas address used by the dimmed context layer. Never leave the
+    // background cached at another chapter's/phase's position.
+    for (const [id, position] of transition.restore) {
+      coords.set(id, position.clone())
+      if (id.startsWith('view-group:')) {
+        browseWorldPositions.set(id, position.clone())
+        contextCacheCoordinates.set(id, position.clone())
+      }
+    }
   } else {
     const anchor = transition?.anchorId ? previous.get(transition.anchorId) : undefined
     const groupNodes = props.nodes.filter(n => n.kind === 'group')
@@ -1549,7 +1580,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
       object,start:object.position.clone(),
     })))
   }
-  initializeOrbitingPlanets()
+  // Restore the saved 3D orbital basis before constructing orbit lines.
+  initializeOrbitingPlanets(transition?.restoreOrbits ?? previousOrbitFrame)
   // Draw ONE visible ellipse per orbit. Course lanes share the same
   // course-center focus; browsing groups share a few coherent belts.
   const isGroupTracks=props.nodes.length>0 &&
@@ -2578,9 +2610,16 @@ watch(() => ({
   let returnCamera: CameraSnapshot | null = null
   const nextSceneFrame = hierarchyChanged && action?.mode === 'back'
     ? sceneFrames.get(afterKey) : undefined
+  const nextOrbitFrame = hierarchyChanged && action?.mode === 'back'
+    ? orbitFrames.get(afterKey) : undefined
   if (layerChanged && positions.size) {
     sceneFrames.set(beforeKey, new Map([...positions].map(([id, p]) => [id, p.clone()])))
-    if (sceneFrames.size > 16) sceneFrames.delete(sceneFrames.keys().next().value!)
+    orbitFrames.set(beforeKey, snapshotOrbitFrame(orbitingPlanets))
+    if (sceneFrames.size > 16) {
+      const oldest=sceneFrames.keys().next().value!
+      sceneFrames.delete(oldest)
+      orbitFrames.delete(oldest)
+    }
   }
   if (hierarchyChanged) {
     transitionMode = action?.mode ?? 'jump'
@@ -2616,6 +2655,7 @@ watch(() => ({
     mode: transitionMode,
     anchorId: action?.nodeId,
     restore: nextSceneFrame,
+    restoreOrbits: nextOrbitFrame,
   } : undefined)
   if (hierarchyChanged && transitionMode === 'back') {
     if (returnCamera) restoreCamera(returnCamera)
@@ -2663,6 +2703,7 @@ onBeforeUnmount(() => {
   contextCacheEdges = undefined
   cameraHistory.length = 0
   sceneFrames.clear()
+  orbitFrames.clear()
   browseWorldPositions.clear()
 })
 </script>
