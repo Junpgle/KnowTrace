@@ -76,7 +76,7 @@ type LabelAnchor = {
 }
 type FadePart = { material: THREE.Material; opacity: number; transparent: boolean; depthWrite: boolean }
 type FadeGroup = { group: THREE.Group; parts: FadePart[]; anchors: LabelAnchor[] }
-let outgoing: FadeGroup | null = null
+let outgoing: FadeGroup[] = []
 let incoming: FadeGroup | null = null
 type CameraSnapshot = { sceneKey: string; position: THREE.Vector3; target: THREE.Vector3 }
 const cameraHistory: CameraSnapshot[] = []
@@ -610,28 +610,8 @@ function setFade(target: FadeGroup, alpha: number) {
   }
 }
 function finishFade() {
-  if (outgoing) {
-    disposeGraph(outgoing.group)
-    outgoing = null
-  }
-  if (incoming) {
-    for (const p of incoming.parts) {
-      p.material.opacity = p.opacity
-      p.material.transparent = p.transparent
-      p.material.depthWrite = p.depthWrite
-    }
-    incoming.group.position.set(0, 0, 0)
-    incoming.group.scale.setScalar(1)
-    incoming = null
-  }
-}
-function clearGraph(animate = false) {
-  if (outgoing) {
-    disposeGraph(outgoing.group)
-    outgoing = null
-  }
-  // A new click may interrupt an in-flight transition. Restore the visible
-  // current layer's own opacity before using it as the next outgoing layer.
+  for (const layer of outgoing) disposeGraph(layer.group)
+  outgoing = []
   if (incoming) {
     for (const part of incoming.parts) {
       part.material.opacity = part.opacity
@@ -640,11 +620,26 @@ function clearGraph(animate = false) {
     }
     incoming = null
   }
-  if (group && animate && !reducedMotion()) {
-    outgoing = fadeGroup(group, [...labelAnchors])
+}
+
+function clearGraph(animate = false) {
+  const keepVisible = !!group && animate && !reducedMotion()
+  if (keepVisible) {
+    // If a user clicks DURING an existing flight, the visible picture is a
+    // blend of two layers. Keep BOTH at their exact on-screen alpha values.
+    // Discarding either layer or forcing the newest one to opacity 1 was
+    // causing a sudden jump on the first frame of the next flight.
+    const layers = outgoing.map(layer => fadeGroup(layer.group, layer.anchors))
+    if (group) layers.push(fadeGroup(group, [...labelAnchors]))
+    const removed = layers.splice(0, Math.max(0, layers.length - 6))
+    for (const layer of removed) disposeGraph(layer.group)
+    outgoing = layers
   } else {
+    for (const layer of outgoing) disposeGraph(layer.group)
+    outgoing = []
     disposeGraph(group)
   }
+  incoming = null
   meshes.splice(0)
   labelAnchors.splice(0)
   hoveredNodeId = null
@@ -1025,9 +1020,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
   for (const [type, points] of highlightedByType) {
     addLines(points, RELATION_COLORS[type] ?? 0xffd184, 1)
   }
-  if (outgoing) {
-    // Retain the old map in its original world position. New detail fades in
-    // with camera zoom; no shrinking old scene / expanding child scene.
+  if (outgoing.length) {
+    // Old levels hold their exact positions and opacities from the last
+    // rendered frame. New detail is initially fully transparent.
     incoming = fadeGroup(g, [...labelAnchors])
     setFade(incoming, 0)
   }
@@ -1462,13 +1457,13 @@ function draw() {
     )
     if (raw >= 1) tween = false
   }
-  if (outgoing && incoming) {
+  if (outgoing.length && incoming) {
     // Camera drives level-of-detail reveal (akin to tiled maps).
     const travel = tween ? Math.min(1, (now - cameraAnimationStart) / CAMERA_DURATION) : 1
     const t = THREE.MathUtils.clamp(
       (travel - LAYER_REVEAL_START) / (LAYER_REVEAL_END - LAYER_REVEAL_START), 0, 1)
     const revealed = t * t * (3 - 2 * t)
-    setFade(outgoing, 1 - revealed)
+    for (const layer of outgoing) setFade(layer, 1 - revealed)
     setFade(incoming, revealed)
     if (travel >= 1) finishFade()
   }
@@ -1478,7 +1473,7 @@ function draw() {
   scene.updateMatrixWorld(true)
   screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion)
   for (const anchor of labelAnchors) placeLabel(anchor)
-  if (outgoing) for (const anchor of outgoing.anchors) placeLabel(anchor)
+  for (const layer of outgoing) for (const anchor of layer.anchors) placeLabel(anchor)
   scene.updateMatrixWorld(true)
   declutterGroupLabels()
   arrangeFocusedLabels()
