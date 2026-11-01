@@ -209,8 +209,8 @@ def parse_batch_json(raw: str) -> dict:
         raise AIServiceError("模型返回空文本：请检查模型配置与输出长度")
     body = raw.strip().lstrip("\ufeff")
     if body.startswith("```"):
-        body = re.sub(r"^```(?:json)?\\s*", "", body, count=1, flags=re.I).strip()
-        body = re.sub(r"\\s*```$", "", body, count=1).strip()
+        body = re.sub(r"^```(?:json)?\s*", "", body, count=1, flags=re.I).strip()
+        body = re.sub(r"\s*```$", "", body, count=1).strip()
     # Some chat APIs return a brief preamble before the JSON object.
     # The raw JSON decoder makes sure the extracted object is complete.
     beginning = body.find("{")
