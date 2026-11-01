@@ -90,6 +90,12 @@ const labelAnchors: LabelAnchor[] = []
 // Visual tracks are intentionally browse-only and never become knowledge
 // graph edges. Hovering a group subtly illuminates its complete ellipse.
 const orbitTracks: { line: THREE.Line; ids: Set<string>; baseOpacity: number }[] = []
+// In the browse overview, group planets and their glow are map markers:
+// their radius is specified in SCREEN pixels, not permanent world units.
+// This prevents a 10-world-unit globe from covering neighboring orbit slots
+// when chapter-level camera zoom brings the group atlas into view.
+const groupMarkers: { planet: THREE.Mesh; aura: THREE.Sprite; id: string }[] = []
+const groupMarkerRadii = new Map<string, number>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
   sprite: THREE.Sprite
@@ -724,6 +730,8 @@ function clearGraph(animate = false) {
   backdropPoints.splice(0)
   labelAnchors.splice(0)
   orbitTracks.splice(0)
+  groupMarkers.splice(0)
+  groupMarkerRadii.clear()
   hoveredNodeId = null
   hoveredName.value = ''
   positions.clear()
@@ -921,7 +929,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
           unscaled, anchor, look,
           THREE.MathUtils.clamp((safe.right - safe.left) / w * .85, .25, .85),
           THREE.MathUtils.clamp((safe.bottom - safe.top) / h * .78, .25, .82),
-          24, 30,
+          0, 0, 1,
         )
         const currentDistance = camera.position.distanceTo(controls.target)
         // A new zoom level has a smaller world footprint. Compute the map
@@ -929,7 +937,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
         // never changes during animation. This is *not* an expanding layer.
         const targetDistance = Math.max(85, currentDistance * .48)
         const scale = THREE.MathUtils.clamp(
-          targetDistance / Math.max(1, baseDistance) * .78, .045, .82)
+          targetDistance / Math.max(1, baseDistance) * .93, .075, 1.2)
         for (const node of groupNodes) {
           const local = coords.get(node.id)
           if (!local) continue
@@ -1278,6 +1286,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
     aura.position.copy(position)
     aura.scale.setScalar(radius * (isCourse ? 5.6 : 5.1))
     g.add(aura)
+    if (overview && node.kind === 'group') {
+      groupMarkers.push({planet, aura, id:node.id})
+    }
 
     if (!focusState.active && !(overview && node.kind === 'group')) {
       const ringR = radius * (isCourse ? 2.2 : 1.9)
@@ -1429,6 +1440,7 @@ function projectedFitDistance(
   fillY: number,
   paddingX = 11,
   paddingY = 16,
+  minimum = 72,
 ): number {
   if (!camera || points.length === 0) return 100
   const forward = viewDirection.clone().normalize()
@@ -1441,7 +1453,7 @@ function projectedFitDistance(
   const screenUp = new THREE.Vector3().crossVectors(forward, right).normalize()
   const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
   const tanH = tanV * camera.aspect
-  let result = 72
+  let result = minimum
   const relative = new THREE.Vector3()
   for (const point of points) {
     relative.subVectors(point, center)
@@ -1579,7 +1591,7 @@ function focus(id: string | null, resetAtlasAngle = false) {
       // The *camera* does the enlarging; nodes do not move during the flight.
       distance = projectedFitDistance(
         fitPoints, overviewCenter, direction,
-        .82, .85, 14, 15,
+        .80, .79, 0, 0, 36,
       )
     } else if (!localGroup) {
       // Course/chapters are arranged on the XZ atlas plane. Projected
@@ -1625,7 +1637,9 @@ function focus(id: string | null, resetAtlasAngle = false) {
     framePoints, frameCenter, viewDirection,
     THREE.MathUtils.clamp(safeWidth/width*.90,.19,.94),
     THREE.MathUtils.clamp(safeHeight/height*.89,.19,.94),
-    relationFocus ? 22 : 12, relationFocus ? 30 : 18,
+    relationFocus ? 22 : groupOverview ? 0 : 12,
+    relationFocus ? 30 : groupOverview ? 0 : 18,
+    groupOverview ? 36 : 72,
   ))
   const unitsPerPixel = 2 *
     Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * distance/height
