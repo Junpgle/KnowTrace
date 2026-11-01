@@ -25,6 +25,7 @@ const props = defineProps<{
   contextNodes?: GraphNode[]
   contextEdges?: GraphEdge[]
   contextChapterId?: string | null
+  preservePositionsOnSelect?: boolean
   navigation?: { serial: number; mode: 'enter' | 'back' | 'jump'; nodeId?: string }
 }>()
 const emit = defineEmits<{ select: [id: string | null] }>()
@@ -990,7 +991,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     const selected = props.nodes.find(n => n.kind === 'knowledge' && n.id === props.selectedId)
     const local = props.nodes.every(n => n.kind === 'knowledge') && !!selected &&
       props.nodes.length <= 26
-    if (local && selected) {
+    if (local && selected && !props.preservePositionsOnSelect) {
       const center = previous.get(selected.id) ?? coords.get(selected.id) ??
         new THREE.Vector3()
       coords.set(selected.id, center.clone())
@@ -1021,7 +1022,8 @@ function rebuild(animate = false, transition?: SceneTransition) {
   const focusState = focusRelations()
   const selectedId = props.selectedId
   const focusCenter = selectedId ? coords.get(selectedId) : undefined
-  if (focusCenter && focusState.neighbors.size) {
+  if (focusCenter && focusState.neighbors.size &&
+      !props.preservePositionsOnSelect) {
     const neighbors = [...focusState.neighbors].filter(id => coords.has(id)).sort()
     const count = neighbors.length
     const screenRight = new THREE.Vector3(1,0,0).applyQuaternion(camera?.quaternion ??
@@ -1046,6 +1048,14 @@ function rebuild(animate = false, transition?: SceneTransition) {
         .addScaledVector(screenUp,Math.sin(angle)*radius))
     })
   }
+  if (props.preservePositionsOnSelect && !transition) {
+    // Previous *rendered* coordinates are the source of truth, not a fresh
+    // orbit/relationship layout from the newly selected node.
+    for (const node of props.nodes) {
+      const old = previous.get(node.id)
+      if (old) coords.set(node.id, old.clone())
+    }
+  }
   for (const node of props.nodes) {
     const position = coords.get(node.id)
     if (position) positions.set(node.id, position)
@@ -1054,7 +1064,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
   // in props.nodes, but must be shaded rather than treated as selected.
   const currentChapter = props.contextChapterId
   const brightNodes = props.nodes.filter(n => {
-    if (focusState.active) return n.id === selectedId || focusState.neighbors.has(n.id)
+    if (focusState.active)
+      return props.preservePositionsOnSelect || n.id === selectedId ||
+        focusState.neighbors.has(n.id)
     return !currentChapter || (n.kind !== 'course' && n.kind !== 'chapter') ||
       n.id === currentChapter || n.id === selectedId
   })
@@ -1155,7 +1167,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
       cluster.setColorAt(index, color)
       ids.push(node.id)
 
-      if ((smallGroup && !focusState.active) ||
+      if ((smallGroup && (!focusState.active || props.preservePositionsOnSelect)) ||
           (!focusState.active && !smallGroup && index < 32) ||
           center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
@@ -1406,9 +1418,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
     }))
     g.add(lines)
   }
-  if (!focusState.active &&
+  if ((!focusState.active || props.preservePositionsOnSelect) &&
       (props.showStructure !== false || props.nodes.some(n=>n.kind==='group'))) {
-    addLines(structural, 0x7b9aad, 0.3)
+    addLines(structural, 0x7b9aad, focusState.active ? .09 : .3)
   }
   addLines(ordinary, 0xffd184, focusState.active ? 0.085 : 0.79)
   for (const [type, points] of highlightedByType) {
@@ -2222,6 +2234,7 @@ watch(() => ({
   contextNodes: props.contextNodes,
   contextEdges: props.contextEdges,
   contextChapterId: props.contextChapterId,
+  preservePositionsOnSelect: props.preservePositionsOnSelect,
 }), (next, previous) => {
   const beforeKey = sceneSignature(previous.nodes)
   const afterKey = sceneSignature(next.nodes)
@@ -2268,7 +2281,8 @@ watch(() => ({
   // A local selection can rearrange the neighbor orbit even if the set of
   // nodes stays the same. Blend those frames as well; swapping the meshes
   // immediately would otherwise look like a pre-animation teleport.
-  const sceneChanged = layerChanged || selectedChanged
+  const sceneChanged = layerChanged ||
+    (selectedChanged && !props.preservePositionsOnSelect)
   rebuild(sceneChanged, hierarchyChanged ? {
     mode: transitionMode,
     anchorId: action?.nodeId,
@@ -2278,7 +2292,8 @@ watch(() => ({
     if (returnCamera) restoreCamera(returnCamera)
     else focus(next.selectedId, true)
   } else if (layerChanged || next.selectedId !== previous.selectedId) {
-    focus(next.selectedId, layerChanged)
+    if (!(props.preservePositionsOnSelect && !layerChanged && selectedChanged))
+      focus(next.selectedId, layerChanged)
   }
 }, { flush: 'post' })
 onBeforeUnmount(() => {
