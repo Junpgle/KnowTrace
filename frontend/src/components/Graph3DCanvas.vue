@@ -660,7 +660,31 @@ function rebuild(animate = false) {
   const g = new THREE.Group()
   group = g
   scene.add(g)
-  const coords = resolveLayout()
+  let coords = resolveLayout()
+  // Center a concept and its actual approved neighbors in a local XY orbit.
+  // The visual distance does not imply an inferred semantic relationship.
+  const selectedConcept = props.nodes.find(n => n.kind === 'knowledge' && n.id === props.selectedId)
+  const localConcepts = props.nodes.every(n => n.kind === 'knowledge')
+    && !!selectedConcept && props.nodes.length <= 26
+  if (localConcepts) {
+    coords = new Map(coords)
+    coords.set(selectedConcept!.id, new THREE.Vector3(0, 0, 0))
+    const neighbors = props.nodes.filter(n => n.kind === 'knowledge' && n.id !== selectedConcept!.id)
+      .sort((a, b) => a.id.localeCompare(b.id))
+    const inner = neighbors.length <= 8 ? neighbors.length : Math.min(7, Math.ceil(neighbors.length * .42))
+    neighbors.forEach((node, index) => {
+      const outer = index >= inner
+      const i = outer ? index - inner : index
+      const count = outer ? neighbors.length - inner : inner
+      const theta = -Math.PI / 2 + (i + (outer ? .45 : 0)) * 2 * Math.PI / Math.max(1, count)
+      const radius = outer ? Math.max(92, count * 12) : Math.max(46, count * 7.3)
+      coords.set(node.id, new THREE.Vector3(
+        Math.cos(theta) * radius * 1.17,
+        Math.sin(theta) * radius * .88,
+        (ordinalHash(node.id + ':focus-depth') - .5) * 6,
+      ))
+    })
+  }
   // Fit the camera to visible nodes while preserving whole-course coordinates.
   for (const node of props.nodes) {
     const position = coords.get(node.id)
@@ -705,7 +729,9 @@ function rebuild(animate = false) {
       cluster.setColorAt(index, color)
       ids.push(node.id)
 
-      if ((smallGroup && !focusState.active) || center || (neighbor && neighborLabels < 12)) {
+      if ((smallGroup && !focusState.active) ||
+          (!focusState.active && !smallGroup && index < 32) ||
+          center || (neighbor && neighborLabels < 12)) {
         if (neighbor) neighborLabels += 1
         const label = focusState.active
           ? makeFocusLabel(node.name, center)
@@ -713,17 +739,20 @@ function rebuild(animate = false) {
         if (label) {
           label.position.copy(position)
           label.userData.nodeId = node.id
-          const width = center ? 274 : 242
+          const width = focusState.active
+            ? (center ? 208 : knowledge.length > 9 ? 148 : 178)
+            : 154
           labelAnchors.push({
             sprite: label, center: position, nodeId: node.id,
             distance: radius + (smallGroup ? 6.5 : 4.5),
             focused: focusState.active,
             priority: center ? 10000 : 1000,
+            declutter: !focusState.active && !smallGroup,
             screen: focusState.active
-              ? {width, height: width * 180 / 640, radius, gap: 14}
+              ? {width, height: width * 180 / 640, radius, gap: 12}
               : smallGroup
                 ? {width: 218, height: 218 * 150 / 520, radius, gap: 12}
-                : undefined,
+                : {width: 154, height: 39, radius, gap: 11},
           })
           g.add(label)
         }
@@ -880,7 +909,10 @@ function rebuild(animate = false) {
           nodeId: node.id,
           priority: node.kind === 'group'
             ? count + (groupOrder >= 0 && groupOrder < 6 ? 7 : 0) : 100,
-          declutter: overview && node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 7,
+          declutter: overview && (
+            node.kind === 'group' && props.nodes.filter(n=>n.kind==='group').length > 7 ||
+            node.kind === 'chapter' && props.nodes.filter(n=>n.kind==='chapter').length > 10
+          ),
           screen: overview ? {
             width: widthPx, height: widthPx * (208 / 720),
             radius, gap: node.kind === 'group' ? 8 : 12,
@@ -1257,7 +1289,7 @@ function declutterGroupLabels() {
     const forced = anchor.nodeId === hoveredNodeId
     const fits = screen.z > -1 && screen.z < 1 &&
       box.left >= 10 && box.right <= width - 10 &&
-      box.top >= 100 && box.bottom <= height - 25
+      box.top >= 12 && box.bottom <= height - 18
     const overlaps = boxes.some(other =>
       box.left < other.right && box.right > other.left &&
       box.top < other.bottom && box.bottom > other.top)
@@ -1287,8 +1319,9 @@ function arrangeFocusedLabels() {
   const viewportWidth = renderer.domElement.clientWidth
   const viewportHeight = renderer.domElement.clientHeight
   const minX = 18
-  const maxX = Math.max(minX + 180, viewportWidth - (props.selectedId ? 365 : 20))
-  const minY = 132
+  // The detail drawer is already outside the regular WebGL canvas.
+  const maxX = Math.max(minX + 160, viewportWidth - 18)
+  const minY = 26
   const maxY = Math.max(minY + 90, viewportHeight - 66)
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
   const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
