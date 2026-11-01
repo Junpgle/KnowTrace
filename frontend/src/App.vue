@@ -482,7 +482,7 @@ onMounted(() => { void initialize() })
                 <aside class="panel setup-aside"><div class="setup-aside-graphic"><div class="abstract-ring ring-one"></div><div class="abstract-ring ring-two"></div><Target :size="60" :stroke-width="1.5" /></div>
                   <h3>用练习发现真正的薄弱点</h3><p>已审核单知识点题可用于 BKT 诊断；候选题盲测不会提前泄露答案，也不会计入正式掌握度。</p>
                   <div class="aside-divider"></div><div class="aside-stats"><span>已审核题目</span><strong>{{ approvedCount }}</strong></div><div class="aside-stats"><span>待审核题目</span><strong>{{ pendingCount }}</strong></div>
-                  <button v-if="!approvedCount || pendingCount" class="text-link setup-admin" @click="navigate('bank')">前往题库生成与审核 <ArrowRight :size="16" /></button>
+                  <button v-if="!approvedCount || pendingCount" class="text-link setup-admin" @click="openContentSection('questions')">前往题库生成与审核 <ArrowRight :size="16" /></button>
                 </aside>
               </div>
             </template>
