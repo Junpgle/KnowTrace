@@ -15,7 +15,7 @@ import { api, ApiError, type AnswerFeedback, type Course, type KnowledgeReport,
   type QuizItem, type QuizSession, type KnowledgePoint, type QuestionQuality } from './api'
 
 type View = 'overview' | 'practice' | 'report' | 'content' | 'settings'
-type Choice = string | boolean | null
+type Choice = string | boolean | string[] | null
 const view = ref<View>('overview')
 const mobileMenu = ref(false)
 const showCourseForm = ref(false)
@@ -43,6 +43,9 @@ const selected = ref<Choice>(null)
 const questionStarted = ref(Date.now())
 const pendingRequest = ref<{ itemId: string, key: string, response: string | boolean, elapsedMs: number } | null>(null)
 const latestMastery = ref<{ itemId: string, before: number, after: number } | null>(null)
+const grading = ref(false)
+const gradingProvider = ref<'default'|'ollama'|'mimo'>('default')
+const gradingNotice = ref('')
 
 const currentCourse = computed(() => courses.value.find(c => c.id === courseId.value))
 const approvedCount = computed(() => {
@@ -61,6 +64,7 @@ const currentOptions = computed(() => {
   if (!currentItem.value) return [] as { key: string | boolean, label: string, text: string }[]
   if (currentItem.value.question_type === 'true_false')
     return [{ key: true, label: 'A', text: '正确' }, { key: false, label: 'B', text: '错误' }]
+  if (currentItem.value.question_type === 'short_answer') return []
   return ['A', 'B', 'C', 'D'].map(key => ({ key, label: key, text: currentItem.value?.options[key] ?? '' }))
 })
 const effectiveChoice = computed<Choice>(() =>
@@ -80,7 +84,10 @@ const viewTitle = computed(() => ({ overview: '学习总览', practice: '专项�
 const isComplete = computed(() => quiz.value?.status === 'completed')
 const canAnswer = computed(() => Boolean(currentItem.value && !currentItem.value.answered
   && selected.value !== null && !submitting.value
-  && (!pendingRequest.value || pendingRequest.value.response === selected.value)))
+  && (Array.isArray(selected.value) ? selected.value.length > 0 : 
+      typeof selected.value !== 'string' || selected.value.trim().length > 0)
+  && (!pendingRequest.value ||
+      JSON.stringify(pendingRequest.value.response) === JSON.stringify(selected.value))))
 
 function percent(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : Math.round(value * 100) + '%'
@@ -102,6 +109,7 @@ function chooseIndex(value: number) {
   selected.value = null
   pendingRequest.value = null
   questionStarted.value = Date.now()
+  gradingNotice.value = ''
   banner.value = ''
 }
 function firstUnanswered() {
@@ -246,11 +254,32 @@ async function startQuiz() {
   } finally { starting.value = false }
 }
 function selectChoice(choice: string | boolean) {
-  if (currentItem.value && !currentItem.value.answered && !submitting.value && !pendingRequest.value)
-    selected.value = choice
+  if (!currentItem.value || currentItem.value.answered || submitting.value || pendingRequest.value) return
+  if (currentItem.value.question_type === 'multiple_choice' && typeof choice === 'string') {
+    const options = Array.isArray(selected.value) ? [...selected.value] : []
+    selected.value = (options.includes(choice) ? options.filter(x => x !== choice)
+      : [...options, choice]).sort()
+  } else selected.value = choice
 }
-function formatChoice(value: string | boolean | null | undefined): string {
-  return value === true ? '正确' : value === false ? '错误' : value == null ? '—' : String(value)
+function formatChoice(value: string | boolean | string[] | null | undefined): string {
+  return Array.isArray(value) ? value.join('、') :
+    value === true ? '正确' : value === false ? '错误' : value == null ? '—' : String(value)
+}
+async function evaluateShortAnswer(mode: 'self'|'ai', verdict?: 'learned'|'not_learned') {
+  const item = currentItem.value
+  if (!item || item.question_type !== 'short_answer' || !item.answered ||
+    !currentResult.value || item.evaluation || grading.value || !quiz.value) return
+  grading.value = true
+  gradingNotice.value = ''
+  try {
+    const evaluation = await api.evaluateShortAnswer(item.quiz_item_id, mode,
+      mode === 'self' ? { verdict } : { provider: gradingProvider.value })
+    item.evaluation = evaluation
+    gradingNotice.value = mode === 'ai'
+      ? 'AI 评阅完成；判断仅供复习参考，不更新 BKT。'
+      : '自评已保存；不会被计入客观题正确率。'
+  } catch (error) { showError(error) }
+  finally { grading.value = false }
 }
 function applyAnswer(itemId: string, answer: AnswerFeedback, elapsedMs: number) {
   if (!quiz.value) return
@@ -493,17 +522,35 @@ onMounted(() => { void initialize() })
                     <div class="progress-track big"><span :style="{ width: (quiz.total ? quiz.answered / quiz.total * 100 : 0) + '%' }"></span></div></div>
                   <div v-if="isComplete" class="completion-banner"><div class="completion-icon"><Award :size="28" /></div><div><strong>本轮练习完成！</strong><span>{{ quiz.blind_pending ? '候选答案对照：' : '答对 ' }}{{ quiz.correct ?? '—' }} / {{ quiz.total }} 题，所有作答已保存。{{ quiz.blind_pending ? '候选答案未经人工确认，不计正式测评。' : '' }}</span></div><button class="button button-light" @click="quiz?.blind_pending ? chooseIndex(0) : navigate('report')">{{ quiz?.blind_pending ? '查看整套解析' : '查看报告' }} <ArrowRight :size="17" /></button></div>
                   <div v-if="currentItem" class="question-card panel">
-                    <div class="question-head"><span class="type-tag"><FileQuestion :size="15" /> {{ currentItem.question_type === 'single_choice' ? '单选题' : '判断题' }}</span><span class="question-index">QUESTION {{ String(currentItem.position).padStart(2, '0') }}</span></div>
-                    <h2>{{ currentItem.stem }}</h2><p class="question-instruction">{{ currentItem.question_type === 'single_choice' ? '请选择一个最符合题意的答案' : '请判断下列说法是否正确' }}</p>
-                    <div class="options-list">
+                    <div class="question-head"><span class="type-tag"><FileQuestion :size="15" /> {{ ({single_choice:'单选题',multiple_choice:'多选题',true_false:'判断题',short_answer:'简答题'} as Record<string,string>)[currentItem.question_type] }}</span><span class="question-index">QUESTION {{ String(currentItem.position).padStart(2, '0') }}</span></div>
+                    <h2>{{ currentItem.stem }}</h2><p class="question-instruction">{{ currentItem.question_type === 'single_choice' ? '请选择一个最符合题意的答案' :
+ currentItem.question_type === 'multiple_choice' ? '请选择所有正确答案（须完全匹配，不计部分分）' :
+ currentItem.question_type === 'short_answer' ? '先根据理解写出答案，提交后再与参考要点核对' :
+ '请判断下列说法是否正确' }}</p>
+                    <div v-if="currentItem.question_type === 'short_answer'" class="short-answer-box">
+                      <textarea :value="typeof effectiveChoice === 'string' ? effectiveChoice : ''"
+                        :disabled="currentItem.answered || submitting || !!pendingRequest"
+                        maxlength="3000" rows="8" placeholder="用自己的语言写下理解、步骤或关键依据…"
+                        @input="selected = ($event.target as HTMLTextAreaElement).value"></textarea>
+                      <p class="qb-hint">最多 3000 字。答案保存后才展示参考答案，自评和 AI 评价不会写入 BKT。</p>
+                    </div>
+                    <div v-else class="options-list">
                       <button v-for="option in currentOptions" :key="String(option.key)" class="answer-option" :class="{
-                        selected: effectiveChoice === option.key && !currentItem.answered,
-                        'option-correct': currentItem.answered && currentResult?.correct_answer === option.key,
-                        'option-wrong': currentItem.answered && currentResult?.response === option.key && !currentResult?.is_correct
+                        selected: (Array.isArray(effectiveChoice) ? effectiveChoice.includes(String(option.key)) : effectiveChoice === option.key) && !currentItem.answered,
+                        'option-correct': currentItem.answered && (Array.isArray(currentResult?.correct_answer)
+                          ? currentResult?.correct_answer.includes(String(option.key))
+                          : currentResult?.correct_answer === option.key),
+                        'option-wrong': currentItem.answered && (Array.isArray(currentResult?.response)
+                          ? currentResult?.response.includes(String(option.key))
+                          : currentResult?.response === option.key) && !currentResult?.is_correct
                       }" :disabled="currentItem.answered || submitting || !!pendingRequest" @click="selectChoice(option.key)">
                         <span class="option-letter">{{ option.label }}</span><span class="option-text">{{ option.text }}</span>
-                        <CheckCircle2 v-if="currentItem.answered && currentResult?.correct_answer === option.key" :size="21" class="option-state" />
-                        <XCircle v-else-if="currentItem.answered && currentResult?.response === option.key && !currentResult?.is_correct" :size="21" class="option-state" />
+                        <CheckCircle2 v-if="currentItem.answered && (Array.isArray(currentResult?.correct_answer)
+                          ? currentResult?.correct_answer.includes(String(option.key))
+                          : currentResult?.correct_answer === option.key)" :size="21" class="option-state" />
+                        <XCircle v-else-if="currentItem.answered && (Array.isArray(currentResult?.response)
+                          ? currentResult?.response.includes(String(option.key))
+                          : currentResult?.response === option.key) && !currentResult?.is_correct" :size="21" class="option-state" />
                         <span v-else class="option-circle"></span>
                       </button>
                     </div>
@@ -511,10 +558,38 @@ onMounted(() => { void initialize() })
                       <div class="feedback-heading"><CheckCircle2 :size="22" /><strong>答案已保存，整套完成后统一揭晓</strong></div>
                       <p>可继续答下一题。中途刷新或关闭网页不会泄露答案；重新打开仍可接着作答。</p>
                     </div>
-                    <div v-if="currentItem.answered && currentResult" class="answer-feedback" :class="{ incorrect: !currentResult.is_correct }">
-                      <div class="feedback-heading"><CheckCircle2 v-if="currentResult.is_correct" :size="22" /><XCircle v-else :size="22" /><strong>{{ currentResult.is_correct ? '回答正确，继续保持！' : '再巩固一下这个知识点' }}</strong></div>
-                      <p>正确答案：<strong>{{ formatChoice(currentResult.correct_answer) }}</strong></p>
+                    <div v-if="currentItem.answered && currentResult" class="answer-feedback" :class="{ incorrect: currentResult.is_correct === false }">
+                      <div class="feedback-heading"><CheckCircle2 v-if="currentResult.is_correct !== false" :size="22" /><XCircle v-else :size="22" /><strong>{{ currentItem.question_type === 'short_answer' ? '请对照参考答案与关键要点' : currentResult.is_correct ? '回答正确，继续保持！' : '再巩固一下这个知识点' }}</strong></div>
+                      <div v-if="currentItem.question_type === 'short_answer'" class="subjective-compare">
+                        <div><strong>你的作答</strong><p>{{formatChoice(currentResult.response)}}</p></div>
+                        <div><strong>参考答案</strong><p>{{formatChoice(currentResult.correct_answer)}}</p></div>
+                      </div>
+                      <p v-else>正确答案：<strong>{{ formatChoice(currentResult.correct_answer) }}</strong></p>
                       <div class="explanation-block"><span>题目解析</span><p>{{ currentResult.explanation || '暂无解析' }}</p></div>
+                      <div v-if="currentItem.question_type === 'short_answer'" class="short-review">
+                        <div v-if="currentItem.evaluation" class="qb-hint">
+                          {{ currentItem.evaluation.mode === 'self' ? '自我评价' : 'AI 评阅' }}：
+                          {{ ({ learned:'已学会', not_learned:'还需复习', uncertain:'暂不能确定'} as Record<string,string>)[currentItem.evaluation.verdict] }}
+                          <p>{{currentItem.evaluation.feedback}}</p>
+                        </div>
+                        <template v-else>
+                          <strong>对照后，你认为自己掌握了吗？</strong>
+                          <div class="short-review-actions">
+                            <button class="button button-outline" :disabled="grading" @click="evaluateShortAnswer('self','learned')">已学会</button>
+                            <button class="button button-outline" :disabled="grading" @click="evaluateShortAnswer('self','not_learned')">还没学会</button>
+                          </div>
+                          <div class="short-review-ai">
+                            <select v-model="gradingProvider" aria-label="简答题 AI 评阅服务">
+                              <option value="default">默认 AI</option><option value="ollama">Ollama</option><option value="mimo">MiMo（可能产生费用）</option>
+                            </select>
+                            <button class="button button-outline" :disabled="grading" @click="evaluateShortAnswer('ai')">
+                              {{ grading ? 'AI 正在评阅…' : '调用 AI 评阅（可选）' }}
+                            </button>
+                          </div>
+                          <p class="qb-hint">AI 评阅可能出错；调用云端服务会发送题干、参考答案和你的作答。</p>
+                        </template>
+                        <p v-if="gradingNotice" class="qb-hint">{{gradingNotice}}</p>
+                      </div>
                       <div v-if="latestMastery?.itemId === currentItem.quiz_item_id" class="mastery-change">
                         <Activity :size="16" /> BKT 估计掌握度 <strong>{{ percent(latestMastery.before) }} → {{ percent(latestMastery.after) }}</strong>
                       </div>
@@ -542,7 +617,7 @@ onMounted(() => { void initialize() })
                     <div class="nav-legend"><span><i class="legend-current"></i> 当前题</span><span><i class="legend-done"></i> 已作答</span><span><i class="legend-empty"></i> 未作答</span></div>
                     <div class="navigator-footer"><button class="navigator-link" @click="firstUnanswered">跳转到未完成题 <ArrowRight :size="16" /></button></div>
                   </div>
-                  <div class="panel quiz-aside-note"><Activity :size="22" /><h3>每一次作答，都在更新你的学习画像。</h3><p>答题记录会用于 BKT 知识追踪；掌握概率只是一项模型估计。</p></div>
+                  <div class="panel quiz-aside-note"><Activity :size="22" /><h3>客观判分和主观自评分开记录。</h3><p>仅经过审核的单知识点客观题用于 BKT；简答自评与 AI 评阅只用于复习参考。</p></div>
                 </aside>
               </div>
             </template>
