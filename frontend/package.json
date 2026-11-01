@@ -8,7 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "vue-tsc --noEmit",
-    "test:orbit": "node --experimental-strip-types --test src/orbitMetrics.test.ts src/independentOrbitLanes.test.ts"
+    "test:orbit": "node --experimental-strip-types --test src/orbitMetrics.test.ts src/independentOrbitLanes.test.ts src/centeredCourseOrbits.test.ts"
   },
   "dependencies": {
     "vue": "^3.5.0",
