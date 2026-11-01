@@ -135,6 +135,12 @@ const visibleEdges = computed(() => (graph.value?.edges ?? []).filter(e =>
   visibleIds.value.has(e.source) && visibleIds.value.has(e.target) &&
   (focusedConcept.value ? !e.structural && e.verified : e.structural || showRelations.value && e.verified)))
 const visibleRelations = computed(() => visibleEdges.value.filter(e => !e.structural).length)
+// Keep all other chapters / concepts as dim context instead of removing
+// them when a user drills into a chapter or an approved relationship.
+const contextNodes = computed(() => (graph.value?.nodes ?? []).filter(n =>
+  n.kind !== 'knowledge' || includePending.value || n.review_status === 'approved'))
+const contextChapterId = computed(() => focusedChapter.value ??
+  focusedConcept.value?.chapter_id ?? structuralParents.value.get(focusedConcept.value?.id ?? '') ?? null)
 const related = computed(() => relationship.value.map(edge => ({
   id: edge.source === selectedId.value ? edge.target : edge.source,
   edge,
@@ -304,9 +310,9 @@ watch(() => props.courseId, () => {
           <label class="kg-check"><input v-model="includePending" type="checkbox" />显示未审核知识点</label>
           <label class="kg-check"><input v-model="showRelations" type="checkbox" />总览显示全部关系线</label>
           <p class="kg-count">已筛选 {{ matching.length }} 个知识点 · 当前呈现 {{ displayKnowledge.length }} 个 · {{ visibleRelations }} 条已审核关系</p>
-          <p class="kg-muted">默认显示章节骨架；点击章节展开知识点，点击知识点聚焦已审核的关联簇。</p>
+          <p class="kg-muted">当前层级明亮突出，其他章节与知识点保留在暗色背景中；悬停星球可查看完整名称。</p>
           <p v-if="hiddenKnowledgeCount" class="kg-muted" role="status">
-            本层还有 {{ hiddenKnowledgeCount }} 个节点未同时绘制；可通过左侧搜索定位，避免缩小整张星系。
+            当前层级聚焦前 {{ displayKnowledge.length }} 个节点；另有 {{ hiddenKnowledgeCount }} 个仍可在暗色背景中查看。可搜索以进一步定位。
           </p>
           <h2 class="kg-subtitle"><Network :size="17" /> 定位知识星球</h2>
           <div v-if="!matching.length" class="kg-muted">没有匹配的知识点，可调整筛选条件。</div>
@@ -331,6 +337,7 @@ watch(() => props.courseId, () => {
           </div>
           <Graph3DCanvas v-if="display==='3d' && !explorerOpen" ref="canvas" :nodes="visibleNodes" :edges="visibleEdges"
             :layout-nodes="graph.nodes" :layout-edges="graph.edges" :relation-edges="graph.edges"
+            :context-nodes="contextNodes" :context-edges="graph.edges" :context-chapter-id="contextChapterId"
             :selected-id="selectedId" :navigation="navigation" :show-structure="false"
             :show-relations="showRelations || !!focusedConcept" @select="select" />
           <div v-else class="kg-list-mode">
@@ -342,7 +349,7 @@ watch(() => props.courseId, () => {
               <em>{{ statusLabel(node) }}</em>
             </button>
           </div>
-          <div class="kg-stage-foot"><span>拖动旋转 · 滚轮缩放 · 点击选中</span><span>真实数据库驱动</span></div>
+          <div class="kg-stage-foot"><span>拖动旋转 · 滚轮缩放 · 悬停看名称 · 点击聚焦</span><span>真实数据库驱动</span></div>
         </section>
 
         <aside class="kg-detail panel">

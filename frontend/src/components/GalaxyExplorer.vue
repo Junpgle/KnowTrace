@@ -200,6 +200,13 @@ const edges = computed(()=>{
   return selectedId.value!==null&&(e.source===selectedId.value||e.target===selectedId.value)
  })
 })
+const contextNodes = computed<GraphNode[]>(() => [
+  ...props.graph.nodes.filter(n =>
+    n.kind !== 'knowledge' || includePending.value || n.review_status === 'approved'),
+  // Browse groups are visual navigation markers. Keep sibling groups visible
+  // (dimmed) while flying into one group instead of deleting the parent map.
+  ...browseGroups.value.map(groupNode),
+])
 const semanticEdges = computed(() => edges.value.filter(e => !e.structural))
 const selectedRelations = computed(() => props.graph.edges.filter(e =>
   !e.structural && e.verified && selectedId.value !== null &&
@@ -296,10 +303,15 @@ function selectCanvasNode(id: string | null) {
     backToAtlas()
     return
   }
+  if (node?.kind === 'knowledge' && !nodes.value.some(n => n.id === id)) {
+    // A dim concept from another chapter can also be hovered and opened.
+    focusKnowledge(id, true)
+    return
+  }
   if (node?.kind === 'knowledge') level.value = 'knowledge'
   selectedId.value = id
 }
-function focusKnowledge(id: string) {
+function focusKnowledge(id: string, fromCanvas = false) {
   // Preserve a visible map anchor when opening a concept from the directory:
   // before expansion the concept may not yet have a rendered world position.
   const wasVisible = nodes.value.some(n => n.id === id)
@@ -312,7 +324,7 @@ function focusKnowledge(id: string) {
   term.value = ''
   level.value = 'knowledge'
   activeGroup.value = browseGroups.value.find(g=>g.members.includes(id))?.id??null
-  markNavigation('enter', wasVisible ? id :
+  markNavigation('enter', (fromCanvas || wasVisible) ? id :
     previousGroup ?? (previousChapter !== 'all' ? previousChapter :
       destination !== 'all' ? destination : id))
   selectedId.value = id
@@ -465,6 +477,7 @@ onBeforeUnmount(() => {
           :show-relations="relationView!=='none'" :show-structure="showStructure"
           :relation-edges="graph.edges" :navigation="navigation" :layout-nodes="chapterChoice==='all' ? graph.nodes : nodes"
           :layout-edges="chapterChoice==='all' ? graph.edges : edges"
+          :context-nodes="contextNodes" :context-edges="graph.edges" :context-chapter-id="chapterChoice==='all' ? null : chapterChoice"
           @select="selectCanvasNode" />
         <div class="gx-stage-nav">
           <button v-if="activeBrowseGroup" type="button" @click="backToGroups"
@@ -500,7 +513,7 @@ onBeforeUnmount(() => {
           <button type="button" title="缩小星系" aria-label="缩小星系"
             @click="canvas?.zoomOut()"><ZoomOut :size="18" /></button>
         </div>
-        <div class="gx-hint"><Compass :size="13" /> {{ displayMode==='groups' ? '前后景深可旋转查看 · 悬停显示分组名称 · 点击进入' : '拖动旋转 · 滚轮缩放 · 点击星球探索' }}</div>
+        <div class="gx-hint"><Compass :size="13" /> 其他层级保留暗色参照 · 悬停显示完整名称 · 点击聚焦</div>
       </main>
 
       <aside v-if="selected" class="gx-panel gx-detail" aria-label="选中节点详情">
