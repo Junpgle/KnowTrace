@@ -100,6 +100,7 @@ const groupMarkerRadii = new Map<string, number>()
 type OrbitingPlanet = {
   id: string
   world: THREE.Vector3
+  initialWorld: THREE.Vector3
   center: THREE.Vector3
   axisX: THREE.Vector3
   axisY: THREE.Vector3
@@ -932,7 +933,8 @@ function initializeOrbitingPlanets() {
       const periodSeconds=(48+6.8*Math.sqrt(Math.max(1,amount)))*
         (.91+.18*ordinalHash(node.id+':orbital-speed'))
       orbitingPlanets.push({
-        id:node.id, world:position, center:individualCenter,
+        id:node.id, world:position, initialWorld:position.clone(),
+        center:individualCenter,
         axisX:axisX.clone(), axisY:axisY.clone(),
         major:xRadius*ellipticalScale, minor:yRadius*ellipticalScale, phase,
         radiansPerSecond:2*Math.PI/periodSeconds,
@@ -959,7 +961,10 @@ function animateOrbits(now:number) {
     const destination=planet.center.clone()
       .addScaledVector(planet.axisX,planet.major*Math.cos(angle))
       .addScaledVector(planet.axisY,planet.minor*Math.sin(angle))
-    const shift=destination.clone().sub(planet.world)
+    // Object transforms are relative to the INITIAL orbit coordinates,
+    // not the previous frame; otherwise only the tiny per-frame delta is
+    // applied and a moving marker never follows its actual orbit.
+    const shift=destination.clone().sub(planet.initialWorld)
     planet.world.copy(destination)
     for(const item of planet.objects)
       item.object.position.copy(item.start).add(shift)
