@@ -70,6 +70,13 @@ type SceneTransition = {
 }
 const meshes: THREE.Mesh[] = []
 const contextMeshes: THREE.Mesh[] = []
+type ScreenBox = { left: number; right: number; top: number; bottom: number }
+type BackdropPoint = { position: THREE.Vector3; color: THREE.Color; local: boolean }
+let backdropCloud: THREE.InstancedMesh | null = null
+const backdropPoints: BackdropPoint[] = []
+let lastBackdropLayout = 0
+const projectedPoint = new THREE.Vector3()
+const cameraFacing = new THREE.Vector3()
 let hoveredNodeId: string | null = null
 const hoveredName = ref('')
 const hoveredPoint = ref({ x: 0, y: 0 })
@@ -654,6 +661,8 @@ function clearGraph(animate = false) {
   incoming = null
   meshes.splice(0)
   contextMeshes.splice(0)
+  backdropCloud = null
+  backdropPoints.splice(0)
   labelAnchors.splice(0)
   hoveredNodeId = null
   hoveredName.value = ''
@@ -691,6 +700,75 @@ function resolveLayout() {
 // Keep the global atlas coordinates independent from the currently opened
 // chapter/subgroup. Groups in the fullscreen explorer are synthetic browse
 // markers; they orbit their actual chapter without replacing the real graph.
+// Screen-space safe area is computed from real DOM overlays, not a fixed
+// 365px sidebar guess. It also handles the navigation drawer and narrow
+// screens; the 3D camera fits the active constellation inside this rectangle.
+function overlayBoxes(): ScreenBox[] {
+  const mount = mountPoint.value
+  if (!mount) return []
+  const host = mount.closest('.gx-body')
+  if (!host) return []
+  const canvasBounds = mount.getBoundingClientRect()
+  const occluders = host.querySelectorAll<HTMLElement>(
+    '.gx-detail, .gx-nav, .gx-stage-nav, .gx-view-switch, .gx-counter, .gx-zoom-controls')
+  const boxes: ScreenBox[] = []
+  for (const el of occluders) {
+    const rect = el.getBoundingClientRect()
+    if (rect.width < 2 || rect.height < 2) continue
+    const left = Math.max(0, rect.left - canvasBounds.left - 9)
+    const right = Math.min(canvasBounds.width, rect.right - canvasBounds.left + 9)
+    const top = Math.max(0, rect.top - canvasBounds.top - 9)
+    const bottom = Math.min(canvasBounds.height, rect.bottom - canvasBounds.top + 9)
+    if (right > left && bottom > top) boxes.push({left, right, top, bottom})
+  }
+  return boxes
+}
+function overlaps(a: ScreenBox, b: ScreenBox, padding = 0) {
+  return a.left < b.right + padding && a.right > b.left - padding &&
+    a.top < b.bottom + padding && a.bottom > b.top - padding
+}
+function safeViewport() {
+  const width = Math.max(1, mountPoint.value?.clientWidth ?? 1)
+  const height = Math.max(1, mountPoint.value?.clientHeight ?? 1)
+  const inset = Math.min(22, Math.max(10, width * .015))
+  let safe: ScreenBox = {left:inset, right:width-inset, top:inset, bottom:height-inset}
+  for (const block of overlayBoxes()) {
+    // Long vertical drawers reserve horizontal space; floating stage
+    // overlays reserve top/bottom space but not the whole canvas width.
+    if (block.bottom - block.top > height * .48) {
+      if (block.left < width * .5) safe.left = Math.max(safe.left, block.right + 12)
+      else safe.right = Math.min(safe.right, block.left - 12)
+    } else if (block.top < height * .40) {
+      safe.top = Math.max(safe.top, block.bottom + 12)
+    } else if (block.bottom > height * .66) {
+      safe.bottom = Math.min(safe.bottom, block.top - 12)
+    }
+  }
+  // Even with multiple open drawers, preserve a nonempty viewport for a
+  // selected concept and its closest neighbors.
+  if (safe.right - safe.left < 140) {
+    safe.left = inset
+    safe.right = Math.max(inset + 80, width - inset)
+  }
+  if (safe.bottom - safe.top < 160) {
+    safe.top = inset
+    safe.bottom = Math.max(inset + 80, height - inset)
+  }
+  return safe
+}
+function screenPosition(world: THREE.Vector3): {x:number;y:number;visible:boolean} {
+  if (!camera || !renderer) return {x:0,y:0,visible:false}
+  projectedPoint.copy(world).project(camera)
+  const w = renderer.domElement.clientWidth
+  const h = renderer.domElement.clientHeight
+  return {
+    x:(projectedPoint.x+1)*w/2,
+    y:(1-projectedPoint.y)*h/2,
+    visible: projectedPoint.z > -1 && projectedPoint.z < 1 &&
+      Math.abs(projectedPoint.x) < 1.2 && Math.abs(projectedPoint.y) < 1.2,
+  }
+}
+
 function resolveContextLayout() {
   const nodes = props.contextNodes
   const edges = props.contextEdges ?? props.layoutEdges ?? props.edges
@@ -825,6 +903,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
   // location. Small spheres are instanced: thousands of dim points remain
   // cheap to draw. Only active nodes get labels, rings and bright halos.
   contextMeshes.splice(0)
+  backdropCloud = null
+  backdropPoints.splice(0)
+  lastBackdropLayout = 0
   const background = (props.contextNodes ?? []).filter(n =>
     !activeIds.has(n.id))
   const backdrop = resolveContextLayout()
@@ -835,6 +916,7 @@ function rebuild(animate = false, transition?: SceneTransition) {
     })
     const sphere = new THREE.SphereGeometry(1, 10, 8)
     const cloud = new THREE.InstancedMesh(sphere, material, backKnowledge.length)
+    backdropCloud = cloud
     const matrix = new THREE.Matrix4()
     const scale = new THREE.Vector3()
     const rotation = new THREE.Quaternion()
@@ -846,7 +928,9 @@ function rebuild(animate = false, transition?: SceneTransition) {
       scale.setScalar(size)
       matrix.compose(backdrop.get(node.id)!, rotation, scale)
       cloud.setMatrixAt(index, matrix)
-      cloud.setColorAt(index, new THREE.Color(statusColor(node)).multiplyScalar(brightness))
+      const tint = new THREE.Color(statusColor(node))
+      backdropPoints.push({position: backdrop.get(node.id)!.clone(), color:tint, local:onChapter})
+      cloud.setColorAt(index, tint.clone().multiplyScalar(brightness))
       ids.push(node.id)
     })
     cloud.instanceMatrix.needsUpdate = true
@@ -1337,6 +1421,39 @@ function focus(id: string | null, resetAtlasAngle = false) {
       distance = selected?.kind === 'knowledge' ? 92 : 112
     else distance = selectionDistance(selected?.kind ?? 'knowledge', currentDistance)
   }
+  // Adapt BOTH frame scale and frame center to the actual unobstructed
+  // rectangle. This prevents an approved relation from landing under the
+  // details drawer while preserving a continuous map-style camera flight.
+  const safe = safeViewport()
+  const width = Math.max(1, mountPoint.value?.clientWidth ?? 1)
+  const height = Math.max(1, mountPoint.value?.clientHeight ?? 1)
+  const safeWidth = Math.max(1, safe.right - safe.left)
+  const safeHeight = Math.max(1, safe.bottom - safe.top)
+  const screenRight = new THREE.Vector3().crossVectors(
+    new THREE.Vector3(0,1,0), direction)
+  if (screenRight.lengthSq() < 1e-6) screenRight.set(1,0,0)
+  screenRight.normalize()
+  const viewDirection = direction.clone().normalize()
+  const screenTop = new THREE.Vector3()
+    .crossVectors(viewDirection,screenRight).normalize()
+  const frameCenter = (relationFocus || chapterFocus) ? overviewCenter :
+    (coordinate ?? overviewCenter)
+  const framePoints = relationFocus || chapterFocus ? focusedPoints :
+    coordinate ? [coordinate] : fitPoints
+  distance = Math.max(distance, projectedFitDistance(
+    framePoints, frameCenter, viewDirection,
+    THREE.MathUtils.clamp(safeWidth/width*.90,.19,.94),
+    THREE.MathUtils.clamp(safeHeight/height*.89,.19,.94),
+    relationFocus ? 22 : 12, relationFocus ? 30 : 18,
+  ))
+  const unitsPerPixel = 2 *
+    Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * distance/height
+  // Move the camera TARGET, not any planets. Positive screen-right travel
+  // moves the entire constellation to the left, away from the side drawer.
+  desiredTarget.addScaledVector(screenRight,
+    (width/2-(safe.left+safe.right)/2)*unitsPerPixel)
+  desiredTarget.addScaledVector(screenTop,
+    ((safe.top+safe.bottom)/2-height/2)*unitsPerPixel)
   // A visible fog pop before the camera starts moving looks like a jump
   // even if the camera transform itself is continuous.
   prepareFlightRange(distance)
@@ -1427,126 +1544,151 @@ function placeLabel(anchor: LabelAnchor) {
   )
 }
 
-// When 30+ browsing groups are shown, 30 large labels cannot all fit in the
-// same viewport. Keep the planets visible, but show only captions that do not
-// overlap; a hovered planet gets first priority and always reveals its name.
-function declutterGroupLabels() {
-  if (!camera || !renderer) return
-  const items = labelAnchors.filter(a => a.declutter && a.screen)
-  if (!items.length) return
+// Adaptive screen-space label solver. It runs AFTER the camera transform and
+// label pixel-size scaling, so a user can orbit/zoom without labels covering
+// one another, important planets, the detail drawer or the toolbar.
+// Unlike the previous two solvers, there is no "best even if overlapping"
+// fallback for nonselected captions. Hover always exposes the FULL name.
+function arrangeScreenLabels() {
+  if (!camera || !renderer || !labelAnchors.length) return
+  const safe = safeViewport()
+  const reserved = overlayBoxes()
   const width = renderer.domElement.clientWidth
   const height = renderer.domElement.clientHeight
-  const boxes: { left: number; right: number; top: number; bottom: number }[] = []
-  const sorted = [...items].sort((a,b) =>
+  const selected = props.selectedId
+  const planets: {id:string; x:number; y:number; radius:number}[] = []
+  for (const node of props.nodes) {
+    const point = positions.get(node.id)
+    if (!point) continue
+    const p = screenPosition(point)
+    if (!p.visible) continue
+    const depth = Math.max(1, point.distanceTo(camera.position))
+    const pxPerWorld = height / (2 *
+      Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * depth)
+    const worldRadius = node.kind === 'knowledge'
+      ? node.id === selected ? 3.5 : 2.7
+      : node.kind === 'group' ? 8 : node.kind === 'chapter' ? 13 : 10
+    planets.push({id:node.id,x:p.x,y:p.y,
+      radius:Math.max(11, Math.min(40, pxPerWorld * worldRadius + 6))})
+  }
+  const labels = [...labelAnchors].sort((a,b) =>
+    Number(b.nodeId === selected) - Number(a.nodeId === selected) ||
     Number(b.nodeId === hoveredNodeId) - Number(a.nodeId === hoveredNodeId) ||
     (b.priority ?? 0) - (a.priority ?? 0) ||
     (a.nodeId ?? '').localeCompare(b.nodeId ?? ''))
-  const cap = Math.min(16, Math.max(8, Math.round(width * height / 78000)))
-  let visibleCount = 0
-  for (const anchor of sorted) {
-    const screen = anchor.sprite.getWorldPosition(new THREE.Vector3()).project(camera)
-    const px = (screen.x + 1) * width / 2
-    const py = (1 - screen.y) * height / 2
-    const w = anchor.screen!.width
-    const h = anchor.screen!.height
-    const box = {left:px-w/2-7, right:px+w/2+7,
-      top:py-h/2-6, bottom:py+h/2+6}
-    const forced = anchor.nodeId === hoveredNodeId
-    const fits = screen.z > -1 && screen.z < 1 &&
-      box.left >= 10 && box.right <= width - 10 &&
-      box.top >= 12 && box.bottom <= height - 18
-    const overlaps = boxes.some(other =>
-      box.left < other.right && box.right > other.left &&
-      box.top < other.bottom && box.bottom > other.top)
-    // Do not hide the hovered caption just because it overlaps a label
-    // elsewhere; the sort above allows it to displace that label.
-    const show = fits && !overlaps && (visibleCount < cap || forced)
-    anchor.sprite.visible = show
-    if (show) {
-      visibleCount++
-      boxes.push(box)
-    }
-  }
-}
-
-// Put real selected/one-hop labels ahead of decorative content. Search
-// nearby screen positions to avoid overlap and the right-hand details panel.
-// Every highlighted label remains visible and clickable; the best available
-// placement is used even when a compact viewport cannot avoid all overlaps.
-function arrangeFocusedLabels() {
-  if (!camera || !renderer) return
-  const labels = labelAnchors
-    .filter(a => a.focused && a.screen)
-    .sort((a,b) =>
-      Number(b.nodeId === props.selectedId) - Number(a.nodeId === props.selectedId) ||
-      (a.nodeId ?? '').localeCompare(b.nodeId ?? ''))
-  if (!labels.length) return
-  const viewportWidth = renderer.domElement.clientWidth
-  const viewportHeight = renderer.domElement.clientHeight
-  const minX = 18
-  // The detail drawer is already outside the regular WebGL canvas.
-  const maxX = Math.max(minX + 160, viewportWidth - 18)
-  const minY = 26
-  const maxY = Math.max(minY + 90, viewportHeight - 66)
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion)
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion)
-  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
-  const occupied: {l:number;r:number;t:number;b:number}[] = []
-
+  const placed: ScreenBox[] = []
+  // The cap adapts to available real-estate; crowded layers only label key
+  // nodes until hovered, instead of printing 20 unreadable overlapping cards.
+  const available = Math.max(1,(safe.right-safe.left)*(safe.bottom-safe.top))
+  const maxLabels = Math.max(2,Math.min(22,Math.floor(available / 32000)))
+  let visibleLabels = 0
   for (const label of labels) {
-    const sprite = label.sprite
-    const worldPosition = sprite.getWorldPosition(new THREE.Vector3())
-    const projected = worldPosition.clone().project(camera)
-    const x = (projected.x + 1) * viewportWidth / 2
-    const y = (1 - projected.y) * viewportHeight / 2
-    const width = label.screen!.width
-    const height = label.screen!.height
-    const margin = 10
-    // Offsets are in screen pixels. The first choice keeps the caption just
-    // above its planet; later choices go sideways or below if needed.
+    const center = label.sprite.getWorldPosition(new THREE.Vector3())
+    const projected = screenPosition(center)
+    const depth = Math.max(1,center.distanceTo(camera.position))
+    const pxPerWorld = height / (2 *
+      Math.tan(THREE.MathUtils.degToRad(camera.fov)/2) * depth)
+    const w = label.screen?.width ?? label.sprite.scale.x * pxPerWorld
+    const h = label.screen?.height ?? label.sprite.scale.y * pxPerWorld
+    const pinned = label.nodeId === selected
+    const hovered = label.nodeId === hoveredNodeId
+    label.sprite.visible = false
+    if (!projected.visible || (visibleLabels >= maxLabels && !pinned && !hovered)) continue
     const offsets: [number,number][] = [
-      [0,0], [-width*.60,0], [width*.60,0],
-      [0,-height-28], [0,height+28],
-      [-width*.75,-height*.55], [width*.75,-height*.55],
-      [-width*.75,height*.70], [width*.75,height*.70],
-      [-width-24,0], [width+24,0],
-      [0,-height*2], [0,height*2],
-      [-width*1.3,-height], [width*1.3,-height],
+      [0,0], [w*.65,0],[-w*.65,0],
+      [0,-h-16],[0,h+16],
+      [w*.75,-h*.75],[-w*.75,-h*.75],
+      [w*.75,h*.95],[-w*.75,h*.95],
+      [w+16,0],[-w-16,0],
+      [0,-h*2-16],[0,h*2+16],
+      [w*1.4,-h*.6],[-w*1.4,-h*.6],
     ]
-    let bestX = 0
-    let bestY = 0
-    let bestScore = Infinity
+    let chosen: {dx:number;dy:number;score:number;box:ScreenBox} | null = null
     for (const [dx,dy] of offsets) {
-      const left = x + dx - width/2 - margin
-      const top = y + dy - height/2 - margin
-      const box = {l:left,r:left+width+margin*2,t:top,b:top+height+margin*2}
-      const outside =
-        Math.max(0, minX-box.l) + Math.max(0, box.r-maxX) +
-        Math.max(0, minY-box.t) + Math.max(0, box.b-maxY)
-      const overlap = occupied.reduce((area,p) =>
-        area + Math.max(0, Math.min(box.r,p.r)-Math.max(box.l,p.l)) *
-        Math.max(0, Math.min(box.b,p.b)-Math.max(box.t,p.t)),0)
-      const score = outside * 80 + overlap * 2 + Math.hypot(dx,dy)*.03
-      if (score < bestScore) {
-        bestScore = score
-        bestX = dx
-        bestY = dy
+      const x=projected.x+dx,y=projected.y+dy
+      const box={left:x-w/2-6,right:x+w/2+6,top:y-h/2-5,bottom:y+h/2+5}
+      if (box.left < safe.left || box.right > safe.right ||
+          box.top < safe.top || box.bottom > safe.bottom) continue
+      if (reserved.some(p => overlaps(box,p,3)) || placed.some(p=>overlaps(box,p,5)))
+        continue
+      const coversPlanet = planets.some(p => p.id !== label.nodeId &&
+        box.left < p.x+p.radius && box.right > p.x-p.radius &&
+        box.top < p.y+p.radius && box.bottom > p.y-p.radius)
+      if (coversPlanet) continue
+      const score=Math.hypot(dx,dy)+
+        (dx !== 0 ? 8 : 0)+
+        (dy > 0 ? 12 : 0)
+      if (!chosen || score < chosen.score) chosen={dx,dy,score,box}
+    }
+    if (!chosen && pinned) {
+      // A selected name must stay legible. Place it in an unobstructed
+      // corner of the safe region rather than directly on top of a drawer.
+      for (const target of [
+        [safe.left+w/2+7,safe.top+h/2+8],
+        [safe.right-w/2-7,safe.top+h/2+8],
+        [(safe.left+safe.right)/2,safe.bottom-h/2-8],
+      ]) {
+        const [x,y]=target
+        const box={left:x-w/2,right:x+w/2,top:y-h/2,bottom:y+h/2}
+        if (!reserved.some(p=>overlaps(box,p)) && !placed.some(p=>overlaps(box,p))) {
+          chosen={dx:x-projected.x,dy:y-projected.y,score:9999,box}
+          break
+        }
       }
     }
-    const l = x+bestX-width/2-margin
-    const t = y+bestY-height/2-margin
-    occupied.push({l,r:l+width+margin*2,t,b:t+height+margin*2})
-    const center = label.sprite.parent
-      ? label.sprite.parent.localToWorld(label.center.clone()) : label.center
-    const depth = Math.max(1, center.clone().sub(camera.position).dot(forward))
-    const parentScale = Math.max(.05, sprite.parent?.scale.x ?? 1)
-    const localPerPx = 2 * tanHalf * depth /
-      Math.max(1,viewportHeight) / parentScale
-    sprite.position.addScaledVector(right,bestX*localPerPx)
-      .addScaledVector(up,-bestY*localPerPx)
+    if (!chosen) continue
+    const cameraRight = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion)
+    const cameraUp = new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion)
+    const parentScale = Math.max(.05,label.sprite.parent?.scale.x ?? 1)
+    const localPerPx = 1 / Math.max(.00001,pxPerWorld*parentScale)
+    label.sprite.position.addScaledVector(cameraRight,chosen.dx*localPerPx)
+      .addScaledVector(cameraUp,-chosen.dy*localPerPx)
+    label.sprite.visible = true
+    placed.push(chosen.box)
+    visibleLabels++
   }
   scene?.updateMatrixWorld(true)
+}
+
+// A projected-density budget controls the quiet background of 1300+ nodes.
+// It does NOT delete them or create fake links; it darkens conflicting dots
+// as zoom/rotation changes and prioritizes a sparse map-like context.
+function arrangeBackdrop(now: number) {
+  if (!camera || !renderer || !backdropCloud || !backdropPoints.length) return
+  if (now-lastBackdropLayout < 90) return
+  lastBackdropLayout = now
+  const width = renderer.domElement.clientWidth
+  const height = renderer.domElement.clientHeight
+  const overlays = overlayBoxes()
+  const cell = THREE.MathUtils.clamp(
+    Math.sqrt(width*height/260), 38, 68)
+  const used = new Set<string>()
+  const focal: {x:number;y:number}[] = []
+  for (const node of props.nodes) {
+    const pos = positions.get(node.id)
+    if (!pos) continue
+    const pt = screenPosition(pos)
+    if (pt.visible) focal.push(pt)
+  }
+  // Same-chapter context dots win over unrelated background if both
+  // project into the same cell. The rest remain faintly visible.
+  for (const local of [true,false]) {
+    backdropPoints.forEach((node,index) => {
+      if (node.local !== local) return
+      const pt = screenPosition(node.position)
+      let strength = node.local ? .36 : .21
+      if (!pt.visible) strength *= .15
+      const key=`${Math.floor(pt.x/cell)}:${Math.floor(pt.y/cell)}`
+      if (used.has(key)) strength *= .085
+      else used.add(key)
+      if (overlays.some(b=>pt.x>=b.left&&pt.x<=b.right&&
+        pt.y>=b.top&&pt.y<=b.bottom)) strength *= .07
+      if (focal.some(p=>Math.hypot(p.x-pt.x,p.y-pt.y)<35))
+        strength *= .06
+      backdropCloud!.setColorAt(index,node.color.clone().multiplyScalar(strength))
+    })
+  }
+  if (backdropCloud.instanceColor) backdropCloud.instanceColor.needsUpdate = true
 }
 
 function draw() {
@@ -1587,6 +1729,9 @@ function draw() {
     if (travel >= 1) finishFade()
   }
   controls.update()
+  // Project the CURRENT camera frame, not last frame's inverse matrix.
+  // Screen-space avoidance otherwise lags one frame during fast navigation.
+  camera.updateMatrixWorld()
   // Labels and click targets must respect animated parent-group
   // transforms in both forward and reverse transitions.
   scene.updateMatrixWorld(true)
@@ -1594,8 +1739,8 @@ function draw() {
   for (const anchor of labelAnchors) placeLabel(anchor)
   for (const layer of outgoing) for (const anchor of layer.anchors) placeLabel(anchor)
   scene.updateMatrixWorld(true)
-  declutterGroupLabels()
-  arrangeFocusedLabels()
+  arrangeScreenLabels()
+  arrangeBackdrop(now)
   renderer.render(scene, camera)
   frameId = requestAnimationFrame(draw)
 }
@@ -1807,7 +1952,7 @@ watch(() => ({
   } else if (layerChanged || next.selectedId !== previous.selectedId) {
     focus(next.selectedId, layerChanged)
   }
-})
+}, { flush: 'post' })
 onBeforeUnmount(() => {
   disposed = true
   cancelAnimationFrame(frameId)
