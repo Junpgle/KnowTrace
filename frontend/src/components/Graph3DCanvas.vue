@@ -1791,16 +1791,22 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const relatedPoints = [...relatedIds].map(n => positions.get(n))
     .filter((p): p is THREE.Vector3 => Boolean(p))
   const relationFocus = !!coordinate && relatedPoints.length > 0
+  const leafDetailFocus = !!coordinate && selectedNode?.kind === 'knowledge' &&
+    localGroup && !!props.preservePositionsOnSelect && visibleKnowledge.length <= 18
   const chapterFocus = !!coordinate && selectedNode?.kind === 'chapter' && visibleKnowledge.length > 0
   const focusConstellation = !!coordinate && selectedNode?.kind === 'knowledge' &&
     props.nodes.every(n => n.kind === 'knowledge') && props.nodes.length <= 26
-  const focusedPoints = relationFocus ? [coordinate, ...relatedPoints]
+  const focusedPoints = leafDetailFocus
+    ? [...visibleKnowledge, ...groupPoints]
+    : relationFocus ? [coordinate, ...relatedPoints]
     : chapterFocus ? [coordinate, ...visibleKnowledge] : fitPoints
   const bounds = new THREE.Box3().setFromPoints(focusedPoints)
   const overviewCenter = bounds.getCenter(new THREE.Vector3())
   // For a real relationship network use its center; for a single point,
   // retain the existing click-to-center behavior.
-  desiredTarget.copy(relationFocus || chapterFocus ? overviewCenter : (coordinate ?? overviewCenter))
+  desiredTarget.copy(leafDetailFocus
+    ? overviewCenter.clone().lerp(coordinate, .18)
+    : relationFocus || chapterFocus ? overviewCenter : (coordinate ?? overviewCenter))
 
   const currentDistance = camera.position.distanceTo(controls.target)
   const direction = camera.position.clone().sub(controls.target)
@@ -1825,7 +1831,15 @@ function focus(id: string | null, resetAtlasAngle = false) {
     }
   }
   let distance: number
-  if (relationFocus) {
+  if (leafDetailFocus) {
+    // Click-to-detail stays in the SAME map: retain all nine / fourteen
+    // knowledge points, pan toward the selected planet and adapt the
+    // available width as the drawer slides in. No isolated re-layout.
+    distance = Math.max(84, projectedFitDistance(
+      focusedPoints, desiredTarget, direction, .82, .76, 10, 12, 70,
+    ))
+    prepareFlightRange(distance)
+  } else if (relationFocus) {
     // Reserve the right-side detail drawer and the large readable labels.
     // The focus must be based on the actual neighbor positions rather than
     // the old fixed 92-unit zoom that cropped most related nodes.
@@ -1905,10 +1919,11 @@ function focus(id: string | null, resetAtlasAngle = false) {
   const viewDirection = direction.clone().normalize()
   const screenTop = new THREE.Vector3()
     .crossVectors(viewDirection,screenRight).normalize()
-  const frameCenter = (relationFocus || chapterFocus) ? overviewCenter :
+  const frameCenter = leafDetailFocus ? desiredTarget.clone() :
+    (relationFocus || chapterFocus) ? overviewCenter :
     (coordinate ?? overviewCenter)
-  const framePoints = relationFocus || chapterFocus ? focusedPoints :
-    coordinate ? [coordinate] : fitPoints
+  const framePoints = leafDetailFocus || relationFocus || chapterFocus
+    ? focusedPoints : coordinate ? [coordinate] : fitPoints
   if (courseAtlasOverview) {
     // The previous generic pass reserved a full-width band for the
     // top-left title and added world-space padding TWICE. That made the
