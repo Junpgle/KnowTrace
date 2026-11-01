@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Vector3 } from 'three'
 import { orbitPosition, restoreOrbitFrame, snapshotOrbitFrame } from './orbitNavigationFrame.ts'
+import type { SavedOrbit } from './orbitNavigationFrame.ts'
 
 const EPSILON=1e-7
 const close=(a:Vector3,b:Vector3)=>assert.ok(
@@ -52,18 +53,18 @@ test('chapter group returns to exact old ellipses despite a rotated child camera
   assert.equal(restored.size,26)
   for(const original of first) {
     const before=saved.get(original.id)!
-    const after=restored.get(original.id)!
-    close(before.center,after.center)
-    close(before.axisX,after.axisX)
-    close(before.axisY,after.axisY)
-    assert.equal(before.major,after.major)
-    assert.equal(before.minor,after.minor)
-    assert.equal(before.phase,after.phase)
-    close(after.world,orbitPosition(after))
+    const restoredPose: SavedOrbit=restored.get(original.id)!
+    close(before.center,restoredPose.center)
+    close(before.axisX,restoredPose.axisX)
+    close(before.axisY,restoredPose.axisY)
+    assert.equal(before.major,restoredPose.major)
+    assert.equal(before.minor,restoredPose.minor)
+    assert.equal(before.phase,restoredPose.phase)
+    close(restoredPose.world,orbitPosition(restoredPose))
     // A subsequent orbit tick must keep the same TRACK, not a newly
     // inferred ellipse with a different tilt or center.
     close(orbitPosition(before,before.phase+.16),
-      orbitPosition(after,after.phase+.16))
+      orbitPosition(restoredPose,restoredPose.phase+.16))
   }
 })
 
