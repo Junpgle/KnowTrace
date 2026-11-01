@@ -4,6 +4,7 @@ import ExternalTransfer from './ExternalTransfer.vue'
 import BulkQuestionStudio from './BulkQuestionStudio.vue'
 import KnowledgeAIReviewPanel from './KnowledgeAIReviewPanel.vue'
 import DirectBulkApproval from './DirectBulkApproval.vue'
+import QuestionBulkApproval from './QuestionBulkApproval.vue'
 import {
   AlertCircle, ArrowRight, BookOpen, CheckCircle2, ChevronRight,
   ClipboardCheck, FileQuestion, FileText, Image, LoaderCircle,
@@ -379,6 +380,8 @@ function previewAvailable(source: SourceEvidence): boolean {
       </button>
     </div>
 
+    <QuestionBulkApproval v-if="tab === 'questions' && !loading" :course-id="props.courseId"
+      @updated="reload();emit('updated')" />
     <div v-if="loading" class="qb-empty panel"><LoaderCircle class="spinning" :size="26" /> 正在读取题库…</div>
     <BulkQuestionStudio v-else-if="tab === 'batch'" :course-id="props.courseId" @updated="reload();emit('updated')" />
     <ExternalTransfer v-else-if="tab === 'external'" :course-id="props.courseId"
