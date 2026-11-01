@@ -1080,9 +1080,16 @@ function rebuild(animate = false, transition?: SceneTransition) {
   let coords = new Map([...resolveLayout()].map(([id, p]) => [id, p.clone()]))
 
   if (transition?.restore) {
-    // Backwards camera travel is possible because the previous layer is
-    // restored at exactly the original world positions.
-    for (const [id, position] of transition.restore) coords.set(id, position.clone())
+    // Restore the actual previous coordinates, including the same group
+    // atlas address used by the dimmed context layer. Never leave the
+    // background cached at another chapter's/phase's position.
+    for (const [id, position] of transition.restore) {
+      coords.set(id, position.clone())
+      if (id.startsWith('view-group:')) {
+        browseWorldPositions.set(id, position.clone())
+        contextCacheCoordinates.set(id, position.clone())
+      }
+    }
   } else {
     const anchor = transition?.anchorId ? previous.get(transition.anchorId) : undefined
     const groupNodes = props.nodes.filter(n => n.kind === 'group')
