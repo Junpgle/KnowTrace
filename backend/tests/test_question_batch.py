@@ -141,8 +141,8 @@ def test_wrapped_json_is_accepted_but_truncated_json_is_rejected():
     import pytest
     obj = '{"items":[]}'
     assert parse_batch_json(obj)["items"] == []
-    assert parse_batch_json("```json\\n" + obj + "\\n```")["items"] == []
-    assert parse_batch_json("结果如下：\\n" + obj)["items"] == []
+    assert parse_batch_json("```json\n" + obj + "\n```")["items"] == []
+    assert parse_batch_json("结果如下：\n" + obj)["items"] == []
     with pytest.raises(AIServiceError, match="不完整"):
         parse_batch_json('{"items":[{"question_type":"single_choice"')
     with pytest.raises(AIServiceError, match="JSON"):
