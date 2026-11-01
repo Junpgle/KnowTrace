@@ -441,7 +441,10 @@ onMounted(() => { void initialize() })
               <div class="hero-art" aria-hidden="true">
                 <div class="orbit orbit-1"></div><div class="orbit orbit-2"></div>
                 <div class="hero-note note-a"><span class="note-dot teal"></span>学习进度 <span>持续记录</span></div>
-                <div class="hero-knowledge"><div class="hero-knowledge-label">当前估计掌握度</div><div class="hero-knowledge-value">{{ percent(avgMastery) }}</div><div class="mini-bars"><span v-for="n in 12" :key="n" :style="{ height: (16 + (n * 7 + n % 3 * 11) % 40) + 'px' }"></span></div><div class="hero-knowledge-bottom"><span>知识追踪 BKT</span><Activity :size="17" /></div></div>
+                <div class="hero-knowledge"><div class="hero-knowledge-label">已获得测评证据的知识点</div>
+                  <div class="hero-knowledge-value">{{ evidenceSummary?.observed_points ?? 0 }} <span class="hero-count-total">/ {{evidenceSummary?.approved_points ?? 0}}</span></div>
+                  <div class="progress-track big"><span :style="{ width: percent(evidenceSummary?.observation_coverage) }"></span></div>
+                  <div class="hero-knowledge-bottom"><span>证据覆盖 · 非掌握率</span><Activity :size="17" /></div></div>
                 <div class="hero-note note-b"><CheckCircle2 :size="16" /> 为每次进步留下记录</div>
               </div>
             </section>
@@ -461,7 +464,7 @@ onMounted(() => { void initialize() })
                     <div class="knowledge-meta"><span>{{ masteryLabel(point) }}</span><span>已练习 {{ point.observations }} 次</span></div>
                   </div>
                 </div>
-                <div v-else class="empty-preview"><div class="empty-preview-icon"><Target :size="25" /></div><strong>你的学习轨迹即将开始</strong><p>完成第一次练习后，这里会展示各知识点的掌握度估计。</p></div>
+                <div v-else class="empty-preview"><div class="empty-preview-icon"><Target :size="25" /></div><strong>你的学习轨迹即将开始</strong><p>完成第一次练习后，这里会展示真实的答题记录和诊断覆盖情况。</p></div>
               </section>
               <section class="panel side-panel">
                 <div class="panel-heading"><div><p class="eyebrow">NEXT STEP</p><h2>继续学习</h2></div><div class="small-pill">推荐操作</div></div>
@@ -474,7 +477,7 @@ onMounted(() => { void initialize() })
                 </div>
               </section>
             </div>
-            <div class="small-footnote"><Lightbulb :size="16" /><span>BKT 掌握度是基于作答行为的模型估计，不代表经过校准的真实能力分数。</span></div>
+            <div class="small-footnote"><Lightbulb :size="16" /><span>首页展示的测评覆盖是已产生有效诊断记录的知识点数量，不是知识掌握率；BKT 模型参数尚未校准。</span></div>
           </div>
 
           <div v-else-if="view === 'practice'" class="view-stack">
@@ -596,7 +599,7 @@ onMounted(() => { void initialize() })
                         <p v-if="gradingNotice" class="qb-hint">{{gradingNotice}}</p>
                       </div>
                       <div v-if="latestMastery?.itemId === currentItem.quiz_item_id" class="mastery-change">
-                        <Activity :size="16" /> BKT 估计掌握度 <strong>{{ percent(latestMastery.before) }} → {{ percent(latestMastery.after) }}</strong>
+                        <Activity :size="16" /> BKT 实验模型更新（参数未校准） <strong>{{ percent(latestMastery.before) }} → {{ percent(latestMastery.after) }}</strong>
                       </div>
                     </div>
                     <div class="question-actions"><div class="answer-safety"><Lightbulb :size="17" /><span>{{ currentItem.answered
@@ -612,7 +615,7 @@ onMounted(() => { void initialize() })
                       ? '候选题尚未人工审核：作答记录独立保存，答案仅供对照，不写入正式正确率和 BKT。'
                       : currentItem.question_type === 'short_answer'
                         ? '简答题已经保存作答，可自主评估或选择 AI 评阅，但不直接更新 BKT。'
-                        : '综合题只记录作答结果，不将一次作答视为某个知识点的独立 BKT 证据。' }}
+                        : '本题未产生 BKT 诊断更新（可能是综合题或 24 小时内重复作答）。' }}
                   </p>
                   <div class="quiz-footnote"><Clock3 :size="15" /> 数据保存在你本机的 KnowTrace 数据库中，重复提交不会重复计算掌握度。</div>
                 </section>
