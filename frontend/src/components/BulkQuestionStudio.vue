@@ -9,9 +9,9 @@ const props = defineProps<{courseId: string}>()
 const emit = defineEmits<{updated: []}>()
 const provider = ref<AIProviderId>('default')
 const chapterId = ref('')
-const groupSize = ref(8)
-const maxGroups = ref(10)
-const questionsPerGroup = ref(2)
+const groupSize = ref(4)
+const maxGroups = ref(1)
+const questionsPerGroup = ref(1)
 const single = ref(true)
 const bool = ref(true)
 const confirmed = ref(false)
@@ -199,7 +199,16 @@ onBeforeUnmount(()=>{if(poller)clearInterval(poller);version++})
         </div>
         <div class="bqs-meter"><div :style="{width: batch.progress+'%'}"/></div>
         <p>{{ batch.completed_groups }} / {{ batch.total_groups }} 组 · 已生成 {{ batch.created_questions }} 道待审核候选题 · 校验提醒 {{ batch.warning_count }} 条</p>
-        <p v-if="batch.last_error" class="bqs-error-text">{{ batch.last_error }}</p>
+        <p v-if="batch.last_error" class="bqs-error-text" role="alert">
+        失败原因：{{ batch.last_error }}
+      </p>
+      <p v-if="batch.status === 'interrupted'" class="bqs-hint">
+        任务已停止，不会自动重复调用 AI。请先检查失败原因，再决定是否手动继续；
+        如遇 JSON 截断，可新建 4 个知识点 / 每组 1 题的小批次验证。
+      </p>
+      <p v-if="batch.status === 'succeeded' && batch.created_questions === 0" class="bqs-hint">
+        本批没有保存合格题目。请展开下方检查点查看引用或字段校验提醒；该状态不代表成功出题。
+      </p>
         <details v-if="batch.units.length">
           <summary>检查点明细（最近 {{ batch.units.length }} 组）</summary>
           <div v-for="unit in batch.units" :key="unit.id" class="bqs-unit">
@@ -248,7 +257,8 @@ onBeforeUnmount(()=>{if(poller)clearInterval(poller);version++})
 .bqs-meter{height:8px;border-radius:99px;overflow:hidden;background:#e6eff0}
 .bqs-meter>div{height:100%;background:#23b49f;transition:width .25s}
 .bqs-job p{margin:0;color:#647c84;font-size:12px}
-.bqs-job .bqs-error-text{color:#a84842}
+.bqs-job .bqs-error-text{color:#a84842;overflow-wrap:anywhere;line-height:1.6}
+.bqs-job .bqs-hint{color:#92622c;background:#fff8e8;border-radius:8px;padding:10px 12px;line-height:1.6}
 .bqs-unit{display:grid;gap:2px;padding:5px 0;border-top:1px solid #e4eded;font-size:12px;color:#455f6d}
 .bqs-unit small{color:#a16b44}
 .bqs-empty{padding:24px;color:#8a9ba0;text-align:center;font-size:13px}
