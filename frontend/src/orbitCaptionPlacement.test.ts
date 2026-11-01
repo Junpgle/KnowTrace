@@ -62,3 +62,27 @@ test('additional candidates do not cause labels to flee the atlas',()=>{
   assert.equal(placed.length,1)
   assert.ok(Math.hypot(placed[0].dx,placed[0].dy)<160)
 })
+
+test('every visible orbit caption remains attached to its planet rim', () => {
+  const all=placeOrbitCaptions(items,bounds,obstacles)
+  assert.equal(all.length,items.length)
+  for (const placement of all) {
+    const planet=items.find(p=>p.id===placement.id)!
+    // The gap between a planet center and the nearest caption rectangle
+    // is ≤ planet radius + 20px: never hundreds of pixels away.
+    const dx=Math.max(placement.box.left-planet.x,0,planet.x-placement.box.right)
+    const dy=Math.max(placement.box.top-planet.y,0,planet.y-placement.box.bottom)
+    const nearest=Math.hypot(dx,dy)
+    assert.ok(nearest <= planet.radius+20,
+      `${planet.id} caption is detached: ${nearest.toFixed(1)}px`)
+  }
+})
+
+test('obsolete far-away cached caption slot must not be retained',()=>{
+  const item:OrbitCaptionItem={id:'ch',x:810,y:400,radius:26,width:150,height:45,priority:10}
+  const stale={ch:{dx:290,dy:-180}}
+  const placement=placeOrbitCaptions([item],bounds,[],stale)[0]
+  assert.ok(placement)
+  assert.ok(Math.hypot(placement.dx,placement.dy)<155)
+  assert.notDeepEqual({dx:placement.dx,dy:placement.dy},stale.ch)
+})
