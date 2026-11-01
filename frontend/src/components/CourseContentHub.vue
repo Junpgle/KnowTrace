@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import {
   ArrowRight, BookOpen, ClipboardCheck, FileText, Network,
-  Sparkles, Layers3, Upload, ShieldCheck,
+  Sparkles, Layers3, ShieldCheck,
 } from '@lucide/vue'
 import DocumentLibrary from './DocumentLibrary.vue'
 import QuestionBank from './QuestionBank.vue'
@@ -27,14 +27,12 @@ const emit = defineEmits<{
 const section = ref<Section>(props.initialSection ?? 'materials')
 const questionMode = ref<QuestionMode>('questions')
 const documentId = ref(props.initialDocumentId ?? '')
-const knowledgeMode = ref<'knowledge'>('knowledge')
 const sectionItems = [
   { id: 'materials' as const, label: '资料', description: '上传、解析与提取', icon: FileText },
   { id: 'knowledge' as const, label: '知识点', description: '校对与归类', icon: BookOpen },
   { id: 'relations' as const, label: '关系图谱', description: '探索与关系审核', icon: Network },
   { id: 'questions' as const, label: '题目', description: '生成、审核与管理', icon: ClipboardCheck },
 ]
-const activeName = computed(() => sectionItems.find(item => item.id === section.value)?.label ?? '课程内容')
 function changeSection(target: Section) {
   section.value = target
 }
