@@ -10,7 +10,7 @@ import { api, documentPagePreviewUrl, type AIProviderId, type AIProviderStatus,
   type CourseDocument, type DocumentChunk, type DocumentQuality,
   type BatchExtraction } from '../api'
 
-const props = defineProps<{ courseId: string; courseName: string }>()
+const props = defineProps<{ courseId: string; courseName: string; embedded?: boolean }>()
 const emit = defineEmits<{ updated: []; openReview: []; openExternal: [documentId: string] }>()
 type LocalFile = { id: number; name: string; status: 'queued' | 'uploading' | 'uploaded' | 'failed'; error?: string }
 const maxBytes = 30 * 1024 * 1024
@@ -237,7 +237,7 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
 
 <template>
   <div class="library">
-    <div class="library-heading">
+    <div v-if="!props.embedded" class="library-heading">
       <div>
         <p class="eyebrow">SOURCE MATERIAL LIBRARY</p>
         <h1>资料库<span class="heading-dot">.</span></h1>
@@ -247,7 +247,7 @@ void api.aiProviders().then(r => aiProviders.value = r).catch(() => {/* listing 
         <RefreshCw :size="16" :class="{spinning:fetching}" /> 刷新列表
       </button>
     </div>
-    <div class="library-flow">
+    <div v-if="!props.embedded" class="library-flow">
       <span class="done"><CheckCircle2 :size="16" /> 01 导入资料</span>
       <ArrowRight :size="15" />
       <span>02 检查解析</span><ArrowRight :size="15" />
