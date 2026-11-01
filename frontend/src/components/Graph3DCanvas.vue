@@ -138,6 +138,10 @@ const movingLines: {
 }[] = []
 let lastOrbitFrame = 0
 let chapterOrbitPixelScale = 1
+// A fresh WebGL canvas starts with a placeholder camera at (34,112,96).
+// Never show that camera as the initial atlas zoom while the fitted camera
+// is still interpolating over 1120ms. A real first view is fully framed.
+let firstSceneCameraCommitted = false
 const orbitVisuals = new Map<string, {object:THREE.Object3D;start:THREE.Vector3}[]>()
 const screenUp = new THREE.Vector3()
 type LabelAnchor = {
@@ -1971,6 +1975,25 @@ function restoreCamera(snapshot: CameraSnapshot) {
     tween = true
   }
 }
+function commitInitialCamera() {
+  if (firstSceneCameraCommitted || !camera || !controls || !renderer ||
+      !mountPoint.value ||
+      !props.nodes.some(node => node.kind !== 'course')) return
+  if (mountPoint.value.clientWidth < 240 ||
+      mountPoint.value.clientHeight < 200) return
+  // Use the very same fit logic as the user's "fit canvas" button, but
+  // apply it BEFORE the first visible frame, rather than interpolating
+  // from the camera's arbitrary construction-time placeholder.
+  focus(props.selectedId ?? null, true)
+  camera.position.copy(desiredPosition)
+  controls.target.copy(desiredTarget)
+  tween = false
+  controls.update()
+  camera.updateMatrixWorld()
+  if (scene?.fog instanceof THREE.FogExp2)
+    scene.fog.density = fogDesiredDensity
+  firstSceneCameraCommitted = true
+}
 function resetCamera() { focus(null, true) }
 // User-controlled zoom is useful for dense whole-course views; do not reset
 // the scene or change the selected concept when adjusting the lens.
@@ -2114,18 +2137,17 @@ function arrangeStableOrbitCaptions() {
       const dx=old.dx+(slot.dx-old.dx)*.18
       const dy=old.dy+(slot.dy-old.dy)*.18
       stableOrbitCaptionOffsets.set(id,{dx,dy})
-      // placeLabel() already set the pixel-correct scale. Translate this
-      // sprite to the target SCREEN position without moving its planet.
-      const base=screenPosition(anchor.sprite.getWorldPosition(new THREE.Vector3()))
-      const target=candidates.find(c=>c.id===id)!
-      const screenX=target.x+dx-base.x
-      const screenY=target.y+dy-base.y
+      // Set the caption from its planet's CURRENT world center each frame.
+      // Previously we added a screen correction to placeLabel()'s
+      // translated sprite; stale world matrices/animated parent transforms
+      // could make this correction accumulate and leave the card detached.
       const depth=Math.max(1,anchor.center.clone()
         .sub(camera.position).dot(cameraForward))
       const parentScale=Math.max(.05,anchor.sprite.parent?.scale.x??1)
       const localPerPx=2*tanHalf*depth/(h*parentScale)
-      anchor.sprite.position.addScaledVector(right,screenX*localPerPx)
-        .addScaledVector(up,-screenY*localPerPx)
+      anchor.sprite.position.copy(anchor.center)
+        .addScaledVector(right,dx*localPerPx)
+        .addScaledVector(up,-dy*localPerPx)
     }
     // Existing captions only fade when ALL nearby positions are genuinely
     // blocked. A valid side/below position is chosen before hiding.
@@ -2569,6 +2591,7 @@ function initialize() {
   renderer.domElement.addEventListener('pointerleave', pointerLeave)
   document.addEventListener('visibilitychange', visibilityChanged)
   focus(null, true)
+  commitInitialCamera()
   draw()
 }
 onMounted(initialize)
@@ -2664,6 +2687,7 @@ watch(() => ({
     if (!(props.preservePositionsOnSelect && !layerChanged && selectedChanged))
       focus(next.selectedId, layerChanged)
   }
+  if (!hierarchyChanged) commitInitialCamera()
 }, { flush: 'post' })
 onBeforeUnmount(() => {
   disposed = true

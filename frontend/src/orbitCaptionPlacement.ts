@@ -37,42 +37,36 @@ function rect(x: number, y: number, width: number, height: number): CaptionBox {
     top: y-height/2, bottom: y+height/2 }
 }
 function candidateSlots(item: OrbitCaptionItem): OrbitCaptionSlot[] {
-  const r = item.radius + 12
-  const hw = item.width/2
-  const hh = item.height/2
-  // Ordered by label-to-planet distance. These slots cannot drift to a
-  // distant, unrelated orbit, and include available space on ALL four sides.
-  const base: OrbitCaptionSlot[] = [
-    {dx:0,dy:-(r+hh)},
-    {dx:r+hw,dy:0},
-    {dx:-(r+hw),dy:0},
-    {dx:0,dy:r+hh},
-    {dx:r+hw*.75,dy:-(r+hh*.55)},
-    {dx:-(r+hw*.75),dy:-(r+hh*.55)},
-    {dx:r+hw*.75,dy:r+hh*.55},
-    {dx:-(r+hw*.75),dy:r+hh*.55},
+  // Keep the nearest CARD EDGE within 7-12px of the actual planet rim.
+  // Previous candidates multiplied whole caption dimensions by 1.85:
+  // their centers could be 250+px away, visually severing attribution.
+  const r=item.radius
+  const hw=item.width/2
+  const hh=item.height/2
+  const gap=9
+  const edge=r+gap
+  const corner=r*.78+gap
+  return [
+    {dx:0,dy:-(edge+hh)},
+    {dx:0,dy:edge+hh},
+    {dx:-(edge+hw),dy:0},
+    {dx:edge+hw,dy:0},
+    {dx:-(corner+hw),dy:-(corner+hh)},
+    {dx:corner+hw,dy:-(corner+hh)},
+    {dx:-(corner+hw),dy:corner+hh},
+    {dx:corner+hw,dy:corner+hh},
+    // Minor tangential shifts, still adjacent to the same star.
+    {dx:-hw*.22,dy:-(edge+hh)},
+    {dx:hw*.22,dy:-(edge+hh)},
+    {dx:-hw*.22,dy:edge+hh},
+    {dx:hw*.22,dy:edge+hh},
+    {dx:-(edge+hw),dy:-hh*.34},
+    {dx:edge+hw,dy:-hh*.34},
+    {dx:-(edge+hw),dy:hh*.34},
+    {dx:edge+hw,dy:hh*.34},
   ]
-  // Small offset variants exploit gaps between planets/previous labels.
-  for (const dy of [-(r+hh+12), r+hh+12]) {
-    for (const fraction of [-.70, -.38, .38, .70])
-      base.push({dx:item.width*fraction,dy})
-  }
-  for (const dx of [-(r+hw+18),r+hw+18]) {
-    for (const fraction of [-1.3,-.65,.65,1.3])
-      base.push({dx,dy:item.height*fraction})
-  }
-  // Last resort: still local to the planet, but permits the visually empty
-  // bands common in 16:9 course atlases.
-  for (const mul of [1.45,1.85]) {
-    base.push(
-      {dx:0,dy:-(r+hh)*mul},
-      {dx:0,dy:(r+hh)*mul},
-      {dx:(r+hw)*mul,dy:0},
-      {dx:-(r+hw)*mul,dy:0},
-    )
-  }
-  return base
 }
+
 export function placeOrbitCaptions(
   items: readonly OrbitCaptionItem[],
   bounds: CaptionBox,
@@ -101,7 +95,12 @@ export function placeOrbitCaptions(
   for(const item of rank) {
     const old=previous[item.id]
     if(!old)continue
-    const box=available(item,old,0)
+    // Old positions from a previous build/zoom may be far away. Only keep
+    // a slot if it is STILL adjacent to this planet, not simply collision-free.
+    const nearSlots=candidateSlots(item)
+    const nearest=nearSlots.some(slot =>
+      Math.hypot(slot.dx-old.dx,slot.dy-old.dy)<=12)
+    const box=nearest?available(item,old,0):null
     if(box)placed.push({id:item.id,dx:old.dx,dy:old.dy,box})
   }
   const retainedIds=new Set(placed.map(p=>p.id))

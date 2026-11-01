@@ -24,8 +24,12 @@ export function orbitMetrics(kind: OrbitBodyKind, rawCount: number, id: string) 
     ? Math.min(60, 11 + .155 * count)
     : Math.min(36, 10 + 1.5 * count)
   const jitter = stableFraction(id + ':orbit-period') - .5
-  const periodSeconds = kind === 'chapter'
+  // Slow the entire observable orbital system down by exactly 5x so
+  // names remain readable while the planets move. The relative ordering
+  // and small deterministic per-body differences are unchanged.
+  const basePeriodSeconds = kind === 'chapter'
     ? 19 + .20 * count + .15 * jitter
     : 14 + 2.25 * count + .65 * jitter
+  const periodSeconds = basePeriodSeconds * 5
   return {count, idealRadiusPx, periodSeconds}
 }

@@ -50,3 +50,21 @@ test('bad counts are bounded, never create NaN or negative radii', () => {
     }
   }
 })
+
+test('all chapter and browse revolutions take exactly five times their previous periods', () => {
+  const inputs = [
+    ['chapter',106,'chapter-one'],
+    ['chapter',303,'chapter-six'],
+    ['group',3,'group-small'],
+    ['group',14,'group-large'],
+  ] as const
+  for (const [kind,count,id] of inputs) {
+    const metric=orbitMetrics(kind,count,id)
+    const baseline=kind==='chapter' ? 19+.20*count : 14+2.25*count
+    const maxJitter=kind==='chapter' ? .075 : .325
+    assert.ok(metric.periodSeconds/5 >= baseline-maxJitter)
+    assert.ok(metric.periodSeconds/5 <= baseline+maxJitter)
+    assert.ok(metric.periodSeconds > baseline*4.9,
+      `${id} should be nearly five times slower`)
+  }
+})
