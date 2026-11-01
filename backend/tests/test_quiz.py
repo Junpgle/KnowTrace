@@ -169,3 +169,56 @@ def test_persists_after_restart(tmp_path):
         assert http.get(f"/api/quiz-sessions/{sid}").json()["status"] == "completed"
         report = http.get(f"/api/courses/{course}/learning-report").json()
         assert report["answered"] == 1 and report["knowledge_points"][0]["observations"] == 1
+
+def test_pending_blind_trial_does_not_spoil_answers_or_change_mastery(env):
+    http, db = env
+    course, kp, versions = seed(http)  # generated candidates are pending
+    assert http.post(f"/api/courses/{course}/quiz-sessions",
+                     json={"count":1}).status_code == 409
+    assert http.post(f"/api/courses/{course}/quiz-sessions",
+                     json={"count":1,"mode":"adaptive","source":"pending"}).status_code == 422
+    created = http.post(f"/api/courses/{course}/quiz-sessions",
+                        json={"count":2,"source":"pending","mode":"normal"})
+    assert created.status_code == 201, created.text
+    quiz = created.json()
+    assert quiz["blind_pending"] is True
+    assert quiz["correct"] is None
+    assert quiz["answered"] == 0
+    assert len(quiz["items"]) == 2
+    assert all(item["provisional"] and not item["answered"] for item in quiz["items"])
+    assert all("correct_answer" not in item and "result" not in item
+               for item in quiz["items"])
+    first, second = quiz["items"]
+    first_answer = http.post(f"/api/quiz-items/{first['quiz_item_id']}/answer",
+       json={"client_request_id":"blind-first-1000","response":
+             "A" if first["question_type"]=="single_choice" else True})
+    assert first_answer.status_code == 200, first_answer.text
+    assert first_answer.json()["deferred"] is True
+    assert "correct_answer" not in first_answer.json()
+    assert "is_correct" not in first_answer.json()
+    mid = http.get(f"/api/quiz-sessions/{quiz['id']}").json()
+    assert mid["correct"] is None and mid["status"] == "active"
+    assert mid["answered"] == 1
+    assert mid["items"][0]["answered"]
+    assert "result" not in mid["items"][0]
+    assert mid["items"][0]["submitted_response"] == (
+        "A" if first["question_type"]=="single_choice" else True)
+    assert http.get(f"/api/courses/{course}/learning-report").json()["answered"] == 0
+    with connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM mastery_events").fetchone()[0] == 0
+    final = http.post(f"/api/quiz-items/{second['quiz_item_id']}/answer",
+       json={"client_request_id":"blind-last-1000","response":
+             "A" if second["question_type"]=="single_choice" else True})
+    assert final.status_code == 200, final.text
+    assert final.json()["diagnostic"] is False
+    complete = http.get(f"/api/quiz-sessions/{quiz['id']}").json()
+    assert complete["blind_pending"] and complete["status"] == "completed"
+    assert complete["correct"] is not None
+    assert all("correct_answer" in item["result"] for item in complete["items"])
+    official = http.get(f"/api/courses/{course}/learning-report").json()
+    assert official["answered"] == 0
+    assert official["provisional_answers"] == 2
+    with connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM mastery_events").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM mastery_states").fetchone()[0] == 0
+
